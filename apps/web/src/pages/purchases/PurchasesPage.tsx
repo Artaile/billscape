@@ -263,19 +263,20 @@ export function PurchasesPage() {
       )
       if (itemsError) throw itemsError
 
-      const itemsWithProduct = validItems.filter((it) => !!it.product_id)
-      for (const it of itemsWithProduct) {
+      for (const it of validItems) {
+        if (!it.product_id) continue
+
         const { data: inv } = await supabase
           .from('inventory')
           .select('stock_qty')
-          .eq('product_id', it.product_id!)
+          .eq('product_id', it.product_id)
           .eq('organization_id', orgId!)
           .maybeSingle()
 
         const currentQty = inv?.stock_qty ?? 0
         await supabase.from('inventory').upsert(
           {
-            product_id: it.product_id!,
+            product_id: it.product_id,
             organization_id: orgId!,
             stock_qty: currentQty + it.qty,
           },
