@@ -144,9 +144,22 @@ export function OnboardingPage() {
     if (!user) return
     setLoading(true)
     try {
+      // Check if user already has an org (e.g. refreshed onboarding page)
+      const { data: existing } = await supabase
+        .from('memberships')
+        .select('organization_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .single()
+
+      if (existing?.organization_id) {
+        await refreshOrg()
+        navigate('/dashboard')
+        return
+      }
+
       const features = FEATURE_FLAGS[data.business_type]
 
-      // Use security-definer RPC to bypass RLS for initial org creation
       const { error: rpcError } = await supabase.rpc('create_organization_for_user', {
         p_name: data.shop_name,
         p_business_type: data.business_type,
@@ -157,6 +170,12 @@ export function OnboardingPage() {
       })
 
       if (rpcError) {
+        // If org already created by a race condition, just redirect
+        if (rpcError.message?.toLowerCase().includes('already') || rpcError.code === '23505') {
+          await refreshOrg()
+          navigate('/dashboard')
+          return
+        }
         toast.error('Setup failed', rpcError.message)
         return
       }
