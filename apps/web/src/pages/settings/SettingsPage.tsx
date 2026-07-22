@@ -362,7 +362,10 @@ export function SettingsPage() {
                   <button
                     key={c.value}
                     type="button"
-                    onClick={() => setPrimaryColor(c.value)}
+                    onClick={() => {
+                      setPrimaryColor(c.value)
+                      document.documentElement.style.setProperty('--brand-color', c.value)
+                    }}
                     className={cn(
                       'h-9 w-9 rounded-full border-2 transition-all',
                       primaryColor === c.value
