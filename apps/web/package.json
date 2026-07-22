@@ -11,8 +11,8 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
-    "@billscape/api": "workspace:*",
-    "@billscape/core": "workspace:*",
+    "@billscape/api": "file:../../packages/api",
+    "@billscape/core": "file:../../packages/core",
     "@hookform/resolvers": "^5.1.1",
     "@radix-ui/react-alert-dialog": "^1.1.14",
     "@radix-ui/react-avatar": "^1.1.10",
