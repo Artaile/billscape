@@ -15,6 +15,8 @@ import {
   X,
   ShoppingBag,
   Truck,
+  Receipt,
+  Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -36,6 +38,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Purchases', href: '/purchases', icon: ShoppingBag },
   { label: 'Suppliers', href: '/suppliers', icon: Truck },
   { label: 'Customers', href: '/customers', icon: Users },
+  { label: 'Expenses', href: '/expenses', icon: Receipt },
+  { label: 'Promotions', href: '/promotions', icon: Tag },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Settings', href: '/settings', icon: Settings },
 ]

@@ -13,6 +13,8 @@ import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { PurchasesPage } from '@/pages/purchases/PurchasesPage'
 import { SuppliersPage } from '@/pages/suppliers/SuppliersPage'
+import { ExpensesPage } from '@/pages/expenses/ExpensesPage'
+import { PromotionsPage } from '@/pages/promotions/PromotionsPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -68,6 +70,8 @@ export function AppRouter() {
                   <Route path="purchases" element={<PurchasesPage />} />
                   <Route path="suppliers" element={<SuppliersPage />} />
                   <Route path="customers" element={<CustomersPage />} />
+                  <Route path="expenses" element={<ExpensesPage />} />
+                  <Route path="promotions" element={<PromotionsPage />} />
                   <Route path="reports" element={<ReportsPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                 </Routes>
