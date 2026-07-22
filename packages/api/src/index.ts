@@ -1,0 +1,5 @@
+export { getSupabaseClient, createClient } from './client'
+export type { TypedSupabaseClient } from './client'
+export type { Database } from './database.types'
+export * from './products'
+export * from './sales'

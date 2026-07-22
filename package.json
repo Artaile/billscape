@@ -1,0 +1,20 @@
+{
+  "name": "billscape",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "type-check": "turbo type-check",
+    "lint": "turbo lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@billscape/api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@billscape/core": "workspace:*",
+    "@supabase/supabase-js": "^2.50.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
