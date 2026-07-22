@@ -11,6 +11,9 @@ import {
   RefreshCw,
   Package,
   Plus,
+  Trash2,
+  Layers,
+  CalendarClock,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
@@ -39,6 +42,14 @@ export function ProductFormPage() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
   const barcodeRef = useRef<SVGSVGElement>(null)
+
+  // Variants state
+  const [hasVariants, setHasVariants] = useState(false)
+  const [variants, setVariants] = useState<{ size: string; color: string; price_delta: number; stock_qty: number; barcode_value: string }[]>([])
+
+  // Batch tracking state
+  const [hasBatches, setHasBatches] = useState(false)
+  const [batches, setBatches] = useState<{ batch_no: string; expiry_date: string; qty: number; cost_price: number }[]>([])
 
   const {
     register,
@@ -115,6 +126,36 @@ export function ProductFormPage() {
     onError: (err: Error) => toast.error('Failed to add category', err.message),
   })
 
+  // Load existing variants when editing
+  const { data: existingVariants } = useQuery({
+    queryKey: ['product_variants', id],
+    enabled: isEdit && !!orgId && !!id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('product_variants')
+        .select('*')
+        .eq('product_id', id!)
+        .eq('organization_id', orgId!)
+        .order('created_at')
+      return data ?? []
+    },
+  })
+
+  // Load existing batches when editing
+  const { data: existingBatches } = useQuery({
+    queryKey: ['inventory_batches', id],
+    enabled: isEdit && !!orgId && !!id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('inventory_batches')
+        .select('*')
+        .eq('product_id', id!)
+        .eq('organization_id', orgId!)
+        .order('expiry_date')
+      return data ?? []
+    },
+  })
+
   useEffect(() => {
     if (existingProduct) {
       reset({
@@ -129,8 +170,33 @@ export function ProductFormPage() {
       })
       if (existingProduct.image_url) setImagePreview(existingProduct.image_url)
       if (existingProduct.category_id) setCategoryId(existingProduct.category_id)
+      if ((existingProduct as any).has_variants) setHasVariants(true)
+      if ((existingProduct as any).has_batches) setHasBatches(true)
     }
   }, [existingProduct, reset])
+
+  useEffect(() => {
+    if (existingVariants && existingVariants.length > 0) {
+      setVariants(existingVariants.map((v: any) => ({
+        size: v.size ?? '',
+        color: v.color ?? '',
+        price_delta: v.price_delta ?? 0,
+        stock_qty: v.stock_qty ?? 0,
+        barcode_value: v.barcode_value ?? '',
+      })))
+    }
+  }, [existingVariants])
+
+  useEffect(() => {
+    if (existingBatches && existingBatches.length > 0) {
+      setBatches(existingBatches.map((b: any) => ({
+        batch_no: b.batch_no ?? '',
+        expiry_date: b.expiry_date ?? '',
+        qty: b.qty ?? 0,
+        cost_price: b.cost_price ?? 0,
+      })))
+    }
+  }, [existingBatches])
 
   // Render barcode SVG
   useEffect(() => {
@@ -225,8 +291,11 @@ export function ProductFormPage() {
         image_url: imageUrl,
         is_active: true,
         category_id: categoryId || null,
+        has_variants: hasVariants,
+        has_batches: hasBatches,
       }
 
+      let productId = id
       if (isEdit) {
         const { error } = await supabase
           .from('products')
@@ -241,6 +310,7 @@ export function ProductFormPage() {
           .select()
           .single()
         if (error || !product) throw error
+        productId = product.id
         if (values.track_stock) {
           await supabase.from('inventory').insert({
             product_id: product.id,
@@ -248,6 +318,45 @@ export function ProductFormPage() {
             stock_qty: values.initialStock ?? 0,
             reorder_level: 10,
           })
+        }
+      }
+
+      // Save variants
+      if (hasVariants && productId && variants.length > 0) {
+        // Delete old variants then re-insert
+        await supabase.from('product_variants').delete().eq('product_id', productId).eq('organization_id', orgId!)
+        const validVariants = variants.filter((v) => v.size || v.color)
+        if (validVariants.length > 0) {
+          await supabase.from('product_variants').insert(
+            validVariants.map((v) => ({
+              product_id: productId!,
+              organization_id: orgId!,
+              size: v.size || null,
+              color: v.color || null,
+              price_delta: v.price_delta ?? 0,
+              stock_qty: v.stock_qty ?? 0,
+              barcode_value: v.barcode_value || null,
+            }))
+          )
+        }
+      }
+
+      // Save batches
+      if (hasBatches && productId && batches.length > 0) {
+        const validBatches = batches.filter((b) => b.batch_no.trim())
+        if (validBatches.length > 0) {
+          // Upsert by batch_no — delete existing then insert
+          await supabase.from('inventory_batches').delete().eq('product_id', productId).eq('organization_id', orgId!)
+          await supabase.from('inventory_batches').insert(
+            validBatches.map((b) => ({
+              product_id: productId!,
+              organization_id: orgId!,
+              batch_no: b.batch_no,
+              expiry_date: b.expiry_date || null,
+              qty: b.qty ?? 0,
+              cost_price: b.cost_price ?? 0,
+            }))
+          )
         }
       }
     },
@@ -457,6 +566,175 @@ export function ProductFormPage() {
                 onChange={(e) => setInitialStock(Number(e.target.value))}
                 placeholder="0"
               />
+            </div>
+          )}
+        </div>
+
+        {/* Product Variants */}
+        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-zinc-400" />
+              <h2 className="text-sm font-semibold text-zinc-300">Product Variants</h2>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className="text-xs text-zinc-400">Enable</span>
+              <div
+                onClick={() => {
+                  setHasVariants((v) => !v)
+                  if (!hasVariants && variants.length === 0) {
+                    setVariants([{ size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])
+                  }
+                }}
+                className={cn(
+                  'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
+                  hasVariants ? 'bg-indigo-600' : 'bg-zinc-700',
+                )}
+              >
+                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasVariants ? 'translate-x-4' : 'translate-x-0')} />
+              </div>
+            </label>
+          </div>
+
+          {hasVariants && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
+                <span>Size</span>
+                <span>Color</span>
+                <span>Price +/-</span>
+                <span>Stock</span>
+                <span></span>
+              </div>
+              {variants.map((v, i) => (
+                <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                  <Input
+                    placeholder="S / M / L"
+                    value={v.size}
+                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, size: e.target.value } : x))}
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    placeholder="Red / Blue"
+                    value={v.color}
+                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={v.price_delta}
+                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, price_delta: Number(e.target.value) } : x))}
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={v.stock_qty}
+                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, stock_qty: Number(e.target.value) } : x))}
+                    className="h-8 text-xs"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-red-400 hover:text-red-300"
+                    onClick={() => setVariants((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => setVariants((prev) => [...prev, { size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Variant
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Batch / Expiry Tracking */}
+        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="h-4 w-4 text-zinc-400" />
+              <h2 className="text-sm font-semibold text-zinc-300">Batch & Expiry Tracking</h2>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className="text-xs text-zinc-400">Enable</span>
+              <div
+                onClick={() => {
+                  setHasBatches((v) => !v)
+                  if (!hasBatches && batches.length === 0) {
+                    setBatches([{ batch_no: '', expiry_date: '', qty: 0, cost_price: 0 }])
+                  }
+                }}
+                className={cn(
+                  'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
+                  hasBatches ? 'bg-indigo-600' : 'bg-zinc-700',
+                )}
+              >
+                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasBatches ? 'translate-x-4' : 'translate-x-0')} />
+              </div>
+            </label>
+          </div>
+
+          {hasBatches && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
+                <span className="col-span-2">Batch No</span>
+                <span>Expiry Date</span>
+                <span>Qty</span>
+                <span></span>
+              </div>
+              {batches.map((b, i) => (
+                <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                  <Input
+                    placeholder="BATCH-001"
+                    value={b.batch_no}
+                    onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x))}
+                    className="h-8 text-xs col-span-2"
+                  />
+                  <Input
+                    type="date"
+                    value={b.expiry_date}
+                    onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x))}
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={b.qty}
+                    onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))}
+                    className="h-8 text-xs"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-red-400 hover:text-red-300"
+                    onClick={() => setBatches((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => setBatches((prev) => [...prev, { batch_no: '', expiry_date: '', qty: 0, cost_price: 0 }])}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Batch
+              </Button>
             </div>
           )}
         </div>

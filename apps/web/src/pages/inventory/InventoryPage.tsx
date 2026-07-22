@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, SlidersHorizontal, Plus, Minus } from 'lucide-react'
+import { Search, Filter, SlidersHorizontal, Plus, Minus, AlertTriangle } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -59,6 +59,25 @@ export function InventoryPage() {
   const [adjustType, setAdjustType] = useState<'+' | '-'>('+')
   const [adjustReason, setAdjustReason] = useState<StockMovementReason>('purchase')
   const [adjustNote, setAdjustNote] = useState('')
+
+  // Expiring within 30 days
+  const { data: expiringBatches } = useQuery({
+    queryKey: ['expiring_batches', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const in30 = new Date()
+      in30.setDate(in30.getDate() + 30)
+      const { data } = await supabase
+        .from('inventory_batches')
+        .select('batch_no, expiry_date, qty, product_id, products(name)')
+        .eq('organization_id', orgId!)
+        .not('expiry_date', 'is', null)
+        .lte('expiry_date', in30.toISOString().split('T')[0])
+        .gt('qty', 0)
+        .order('expiry_date')
+      return data ?? []
+    },
+  })
 
   const { data: inventory, isLoading } = useQuery({
     queryKey: ['inventory', orgId],
@@ -143,6 +162,32 @@ export function InventoryPage() {
           </p>
         </div>
       </div>
+
+      {/* Expiring soon alert */}
+      {expiringBatches && expiringBatches.length > 0 && (
+        <div className="mb-4 rounded-lg border border-yellow-700 bg-yellow-900/20 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="h-4 w-4 text-yellow-400" />
+            <span className="text-sm font-semibold text-yellow-300">{expiringBatches.length} batch(es) expiring within 30 days</span>
+          </div>
+          <div className="space-y-1">
+            {expiringBatches.slice(0, 5).map((b: any, i: number) => (
+              <div key={i} className="text-xs text-yellow-200/70 flex gap-2">
+                <span className="font-medium">{b.products?.name ?? 'Unknown'}</span>
+                <span>•</span>
+                <span>Batch {b.batch_no}</span>
+                <span>•</span>
+                <span>Exp: {b.expiry_date}</span>
+                <span>•</span>
+                <span>Qty: {b.qty}</span>
+              </div>
+            ))}
+            {expiringBatches.length > 5 && (
+              <p className="text-xs text-yellow-400">+{expiringBatches.length - 5} more batches</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">

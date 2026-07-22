@@ -9,6 +9,7 @@ import {
   Package,
   Barcode,
   Filter,
+  Printer,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -27,6 +28,7 @@ import {
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import type { Product } from '@billscape/core'
+import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = React.useState(value)
@@ -89,6 +91,7 @@ export function ProductsPage() {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ProductWithInventory | null>(null)
+  const [printTarget, setPrintTarget] = useState<ProductWithInventory | null>(null)
 
   const debouncedSearch = useDebounce(search, 300)
 
@@ -263,6 +266,17 @@ export function ProductsPage() {
                   <Pencil className="h-3.5 w-3.5" />
                   Edit
                 </Button>
+                {product.barcode_value && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="flex-1 text-xs h-7"
+                    onClick={() => setPrintTarget(product)}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Label
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -279,6 +293,16 @@ export function ProductsPage() {
           <EmptyState hasSearch={!!debouncedSearch || !!categoryFilter} />
         )}
       </div>
+
+      {/* Barcode label print dialog */}
+      {printTarget && (
+        <BarcodeLabelDialog
+          open={!!printTarget}
+          onOpenChange={(v) => { if (!v) setPrintTarget(null) }}
+          product={printTarget}
+          orgName={org?.name}
+        />
+      )}
 
       {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>

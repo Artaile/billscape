@@ -208,6 +208,32 @@ export function ReportsPage() {
     )
   }
 
+  const exportStock = () => {
+    if (!stockData) return
+    const headers = isOwner
+      ? ['Product', 'Category', 'Stock Qty', 'Reorder Level', 'Selling Price', 'Cost Price', 'Stock Value (Sell)', 'Stock Value (Cost)']
+      : ['Product', 'Category', 'Stock Qty', 'Reorder Level', 'Selling Price', 'Stock Value (Sell)']
+    const rows = stockData.map((row) => {
+      const p = row.products as unknown as { name: string; price: number; cost_price: number; categories: { name: string }[] | null } | null
+      const base = [
+        p?.name ?? '',
+        p?.categories?.[0]?.name ?? '',
+        row.stock_qty,
+        row.reorder_level,
+        (p?.price ?? 0).toFixed(2),
+      ]
+      if (isOwner) {
+        base.push((p?.cost_price ?? 0).toFixed(2) as string)
+        base.push(((p?.price ?? 0) * row.stock_qty).toFixed(2) as string)
+        base.push(((p?.cost_price ?? 0) * row.stock_qty).toFixed(2) as string)
+      } else {
+        base.push(((p?.price ?? 0) * row.stock_qty).toFixed(2) as string)
+      }
+      return base
+    })
+    downloadCSV(`stock-report-${new Date().toISOString().split('T')[0]}.csv`, headers, rows)
+  }
+
   const exportGST = () => {
     downloadCSV(
       `gst-summary-${dateFrom}-to-${dateTo}.csv`,
@@ -412,6 +438,12 @@ export function ReportsPage() {
         {/* Stock Report Tab */}
         <TabsContent value="stock">
           <div className="space-y-4">
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={exportStock}>
+                <Download className="h-4 w-4" />
+                Export CSV
+              </Button>
+            </div>
             {isOwner && (
               <div className="rounded-lg border border-indigo-800 bg-indigo-950/30 px-4 py-3 text-sm text-indigo-300">
                 Owner view: cost prices are visible.
