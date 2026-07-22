@@ -17,6 +17,10 @@ import {
   Truck,
   Receipt,
   Tag,
+  RotateCcw,
+  FileText,
+  Star,
+  Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -38,8 +42,12 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Purchases', href: '/purchases', icon: ShoppingBag },
   { label: 'Suppliers', href: '/suppliers', icon: Truck },
   { label: 'Customers', href: '/customers', icon: Users },
+  { label: 'Returns', href: '/returns', icon: RotateCcw },
+  { label: 'Quotations', href: '/quotations', icon: FileText },
+  { label: 'Loyalty', href: '/loyalty', icon: Star },
   { label: 'Expenses', href: '/expenses', icon: Receipt },
   { label: 'Promotions', href: '/promotions', icon: Tag },
+  { label: 'Activity', href: '/activity', icon: Activity },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Settings', href: '/settings', icon: Settings },
 ]
