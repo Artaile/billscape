@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { applyBrandColor } from '@/lib/brandColor'
 import type { UserRole } from '@billscape/core'
 
 interface OrgInfo {
@@ -81,9 +82,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         feature_flags: settingsResult.data?.feature_flags as Record<string, boolean>,
       }
 
-      // Apply brand color as CSS variable
-      const brandColor = org.branding?.primary_color ?? '#6366f1'
-      document.documentElement.style.setProperty('--brand-color', brandColor)
+      // Apply brand color to all Tailwind CSS variables
+      applyBrandColor(org.branding?.primary_color ?? '#6366f1')
 
       setState({ session, user: session.user, role, org, loading: false })
     } catch {

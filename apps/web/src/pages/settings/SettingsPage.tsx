@@ -17,6 +17,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
+import { applyBrandColor } from '@/lib/brandColor'
 import type { UserRole } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -364,7 +365,7 @@ export function SettingsPage() {
                     type="button"
                     onClick={() => {
                       setPrimaryColor(c.value)
-                      document.documentElement.style.setProperty('--brand-color', c.value)
+                      applyBrandColor(c.value)
                     }}
                     className={cn(
                       'h-9 w-9 rounded-full border-2 transition-all',
