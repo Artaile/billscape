@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, X, Eye, ShoppingBag } from 'lucide-react'
+import { Plus, X, Eye, ShoppingBag, Trash2, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -58,14 +58,16 @@ interface Purchase {
   purchase_items: { id: string }[]
 }
 
+interface PurchaseItemDetail {
+  id: string
+  product_name: string
+  qty: number
+  unit_cost: number
+  line_total: number
+}
+
 interface ViewPurchase extends Purchase {
-  purchase_items_detail?: {
-    id: string
-    product_name: string
-    qty: number
-    unit_cost: number
-    line_total: number
-  }[]
+  purchase_items_detail?: PurchaseItemDetail[]
 }
 
 const emptyItem = (): PurchaseItem => ({
@@ -83,6 +85,8 @@ export function PurchasesPage() {
 
   const [showNew, setShowNew] = useState(false)
   const [viewPurchase, setViewPurchase] = useState<ViewPurchase | null>(null)
+  const [viewLoading, setViewLoading] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   const [supplierId, setSupplierId] = useState<string>('')
   const [invoiceNo, setInvoiceNo] = useState('')
@@ -230,6 +234,7 @@ export function PurchasesPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      if (!user) throw new Error('Not logged in')
       const validItems = items.filter((it) => it.product_name.trim() && it.qty > 0)
       if (validItems.length === 0) throw new Error('Add at least one item')
 
@@ -241,7 +246,7 @@ export function PurchasesPage() {
           invoice_no: invoiceNo.trim() || null,
           notes: notes.trim() || null,
           total_amount: totalAmount,
-          created_by: user!.id,
+          created_by: user.id,
         })
         .select('id')
         .single()
@@ -254,8 +259,8 @@ export function PurchasesPage() {
         validItems.map((it) => ({
           purchase_id: purchaseId,
           organization_id: orgId!,
-          product_id: it.product_id || null,
-          product_name: it.product_name,
+          product_id: it.product_id ?? null,
+          product_name: it.product_name.trim(),
           qty: it.qty,
           unit_cost: it.unit_cost,
           line_total: it.line_total,
@@ -263,6 +268,7 @@ export function PurchasesPage() {
       )
       if (itemsError) throw itemsError
 
+      // Only update inventory for items linked to a real product
       for (const it of validItems) {
         if (!it.product_id) continue
 
@@ -296,12 +302,43 @@ export function PurchasesPage() {
     },
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // Delete purchase_items first (foreign key)
+      const { error: itemsErr } = await supabase
+        .from('purchase_items')
+        .delete()
+        .eq('purchase_id', id)
+        .eq('organization_id', orgId!)
+      if (itemsErr) throw itemsErr
+
+      const { error } = await supabase
+        .from('purchases')
+        .delete()
+        .eq('id', id)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
+      toast.success('Purchase deleted')
+      setDeleteConfirmId(null)
+      if (viewPurchase?.id === deleteConfirmId) setViewPurchase(null)
+    },
+    onError: (err: Error) => toast.error('Delete failed', err.message),
+  })
+
   async function handleViewPurchase(purchase: Purchase) {
-    const { data } = await supabase
+    setViewLoading(true)
+    const { data, error } = await supabase
       .from('purchase_items')
       .select('id, product_name, qty, unit_cost, line_total')
       .eq('purchase_id', purchase.id)
-      .eq('organization_id', orgId!)
+    setViewLoading(false)
+    if (error) {
+      toast.error('Failed to load purchase details', error.message)
+      return
+    }
     setViewPurchase({ ...purchase, purchase_items_detail: data ?? [] })
   }
 
@@ -319,71 +356,76 @@ export function PurchasesPage() {
       </div>
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Supplier</TableHead>
-              <TableHead>Invoice No</TableHead>
-              <TableHead className="text-right">Items</TableHead>
-              <TableHead className="text-right">Total Amount</TableHead>
-              <TableHead></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <div className="h-4 bg-zinc-800 rounded animate-pulse" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : purchases && purchases.length > 0 ? (
-              purchases.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="text-zinc-400 text-sm whitespace-nowrap">
-                    {formatDate(p.created_at)}
-                  </TableCell>
-                  <TableCell className="font-medium text-zinc-100">
-                    {p.suppliers?.name ?? <span className="text-zinc-500 italic">No supplier</span>}
-                  </TableCell>
-                  <TableCell className="font-mono text-sm text-zinc-300">
-                    {p.invoice_no ?? <span className="text-zinc-600">—</span>}
-                  </TableCell>
-                  <TableCell className="text-right text-zinc-400">
-                    {p.purchase_items.length}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold text-white">
-                    {formatINR(p.total_amount)}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-zinc-400 hover:text-white"
-                      onClick={() => handleViewPurchase(p)}
-                    >
-                      <Eye className="h-3.5 w-3.5 mr-1" />
-                      View
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
+        {isLoading ? (
+          <div className="flex items-center justify-center h-32">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-16">
-                  <div className="flex flex-col items-center gap-3 text-zinc-500">
-                    <ShoppingBag className="h-10 w-10 text-zinc-700" />
-                    <p className="text-sm">No purchases yet. Click New Purchase to record stock received.</p>
-                  </div>
-                </TableCell>
+                <TableHead>Date</TableHead>
+                <TableHead>Supplier</TableHead>
+                <TableHead>Invoice No</TableHead>
+                <TableHead className="text-right">Items</TableHead>
+                <TableHead className="text-right">Total Amount</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {purchases && purchases.length > 0 ? (
+                purchases.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-zinc-400 text-sm whitespace-nowrap">
+                      {formatDate(p.created_at)}
+                    </TableCell>
+                    <TableCell className="font-medium text-zinc-100">
+                      {p.suppliers?.name ?? <span className="text-zinc-500 italic">No supplier</span>}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm text-zinc-300">
+                      {p.invoice_no ?? <span className="text-zinc-600">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right text-zinc-400">
+                      {p.purchase_items.length}
+                    </TableCell>
+                    <TableCell className="text-right font-semibold text-white">
+                      {formatINR(p.total_amount)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-zinc-400 hover:text-white"
+                          onClick={() => handleViewPurchase(p)}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" />
+                          View
+                        </Button>
+                        <button
+                          onClick={() => setDeleteConfirmId(p.id)}
+                          className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                          title="Delete purchase"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-16">
+                    <div className="flex flex-col items-center gap-3 text-zinc-500">
+                      <ShoppingBag className="h-10 w-10 text-zinc-700" />
+                      <p className="text-sm">No purchases yet. Click New Purchase to record stock received.</p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        )}
       </div>
 
       {/* New Purchase Dialog */}
@@ -512,7 +554,7 @@ export function PurchasesPage() {
                           <TableCell className="py-1.5 relative">
                             <div ref={productDropdownOpen === index ? dropdownRef : null} className="relative">
                               <Input
-                                placeholder="Search product..."
+                                placeholder="Search or type product name..."
                                 value={productSearches[index] ?? ''}
                                 onChange={(e) => {
                                   const val = e.target.value
@@ -609,16 +651,20 @@ export function PurchasesPage() {
               disabled={saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
             >
-              {saveMutation.isPending ? 'Saving...' : 'Save Purchase'}
+              {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* View Purchase Dialog */}
-      <Dialog open={!!viewPurchase} onOpenChange={() => setViewPurchase(null)}>
+      <Dialog open={!!viewPurchase} onOpenChange={(o) => { if (!o) setViewPurchase(null) }}>
         <DialogContent className="max-w-lg">
-          {viewPurchase && (
+          {viewLoading ? (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : viewPurchase && (
             <>
               <DialogHeader>
                 <DialogTitle>Purchase Details</DialogTitle>
@@ -654,7 +700,11 @@ export function PurchasesPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {viewPurchase.purchase_items_detail?.map((it) => (
+                      {viewPurchase.purchase_items_detail?.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center text-zinc-500 py-4">No items</TableCell>
+                        </TableRow>
+                      ) : viewPurchase.purchase_items_detail?.map((it) => (
                         <TableRow key={it.id}>
                           <TableCell className="text-zinc-200">{it.product_name}</TableCell>
                           <TableCell className="text-right text-zinc-400">{it.qty}</TableCell>
@@ -665,13 +715,44 @@ export function PurchasesPage() {
                     </TableBody>
                   </Table>
                 </div>
-                <div className="flex justify-end items-center gap-3 pt-1">
-                  <span className="text-zinc-400">Total</span>
-                  <span className="text-lg font-bold text-white">{formatINR(viewPurchase.total_amount)}</span>
+                <div className="flex justify-between items-center pt-1">
+                  <button
+                    onClick={() => setDeleteConfirmId(viewPurchase.id)}
+                    className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete Purchase
+                  </button>
+                  <div className="flex items-center gap-3">
+                    <span className="text-zinc-400">Total</span>
+                    <span className="text-lg font-bold text-white">{formatINR(viewPurchase.total_amount)}</span>
+                  </div>
                 </div>
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <Dialog open={!!deleteConfirmId} onOpenChange={(o) => { if (!o) setDeleteConfirmId(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Purchase?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete the purchase record and all its items. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteConfirmId && deleteMutation.mutate(deleteConfirmId)}
+            >
+              {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Deleting...</> : 'Delete'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
