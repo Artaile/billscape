@@ -34,6 +34,7 @@ interface AuthState {
   role: UserRole | null
   org: OrgInfo | null
   loading: boolean
+  isSuperAdmin: boolean
 }
 
 interface AuthContextValue extends AuthState {
@@ -50,28 +51,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     role: null,
     org: null,
     loading: true,
+    isSuperAdmin: false,
   })
 
   const loadOrgFromSession = async (session: Session | null) => {
     if (!session?.user) {
-      setState({ session: null, user: null, role: null, org: null, loading: false })
+      setState({ session: null, user: null, role: null, org: null, loading: false, isSuperAdmin: false })
       return
     }
 
     try {
-      const { data: membership } = await supabase
+      // Check super admin first via profiles.is_super_admin
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('is_super_admin')
+        .eq('id', session.user.id)
+        .single()
+
+      const isSuperAdmin = profile?.is_super_admin === true
+
+      // Get primary membership (non-super_admin first for tenant context)
+      const { data: memberships } = await supabase
         .from('memberships')
         .select('role, organization_id')
         .eq('user_id', session.user.id)
         .order('created_at', { ascending: true })
-        .limit(1)
-        .single()
 
-      const role = (membership?.role as UserRole) ?? null
-      const orgId = membership?.organization_id ?? null
+      // Pick the first non-super_admin membership for tenant context
+      const tenantMembership = memberships?.find((m) => m.role !== 'super_admin')
+      const role = (tenantMembership?.role as UserRole) ?? null
+      const orgId = tenantMembership?.organization_id ?? null
 
       if (!orgId) {
-        setState({ session, user: session.user, role, org: null, loading: false })
+        setState({ session, user: session.user, role, org: null, loading: false, isSuperAdmin })
         return
       }
 
@@ -90,12 +102,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         feature_flags: settingsResult.data?.feature_flags as Record<string, boolean>,
       }
 
-      // Apply brand color to all Tailwind CSS variables
       applyBrandColor(org.branding?.primary_color ?? '#6366f1')
 
-      setState({ session, user: session.user, role, org, loading: false })
+      setState({ session, user: session.user, role, org, loading: false, isSuperAdmin })
     } catch {
-      setState({ session, user: session.user, role: null, org: null, loading: false })
+      setState({ session, user: session.user, role: null, org: null, loading: false, isSuperAdmin: false })
     }
   }
 

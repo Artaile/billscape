@@ -4,6 +4,14 @@ import type { UserRole } from '@billscape/core'
 import { LoginPage } from '@/pages/auth/LoginPage'
 import { OnboardingPage } from '@/pages/auth/OnboardingPage'
 import { AppShell } from '@/components/layout/AppShell'
+import { PlatformShell } from '@/components/platform/PlatformShell'
+import { PlatformLoginPage } from '@/pages/platform/PlatformLoginPage'
+import { PlatformDashboardPage } from '@/pages/platform/PlatformDashboardPage'
+import { PlatformTenantsPage, PlatformTenantDetailPage } from '@/pages/platform/PlatformTenantsPage'
+import { PlatformPlansPage } from '@/pages/platform/PlatformPlansPage'
+import { PlatformSubscriptionsPage } from '@/pages/platform/PlatformSubscriptionsPage'
+import { PlatformUsagePage } from '@/pages/platform/PlatformUsagePage'
+import { PlatformSettingsPage } from '@/pages/platform/PlatformSettingsPage'
 import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { BillingPage } from '@/pages/billing/BillingPage'
 import { ProductsPage } from '@/pages/products/ProductsPage'
@@ -29,6 +37,14 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
   if (loading) return <FullScreenLoader />
   if (!session) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+function RequireSuperAdmin({ children }: { children: React.ReactNode }) {
+  const { session, isSuperAdmin, loading } = useAuth()
+  if (loading) return <FullScreenLoader />
+  if (!session) return <Navigate to="/platform/login" replace />
+  if (!isSuperAdmin) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -60,6 +76,28 @@ function FullScreenLoader() {
 export function AppRouter() {
   return (
     <Routes>
+      {/* ── Platform (Super Admin) ── */}
+      <Route path="/platform/login" element={<PlatformLoginPage />} />
+      <Route
+        path="/platform/*"
+        element={
+          <RequireSuperAdmin>
+            <PlatformShell>
+              <Routes>
+                <Route index element={<PlatformDashboardPage />} />
+                <Route path="tenants" element={<PlatformTenantsPage />} />
+                <Route path="tenants/:id" element={<PlatformTenantDetailPage />} />
+                <Route path="plans" element={<PlatformPlansPage />} />
+                <Route path="subscriptions" element={<PlatformSubscriptionsPage />} />
+                <Route path="usage" element={<PlatformUsagePage />} />
+                <Route path="settings" element={<PlatformSettingsPage />} />
+              </Routes>
+            </PlatformShell>
+          </RequireSuperAdmin>
+        }
+      />
+
+      {/* ── Tenant App ── */}
       <Route path="/login" element={<LoginPage />} />
       <Route
         path="/onboarding"
