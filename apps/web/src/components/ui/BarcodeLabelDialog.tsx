@@ -32,21 +32,26 @@ export function BarcodeLabelDialog({ open, onOpenChange, product, orgName }: Pro
   const [showPrice, setShowPrice] = useState(true)
 
   useEffect(() => {
-    if (!open || !product.barcode_value || !svgRef.current) return
-    try {
-      JsBarcode(svgRef.current, product.barcode_value, {
-        format: 'CODE128',
-        width: 1.8,
-        height: 50,
-        displayValue: true,
-        fontSize: 11,
-        margin: 4,
-        background: '#ffffff',
-        lineColor: '#000000',
-      })
-    } catch {
-      // invalid barcode value — leave svg blank
-    }
+    if (!open || !product.barcode_value) return
+    // Dialog animates in — wait for SVG to be in the DOM
+    const timer = setTimeout(() => {
+      if (!svgRef.current) return
+      try {
+        JsBarcode(svgRef.current, product.barcode_value!, {
+          format: 'CODE128',
+          width: 1.8,
+          height: 50,
+          displayValue: true,
+          fontSize: 11,
+          margin: 4,
+          background: '#ffffff',
+          lineColor: '#000000',
+        })
+      } catch {
+        // invalid barcode value — leave svg blank
+      }
+    }, 100)
+    return () => clearTimeout(timer)
   }, [open, product.barcode_value])
 
   const handlePrint = () => {
