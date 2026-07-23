@@ -141,15 +141,12 @@ export function ShiftsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('shifts')
-        .select(`
-          *,
-          opener:profiles!opened_by(email, full_name)
-        `)
+        .select('*')
         .eq('organization_id', orgId!)
         .order('opened_at', { ascending: false })
         .limit(20)
       if (error) throw error
-      return data as Shift[]
+      return (data ?? []) as Shift[]
     },
   })
 
@@ -430,10 +427,7 @@ export function ShiftsPage() {
               <TableBody>
                 {shifts.map((shift) => {
                   const diff = shift.cash_difference
-                  const openerLabel =
-                    shift.opener?.full_name ||
-                    shift.opener?.email ||
-                    shift.opened_by.slice(0, 8) + '…'
+                  const openerLabel = shift.opened_by.slice(0, 8) + '…'
                   return (
                     <TableRow
                       key={shift.id}
