@@ -69,11 +69,11 @@ export function ActivityPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {['created', 'updated', 'deleted', 'sale'].map((action) => (
-          <div key={action} className="rounded-lg border border-border bg-card p-4">
-            <p className="text-xs text-muted-foreground capitalize mb-1">{action}s</p>
+        {[{key:'created',label:'Created'},{key:'updated',label:'Updated'},{key:'deleted',label:'Deleted'},{key:'sale',label:'Sales'}].map(({key,label}) => (
+          <div key={key} className="rounded-lg border border-border bg-card p-4">
+            <p className="text-xs text-muted-foreground mb-1">{label}</p>
             <p className="text-2xl font-bold text-foreground">
-              {logs.filter((l) => l.action === action).length}
+              {logs.filter((l) => l.action === key).length}
             </p>
           </div>
         ))}
