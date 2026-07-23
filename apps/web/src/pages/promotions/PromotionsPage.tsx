@@ -31,8 +31,10 @@ interface Promotion {
   code: string | null
   type: 'percentage' | 'flat'
   value: number
+  scope: 'order' | 'product' | 'category' | 'store'
   min_order_amount: number | null
   max_discount_amount: number | null
+  max_uses: number | null
   valid_from: string | null
   valid_until: string | null
   is_active: boolean
@@ -49,9 +51,11 @@ export function PromotionsPage() {
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [type, setType] = useState<'percentage' | 'flat'>('percentage')
+  const [scope, setScope] = useState<'order' | 'product' | 'category' | 'store'>('order')
   const [value, setValue] = useState('')
   const [minOrder, setMinOrder] = useState('')
   const [maxDiscount, setMaxDiscount] = useState('')
+  const [maxUses, setMaxUses] = useState('')
   const [validFrom, setValidFrom] = useState('')
   const [validUntil, setValidUntil] = useState('')
 
@@ -81,9 +85,11 @@ export function PromotionsPage() {
         name: name.trim(),
         code: code.trim().toUpperCase() || null,
         type,
+        scope,
         value: val,
         min_order_amount: minOrder ? parseFloat(minOrder) : null,
         max_discount_amount: maxDiscount ? parseFloat(maxDiscount) : null,
+        max_uses: maxUses ? parseInt(maxUses) : null,
         valid_from: validFrom || null,
         valid_until: validUntil || null,
         is_active: true,
@@ -126,8 +132,8 @@ export function PromotionsPage() {
   })
 
   const resetForm = () => {
-    setName(''); setCode(''); setType('percentage'); setValue('')
-    setMinOrder(''); setMaxDiscount(''); setValidFrom(''); setValidUntil('')
+    setName(''); setCode(''); setType('percentage'); setScope('order'); setValue('')
+    setMinOrder(''); setMaxDiscount(''); setMaxUses(''); setValidFrom(''); setValidUntil('')
   }
 
   const active = promotions.filter((p) => p.is_active).length
@@ -229,7 +235,12 @@ export function PromotionsPage() {
                         ? new Date(promo.valid_until).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
                         : 'No expiry'}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{promo.usage_count}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {promo.usage_count}{promo.max_uses ? ` / ${promo.max_uses}` : ''}
+                      {promo.max_uses && promo.usage_count >= promo.max_uses && (
+                        <span className="ml-1 text-[10px] text-red-400">Limit reached</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium', status.cls)}>
                         {status.label}
@@ -281,6 +292,26 @@ export function PromotionsPage() {
               />
               <p className="text-xs text-muted-foreground">Leave blank for automatic discount (no code needed)</p>
             </div>
+
+            {/* Scope */}
+            <div className="space-y-1.5">
+              <Label>Applies To</Label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {([
+                  { value: 'order', label: 'Entire Order' },
+                  { value: 'store', label: 'All Products' },
+                  { value: 'category', label: 'Category' },
+                  { value: 'product', label: 'Product' },
+                ] as const).map((s) => (
+                  <button key={s.value} type="button" onClick={() => setScope(s.value)}
+                    className={cn('rounded-lg border py-2 text-xs font-medium transition-all',
+                      scope === s.value ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-border/60')}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label>Discount Type *</Label>
               <div className="grid grid-cols-2 gap-2">
@@ -318,6 +349,10 @@ export function PromotionsPage() {
                 <Input type="number" min="0" placeholder="No cap" value={maxDiscount} onChange={(e) => setMaxDiscount(e.target.value)} />
               </div>
             )}
+            <div className="space-y-1.5">
+              <Label>Max Uses <span className="text-xs text-muted-foreground">(leave blank for unlimited)</span></Label>
+              <Input type="number" min="1" placeholder="Unlimited" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Valid From</Label>

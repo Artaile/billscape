@@ -43,6 +43,8 @@ export function ProductFormPage() {
   const [showNewCategory, setShowNewCategory] = useState(false)
   const barcodeRef = useRef<SVGSVGElement>(null)
 
+  const [brand, setBrand] = useState('')
+
   // Variants state
   const [hasVariants, setHasVariants] = useState(false)
   const [variants, setVariants] = useState<{ size: string; color: string; price_delta: number; stock_qty: number; barcode_value: string }[]>([])
@@ -172,6 +174,7 @@ export function ProductFormPage() {
       if (existingProduct.category_id) setCategoryId(existingProduct.category_id)
       if ((existingProduct as any).has_variants) setHasVariants(true)
       if ((existingProduct as any).has_batches) setHasBatches(true)
+      if ((existingProduct as any).brand) setBrand((existingProduct as any).brand)
     }
   }, [existingProduct, reset])
 
@@ -293,6 +296,7 @@ export function ProductFormPage() {
         category_id: categoryId || null,
         has_variants: hasVariants,
         has_batches: hasBatches,
+        brand: brand.trim() || null,
       }
 
       let productId = id
@@ -454,10 +458,14 @@ export function ProductFormPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="sku">SKU</Label>
               <Input id="sku" placeholder="e.g. SALT-001" {...register('sku')} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="brand">Brand</Label>
+              <Input id="brand" placeholder="e.g. Samsung" value={brand} onChange={(e) => setBrand(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="hsn_code">HSN Code</Label>

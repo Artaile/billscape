@@ -21,6 +21,14 @@ export interface OrgBranding {
   invoice_header?: string
   invoice_footer?: string
   shop_name: string
+  bank_name?: string
+  bank_account?: string
+  bank_ifsc?: string
+  invoice_terms?: string
+  invoice_prefix?: string
+  currency?: string
+  date_format?: string
+  timezone?: string
 }
 
 export interface OrgFeatureFlags {

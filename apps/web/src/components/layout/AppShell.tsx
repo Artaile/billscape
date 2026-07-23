@@ -23,6 +23,8 @@ import {
   Activity,
   Clock,
   BookOpen,
+  UserCog,
+  Shield,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -50,6 +52,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Returns', href: '/returns', icon: RotateCcw },
   { label: 'Quotations', href: '/quotations', icon: FileText },
   { label: 'Loyalty', href: '/loyalty', icon: Star },
+  { label: 'Employees', href: '/employees', icon: UserCog, allowedRoles: ['owner', 'manager'] },
+  { label: 'Roles', href: '/roles', icon: Shield, allowedRoles: ['owner'] },
   { label: 'Expenses', href: '/expenses', icon: Receipt, allowedRoles: ['owner', 'manager'] },
   { label: 'Promotions', href: '/promotions', icon: Tag, allowedRoles: ['owner', 'manager'] },
   { label: 'Activity', href: '/activity', icon: Activity, allowedRoles: ['owner', 'manager'] },

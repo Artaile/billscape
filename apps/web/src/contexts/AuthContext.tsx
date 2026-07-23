@@ -16,6 +16,14 @@ interface OrgInfo {
     shop_name: string
     invoice_header?: string
     invoice_footer?: string
+    bank_name?: string
+    bank_account?: string
+    bank_ifsc?: string
+    invoice_terms?: string
+    invoice_prefix?: string
+    currency?: string
+    date_format?: string
+    timezone?: string
   }
   feature_flags?: Record<string, boolean>
 }

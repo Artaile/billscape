@@ -18,7 +18,9 @@ import { cn } from '@/lib/utils'
 
 interface Return {
   id: string
+  return_type: 'sale' | 'purchase'
   original_invoice_no: string
+  purchase_ref: string | null
   reason: string
   refund_mode: string
   refund_amount: number
@@ -44,7 +46,9 @@ export function ReturnsPage() {
 
   const [showDialog, setShowDialog] = useState(false)
   const [viewReturn, setViewReturn] = useState<Return & { return_items_detail?: ReturnItem[] } | null>(null)
+  const [returnType, setReturnType] = useState<'sale' | 'purchase'>('sale')
   const [invoiceNo, setInvoiceNo] = useState('')
+  const [purchaseRef, setPurchaseRef] = useState('')
   const [reason, setReason] = useState(REASONS[0])
   const [refundMode, setRefundMode] = useState('Cash')
   const [notes, setNotes] = useState('')
@@ -82,7 +86,8 @@ export function ReturnsPage() {
   }
 
   function resetForm() {
-    setInvoiceNo(''); setReason(REASONS[0]); setRefundMode('Cash'); setNotes('')
+    setReturnType('sale')
+    setInvoiceNo(''); setPurchaseRef(''); setReason(REASONS[0]); setRefundMode('Cash'); setNotes('')
     setItems([{ product_name: '', qty: 1, unit_price: 0, line_total: 0 }])
   }
 
@@ -90,14 +95,17 @@ export function ReturnsPage() {
     mutationFn: async () => {
       if (!user) throw new Error('Not logged in')
       const validItems = items.filter((i) => i.product_name.trim() && i.qty > 0)
-      if (!invoiceNo.trim()) throw new Error('Enter original invoice number')
+      if (returnType === 'sale' && !invoiceNo.trim()) throw new Error('Enter original invoice number')
+      if (returnType === 'purchase' && !purchaseRef.trim()) throw new Error('Enter purchase reference number')
       if (validItems.length === 0) throw new Error('Add at least one returned item')
 
       const { data: ret, error: retErr } = await supabase
         .from('returns')
         .insert({
           organization_id: orgId!,
-          original_invoice_no: invoiceNo.trim().toUpperCase(),
+          return_type: returnType,
+          original_invoice_no: returnType === 'sale' ? invoiceNo.trim().toUpperCase() : (purchaseRef.trim().toUpperCase()),
+          purchase_ref: returnType === 'purchase' ? purchaseRef.trim().toUpperCase() : null,
           reason,
           refund_mode: refundMode,
           refund_amount: totalRefund,
@@ -119,6 +127,40 @@ export function ReturnsPage() {
         }))
       )
       if (itemsErr) throw itemsErr
+
+      // Auto-adjust stock: for sale returns, add stock back; for purchase returns, deduct stock
+      const stockMovements = validItems
+        .filter((i) => i.product_name.trim())
+        .map(async (item) => {
+          const { data: product } = await supabase
+            .from('products')
+            .select('id')
+            .eq('organization_id', orgId!)
+            .ilike('name', item.product_name.trim())
+            .maybeSingle()
+
+          if (!product) return
+
+          const qtyChange = returnType === 'sale' ? item.qty : -item.qty
+
+          await supabase.from('stock_movements').insert({
+            organization_id: orgId!,
+            product_id: product.id,
+            qty_change: qtyChange,
+            reason: 'return',
+            reference_id: ret.id,
+            note: `${returnType === 'sale' ? 'Sale' : 'Purchase'} return — ${reason}`,
+            created_by: user.id,
+          })
+
+          await supabase.rpc('increment_inventory', {
+            p_org_id: orgId!,
+            p_product_id: product.id,
+            p_qty: qtyChange,
+          }).maybeSingle()
+        })
+
+      await Promise.allSettled(stockMovements)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['returns', orgId] })
@@ -194,7 +236,8 @@ export function ReturnsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
-                <TableHead>Invoice No</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Reference No</TableHead>
                 <TableHead>Reason</TableHead>
                 <TableHead>Refund Mode</TableHead>
                 <TableHead>Items</TableHead>
@@ -207,6 +250,15 @@ export function ReturnsPage() {
                 <TableRow key={r.id}>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </TableCell>
+                  <TableCell>
+                    <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+                      r.return_type === 'sale'
+                        ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                        : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    )}>
+                      {r.return_type === 'sale' ? 'Sale' : 'Purchase'}
+                    </span>
                   </TableCell>
                   <TableCell className="font-mono text-sm text-foreground">{r.original_invoice_no}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{r.reason}</TableCell>
@@ -239,12 +291,39 @@ export function ReturnsPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Process Return</DialogTitle></DialogHeader>
           <div className="space-y-4">
+            {/* Return type toggle */}
+            <div className="flex rounded-lg border border-border overflow-hidden">
+              {(['sale', 'purchase'] as const).map((type) => (
+                <button key={type}
+                  type="button"
+                  onClick={() => setReturnType(type)}
+                  className={cn('flex-1 py-2 text-sm font-medium transition-colors',
+                    returnType === type
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-secondary'
+                  )}>
+                  {type === 'sale' ? '↩ Sale Return' : '↪ Purchase Return'}
+                </button>
+              ))}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Original Invoice No *</Label>
-                <Input placeholder="e.g. INV-20260723-001" value={invoiceNo}
-                  onChange={(e) => setInvoiceNo(e.target.value.toUpperCase())}
-                  className="font-mono uppercase" />
+                {returnType === 'sale' ? (
+                  <>
+                    <Label>Original Invoice No *</Label>
+                    <Input placeholder="e.g. INV-20260723-001" value={invoiceNo}
+                      onChange={(e) => setInvoiceNo(e.target.value.toUpperCase())}
+                      className="font-mono uppercase" />
+                  </>
+                ) : (
+                  <>
+                    <Label>Purchase Reference No *</Label>
+                    <Input placeholder="e.g. PO-20260723-001" value={purchaseRef}
+                      onChange={(e) => setPurchaseRef(e.target.value.toUpperCase())}
+                      className="font-mono uppercase" />
+                  </>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>Refund Mode</Label>

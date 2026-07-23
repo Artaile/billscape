@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Gift, Loader2, Plus, Search, Star } from 'lucide-react'
+import { Gift, Loader2, Plus, Search, Star, History, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -153,6 +153,22 @@ export function LoyaltyPage() {
   const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [newName, setNewName] = useState('')
   const [newPhone, setNewPhone] = useState('')
+  const [historyCustomer, setHistoryCustomer] = useState<LoyaltyCustomer | null>(null)
+
+  const { data: transactions = [], isLoading: txLoading } = useQuery({
+    queryKey: ['loyalty_transactions', orgId, historyCustomer?.id],
+    enabled: !!orgId && !!historyCustomer,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('loyalty_transactions')
+        .select('*')
+        .eq('organization_id', orgId!)
+        .eq('loyalty_customer_id', historyCustomer!.id)
+        .order('created_at', { ascending: false })
+        .limit(50)
+      return data ?? []
+    },
+  })
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
@@ -243,6 +259,11 @@ export function LoyaltyPage() {
                         onClick={() => { setSelectedCustomer(c); setAdjustType('redeem'); setShowAdjust(true) }}>
                         Redeem
                       </Button>
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                        title="Transaction History"
+                        onClick={() => setHistoryCustomer(c)}>
+                        <History className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -296,6 +317,67 @@ export function LoyaltyPage() {
               {adjustMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Processing...</> : adjustType === 'add' ? 'Add Points' : 'Redeem'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transaction History Dialog */}
+      <Dialog open={!!historyCustomer} onOpenChange={(o) => { if (!o) setHistoryCustomer(null) }}>
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-4 w-4" />
+              {historyCustomer?.customer_name} — Transaction History
+            </DialogTitle>
+          </DialogHeader>
+          {historyCustomer && (
+            <div className="flex-1 overflow-y-auto space-y-2">
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="rounded-lg bg-muted p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Balance</p>
+                  <p className="text-lg font-bold text-yellow-400">{historyCustomer.points_balance.toLocaleString()}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Earned</p>
+                  <p className="text-lg font-bold text-emerald-400">{historyCustomer.total_points_earned.toLocaleString()}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Redeemed</p>
+                  <p className="text-lg font-bold text-orange-400">{historyCustomer.total_points_redeemed.toLocaleString()}</p>
+                </div>
+              </div>
+              {txLoading ? (
+                <div className="flex items-center justify-center h-20">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : transactions.length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">No transactions yet</div>
+              ) : (
+                <div className="space-y-2">
+                  {transactions.map((tx: any) => (
+                    <div key={tx.id} className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold ${tx.type === 'add' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-orange-500/15 text-orange-400'}`}>
+                          {tx.type === 'add' ? '+' : '−'}
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-foreground capitalize">{tx.type === 'add' ? 'Points Earned' : 'Points Redeemed'}</p>
+                          {tx.note && <p className="text-[10px] text-muted-foreground">{tx.note}</p>}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-sm font-bold ${tx.type === 'add' ? 'text-emerald-400' : 'text-orange-400'}`}>
+                          {tx.type === 'add' ? '+' : '−'}{tx.points.toLocaleString()} pts
+                        </p>
+                        <p className="text-[10px] text-zinc-600">
+                          {new Date(tx.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

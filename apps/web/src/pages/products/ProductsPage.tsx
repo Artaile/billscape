@@ -10,6 +10,8 @@ import {
   Barcode,
   Filter,
   Printer,
+  Upload,
+  Download,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -92,6 +94,7 @@ export function ProductsPage() {
   const [categoryFilter, setCategoryFilter] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ProductWithInventory | null>(null)
   const [printTarget, setPrintTarget] = useState<ProductWithInventory | null>(null)
+  const [importing, setImporting] = useState(false)
 
   const debouncedSearch = useDebounce(search, 300)
 
@@ -150,6 +153,85 @@ export function ProductsPage() {
     },
   })
 
+  function exportCSV() {
+    if (!products || products.length === 0) {
+      toast.error('No products to export')
+      return
+    }
+    const headers = ['Name', 'SKU', 'Category', 'Price', 'Cost Price', 'Tax Rate (%)', 'HSN Code', 'Barcode', 'Stock', 'Reorder Level']
+    const rows = products.map((p) => [
+      p.name,
+      p.sku ?? '',
+      p.categories?.name ?? '',
+      p.price,
+      p.cost_price ?? 0,
+      p.tax_rate ?? 18,
+      p.hsn_code ?? '',
+      p.barcode_value ?? '',
+      p.inventory?.stock_qty ?? 0,
+      p.inventory?.reorder_level ?? 5,
+    ])
+    const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `products-${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success(`Exported ${products.length} products`)
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    e.target.value = ''
+    setImporting(true)
+    try {
+      const text = await file.text()
+      const lines = text.split('\n').filter((l) => l.trim())
+      if (lines.length < 2) throw new Error('CSV must have a header row and at least one product row')
+      const headers = lines[0].split(',').map((h) => h.replace(/"/g, '').trim().toLowerCase())
+      const nameIdx = headers.findIndex((h) => h === 'name')
+      const priceIdx = headers.findIndex((h) => h === 'price')
+      if (nameIdx === -1 || priceIdx === -1) throw new Error('CSV must have "Name" and "Price" columns')
+
+      const skuIdx = headers.findIndex((h) => h === 'sku')
+      const hsnIdx = headers.findIndex((h) => h === 'hsn code')
+      const taxIdx = headers.findIndex((h) => h.includes('tax rate'))
+      const costIdx = headers.findIndex((h) => h === 'cost price')
+      const barcodeIdx = headers.findIndex((h) => h === 'barcode')
+
+      const parseCell = (row: string[], idx: number) => idx >= 0 ? row[idx]?.replace(/"/g, '').trim() : ''
+
+      const rows = lines.slice(1).map((line) => {
+        const cols = line.split(',')
+        return {
+          organization_id: orgId,
+          name: parseCell(cols, nameIdx),
+          price: parseFloat(parseCell(cols, priceIdx)) || 0,
+          sku: parseCell(cols, skuIdx) || null,
+          hsn_code: parseCell(cols, hsnIdx) || null,
+          tax_rate: parseInt(parseCell(cols, taxIdx)) || 18,
+          cost_price: parseFloat(parseCell(cols, costIdx)) || 0,
+          barcode_value: parseCell(cols, barcodeIdx) || null,
+          is_active: true,
+        }
+      }).filter((r) => r.name)
+
+      if (rows.length === 0) throw new Error('No valid product rows found in CSV')
+
+      const { error } = await supabase.from('products').insert(rows)
+      if (error) throw error
+      queryClient.invalidateQueries({ queryKey: ['products', orgId] })
+      toast.success(`Imported ${rows.length} products`)
+    } catch (err: unknown) {
+      toast.error('Import failed', err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const getStockBadge = useCallback((item: ProductWithInventory) => {
     if (!item.track_stock || !item.inventory) return null
     const { stock_qty, reorder_level } = item.inventory
@@ -168,10 +250,23 @@ export function ProductsPage() {
             {products?.length ?? 0} products
           </p>
         </div>
-        <Button onClick={() => navigate('/products/new')}>
-          <Plus className="h-4 w-4" />
-          Add Product
-        </Button>
+        <div className="flex items-center gap-2">
+          <label className="cursor-pointer">
+            <input type="file" accept=".csv" className="hidden" onChange={handleImport} disabled={importing} />
+            <Button variant="outline" size="sm" asChild>
+              <span>
+                <Upload className="h-4 w-4" />
+                {importing ? 'Importing...' : 'Import CSV'}
+              </span>
+            </Button>
+          </label>
+          <Button variant="outline" size="sm" onClick={exportCSV}>
+            <Download className="h-4 w-4" /> Export CSV
+          </Button>
+          <Button onClick={() => navigate('/products/new')}>
+            <Plus className="h-4 w-4" /> Add Product
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}

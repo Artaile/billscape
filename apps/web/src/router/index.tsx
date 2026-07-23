@@ -22,6 +22,8 @@ import { LoyaltyPage } from '@/pages/loyalty/LoyaltyPage'
 import { ActivityPage } from '@/pages/activity/ActivityPage'
 import { ShiftsPage } from '@/pages/shifts/ShiftsPage'
 import { LedgerPage } from '@/pages/ledger/LedgerPage'
+import { EmployeesPage } from '@/pages/employees/EmployeesPage'
+import { RolesPage } from '@/pages/roles/RolesPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -89,6 +91,8 @@ export function AppRouter() {
                   <Route path="returns" element={<ReturnsPage />} />
                   <Route path="quotations" element={<QuotationsPage />} />
                   <Route path="loyalty" element={<LoyaltyPage />} />
+                  <Route path="employees" element={<RequireRole roles={['owner', 'manager']}><EmployeesPage /></RequireRole>} />
+                  <Route path="roles" element={<RequireRole roles={['owner']}><RolesPage /></RequireRole>} />
                   <Route path="activity" element={<RequireRole roles={['owner', 'manager']}><ActivityPage /></RequireRole>} />
                   <Route path="reports" element={<RequireRole roles={['owner', 'manager']}><ReportsPage /></RequireRole>} />
                   <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />

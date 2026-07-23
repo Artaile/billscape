@@ -49,7 +49,15 @@ interface CustomerOption {
 }
 
 const SCANNER_THRESHOLD_MS = 75
-const HELD_BILL_KEY = 'billscape_held_bill'
+const HELD_BILLS_KEY = 'billscape_held_bills'
+
+interface HeldBill {
+  id: string
+  name: string
+  cart: CartItem[]
+  customer: { id: string; name: string; phone?: string | null; gstin?: string | null } | null
+  savedAt: number
+}
 
 type PaymentMode = 'cash' | 'card' | 'upi'
 
@@ -71,7 +79,12 @@ export function BillingPage() {
   const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null)
   const [showInvoice, setShowInvoice] = useState(false)
   const [productSearch, setProductSearch] = useState('')
-  const [hasHeldBill, setHasHeldBill] = useState(false)
+  const [heldBills, setHeldBills] = useState<HeldBill[]>(() => {
+    try { return JSON.parse(sessionStorage.getItem(HELD_BILLS_KEY) ?? '[]') } catch { return [] }
+  })
+  const [showHolds, setShowHolds] = useState(false)
+  const [holdName, setHoldName] = useState('')
+  const [showHoldNameDialog, setShowHoldNameDialog] = useState(false)
 
   // Customer state
   const [customerSearch, setCustomerSearch] = useState('')
@@ -166,12 +179,6 @@ export function BillingPage() {
       return (data ?? []) as CustomerOption[]
     },
   })
-
-  // Check for held bill on mount
-  useEffect(() => {
-    const held = sessionStorage.getItem(HELD_BILL_KEY)
-    if (held) setHasHeldBill(true)
-  }, [])
 
   // Focus scan input on mount and after dialog closes
   const focusScanInput = useCallback(() => {
@@ -300,23 +307,44 @@ export function BillingPage() {
     setCart((prev) => prev.filter((c) => c.product_id !== productId))
   }, [])
 
-  const holdBill = () => {
-    if (cart.length === 0) return
-    const held = { cart, timestamp: Date.now() }
-    sessionStorage.setItem(HELD_BILL_KEY, JSON.stringify(held))
-    setHasHeldBill(true)
-    setCart([])
-    toast.success('Bill held', 'You can resume it anytime.')
+  const saveHeldBills = (bills: HeldBill[]) => {
+    sessionStorage.setItem(HELD_BILLS_KEY, JSON.stringify(bills))
+    setHeldBills(bills)
   }
 
-  const resumeBill = () => {
-    const raw = sessionStorage.getItem(HELD_BILL_KEY)
-    if (!raw) return
-    const held = JSON.parse(raw) as { cart: CartItem[]; timestamp: number }
-    setCart(held.cart)
-    sessionStorage.removeItem(HELD_BILL_KEY)
-    setHasHeldBill(false)
-    toast.success('Bill resumed')
+  const holdBill = (name?: string) => {
+    if (cart.length === 0) return
+    const billName = name?.trim() || `Bill ${heldBills.length + 1}`
+    const newBill: HeldBill = {
+      id: Date.now().toString(),
+      name: billName,
+      cart,
+      customer: selectedCustomer,
+      savedAt: Date.now(),
+    }
+    saveHeldBills([...heldBills, newBill])
+    setCart([])
+    setSelectedCustomer(null)
+    setCustomerSearch('')
+    setHoldName('')
+    setShowHoldNameDialog(false)
+    toast.success(`"${billName}" held`, 'Tap Held Bills to resume.')
+  }
+
+  const resumeHeldBill = (bill: HeldBill) => {
+    if (cart.length > 0) {
+      toast.error('Clear current cart first', 'Hold or complete the current bill before resuming another.')
+      return
+    }
+    setCart(bill.cart)
+    if (bill.customer) setSelectedCustomer(bill.customer)
+    saveHeldBills(heldBills.filter((b) => b.id !== bill.id))
+    setShowHolds(false)
+    toast.success(`Resumed "${bill.name}"`)
+  }
+
+  const deleteHeldBill = (id: string) => {
+    saveHeldBills(heldBills.filter((b) => b.id !== id))
   }
 
   const sendWhatsApp = (sale: CompletedSale, phone: string) => {
@@ -490,14 +518,18 @@ export function BillingPage() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {hasHeldBill && (
-              <Button variant="ghost" size="sm" onClick={resumeBill} className="h-7 text-xs text-emerald-400">
+            {heldBills.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => setShowHolds(true)}
+                className="h-7 text-xs text-emerald-400 relative">
                 <Play className="h-3 w-3" />
-                Resume
+                Held Bills
+                <span className="ml-1 rounded-full bg-emerald-500 text-white text-[9px] px-1.5 py-0.5 font-bold">
+                  {heldBills.length}
+                </span>
               </Button>
             )}
             {cart.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={holdBill} className="h-7 text-xs">
+              <Button variant="ghost" size="sm" onClick={() => setShowHoldNameDialog(true)} className="h-7 text-xs">
                 <Pause className="h-3 w-3" />
                 Hold
               </Button>
@@ -767,6 +799,74 @@ export function BillingPage() {
                 paymentMode={paymentMode}
               />
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Hold Name Dialog */}
+      <Dialog open={showHoldNameDialog} onOpenChange={setShowHoldNameDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pause className="h-4 w-4" /> Hold This Bill
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Give this bill a name so you can easily find it later. ({cart.length} items)
+            </p>
+            <Input
+              placeholder={`Bill ${heldBills.length + 1} (default)`}
+              value={holdName}
+              onChange={(e) => setHoldName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && holdBill(holdName)}
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button variant="outline" className="flex-1" onClick={() => setShowHoldNameDialog(false)}>Cancel</Button>
+            <Button className="flex-1" onClick={() => holdBill(holdName)}>
+              <Pause className="h-4 w-4" /> Hold Bill
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Held Bills List Dialog */}
+      <Dialog open={showHolds} onOpenChange={setShowHolds}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Play className="h-4 w-4 text-emerald-400" /> Held Bills ({heldBills.length})
+            </DialogTitle>
+          </DialogHeader>
+          {heldBills.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-6">No held bills</p>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {heldBills.map((bill) => (
+                <div key={bill.id} className="flex items-center justify-between rounded-lg border border-border bg-card p-3 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{bill.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {bill.cart.length} items
+                      {bill.customer ? ` · ${bill.customer.name}` : ''}
+                      {' · '}
+                      {new Date(bill.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <Button size="sm" className="h-7 text-xs" onClick={() => resumeHeldBill(bill)}>
+                      <Play className="h-3 w-3" /> Resume
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-400"
+                      onClick={() => deleteHeldBill(bill.id)}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </DialogContent>
       </Dialog>

@@ -15,6 +15,7 @@ import {
   Receipt,
   AlertTriangle,
   Clock,
+  Percent,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -152,6 +153,27 @@ export function DashboardPage() {
     },
   })
 
+  // GST overview (current month)
+  const { data: gstData, isLoading: gstLoading } = useQuery({
+    queryKey: ['gst-overview', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const now = new Date()
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+      const { data } = await supabase
+        .from('sale_items')
+        .select('cgst_amount, sgst_amount, igst_amount, sales!inner(organization_id, created_at)')
+        .eq('sales.organization_id', orgId!)
+        .gte('sales.created_at', monthStart)
+      if (!data) return { collected: 0, paid: 0 }
+      const collected = data.reduce(
+        (sum, i) => sum + (i.cgst_amount ?? 0) + (i.sgst_amount ?? 0) + (i.igst_amount ?? 0),
+        0
+      )
+      return { collected, paid: 0 }
+    },
+  })
+
   // Recent activity
   const { data: activity, isLoading: activityLoading } = useQuery({
     queryKey: ['activity', orgId],
@@ -236,6 +258,46 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      {/* GST / TAX Overview */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="rounded-lg p-1.5 bg-orange-600/10">
+            <Percent className="h-4 w-4 text-orange-400" />
+          </div>
+          <h2 className="text-sm font-semibold text-foreground">GST Overview — This Month</h2>
+        </div>
+        {gstLoading ? (
+          <div className="grid grid-cols-3 gap-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="animate-pulse space-y-1.5">
+                <div className="h-3 bg-zinc-800 rounded w-2/3" />
+                <div className="h-6 bg-zinc-800 rounded w-1/2" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-xs text-zinc-400 mb-1">GST Collected</p>
+              <p className="text-lg font-bold text-emerald-400">{formatINR(gstData?.collected ?? 0)}</p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">From sales (CGST+SGST+IGST)</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-400 mb-1">GST Paid (Input)</p>
+              <p className="text-lg font-bold text-red-400">{formatINR(gstData?.paid ?? 0)}</p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">On purchases</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-400 mb-1">Net Tax Payable</p>
+              <p className="text-lg font-bold text-orange-400">
+                {formatINR(Math.max(0, (gstData?.collected ?? 0) - (gstData?.paid ?? 0)))}
+              </p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">Collected − Paid</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Charts row */}

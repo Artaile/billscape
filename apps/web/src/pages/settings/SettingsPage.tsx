@@ -13,6 +13,10 @@ import {
   CreditCard,
   Moon,
   Sun,
+  FileText,
+  Globe,
+  Download,
+  Trash2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -103,6 +107,20 @@ export function SettingsPage() {
   const [invoiceFooter, setInvoiceFooter] = useState(org?.branding?.invoice_footer ?? '')
   const [showInviteDialog, setShowInviteDialog] = useState(false)
 
+  // Invoice tab extra fields
+  const [bankName, setBankName] = useState(org?.branding?.bank_name ?? '')
+  const [bankAccount, setBankAccount] = useState(org?.branding?.bank_account ?? '')
+  const [bankIfsc, setBankIfsc] = useState(org?.branding?.bank_ifsc ?? '')
+  const [invoiceTerms, setInvoiceTerms] = useState(org?.branding?.invoice_terms ?? 'Thank you for your business!')
+  const [invoicePrefix, setInvoicePrefix] = useState(org?.branding?.invoice_prefix ?? 'INV')
+
+  // Regional tab
+  const [currency, setCurrency] = useState(org?.branding?.currency ?? '₹')
+  const [dateFormat, setDateFormat] = useState(org?.branding?.date_format ?? 'DD/MM/YYYY')
+  const [timezone, setTimezone] = useState(org?.branding?.timezone ?? 'Asia/Kolkata')
+
+  const [exportLoading, setExportLoading] = useState(false)
+
   const shopForm = useForm<ShopInfoValues>({
     resolver: zodResolver(shopInfoSchema),
     defaultValues: {
@@ -187,6 +205,77 @@ export function SettingsPage() {
     onError: (err: Error) => toast.error('Save failed', err.message),
   })
 
+  const saveInvoiceSettingsMutation = useMutation({
+    mutationFn: async () => {
+      const existing = org?.branding ?? {}
+      const { error } = await supabase.from('org_settings').upsert({
+        organization_id: orgId!,
+        branding: {
+          ...existing,
+          bank_name: bankName.trim() || null,
+          bank_account: bankAccount.trim() || null,
+          bank_ifsc: bankIfsc.trim() || null,
+          invoice_terms: invoiceTerms.trim(),
+          invoice_prefix: invoicePrefix.trim() || 'INV',
+        },
+      }, { onConflict: 'organization_id' })
+      if (error) throw error
+    },
+    onSuccess: async () => { await refreshOrg(); toast.success('Invoice settings saved') },
+    onError: (err: Error) => toast.error('Save failed', err.message),
+  })
+
+  const saveRegionalMutation = useMutation({
+    mutationFn: async () => {
+      const existing = org?.branding ?? {}
+      const { error } = await supabase.from('org_settings').upsert({
+        organization_id: orgId!,
+        branding: { ...existing, currency, date_format: dateFormat, timezone },
+      }, { onConflict: 'organization_id' })
+      if (error) throw error
+    },
+    onSuccess: async () => { await refreshOrg(); toast.success('Regional settings saved') },
+    onError: (err: Error) => toast.error('Save failed', err.message),
+  })
+
+  async function exportAllData() {
+    if (!orgId) return
+    setExportLoading(true)
+    try {
+      const [products, customers, sales, purchases, expenses] = await Promise.all([
+        supabase.from('products').select('name,sku,price,cost_price,tax_rate,hsn_code,barcode_value').eq('organization_id', orgId).eq('is_active', true),
+        supabase.from('customers').select('name,phone,email,gstin,address,balance').eq('organization_id', orgId),
+        supabase.from('sales').select('invoice_no,grand_total,payment_mode,created_at').eq('organization_id', orgId).order('created_at', { ascending: false }),
+        supabase.from('purchases').select('invoice_no,total_amount,created_at').eq('organization_id', orgId).order('created_at', { ascending: false }),
+        supabase.from('expenses').select('category,amount,description,expense_date').eq('organization_id', orgId).order('expense_date', { ascending: false }),
+      ])
+
+      const toCSV = (headers: string[], rows: Record<string, unknown>[]) =>
+        [headers, ...rows.map((r) => headers.map((h) => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))].map((r) => r.join(',')).join('\n')
+
+      const sections = [
+        '=== PRODUCTS ===\n' + toCSV(['name','sku','price','cost_price','tax_rate','hsn_code','barcode_value'], products.data ?? []),
+        '=== CUSTOMERS ===\n' + toCSV(['name','phone','email','gstin','address','balance'], customers.data ?? []),
+        '=== SALES ===\n' + toCSV(['invoice_no','grand_total','payment_mode','created_at'], sales.data ?? []),
+        '=== PURCHASES ===\n' + toCSV(['invoice_no','total_amount','created_at'], purchases.data ?? []),
+        '=== EXPENSES ===\n' + toCSV(['category','amount','description','expense_date'], expenses.data ?? []),
+      ].join('\n\n')
+
+      const blob = new Blob([sections], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `billscape-backup-${new Date().toISOString().split('T')[0]}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Data exported successfully')
+    } catch (e: unknown) {
+      toast.error('Export failed', e instanceof Error ? e.message : 'Unknown error')
+    } finally {
+      setExportLoading(false)
+    }
+  }
+
   const updateRoleMutation = useMutation({
     mutationFn: async ({ memberId, role }: { memberId: string; role: UserRole }) => {
       const { error } = await supabase
@@ -255,6 +344,18 @@ export function SettingsPage() {
           <TabsTrigger value="billing">
             <CreditCard className="h-3.5 w-3.5 mr-1.5" />
             Billing
+          </TabsTrigger>
+          <TabsTrigger value="invoice">
+            <FileText className="h-3.5 w-3.5 mr-1.5" />
+            Invoice
+          </TabsTrigger>
+          <TabsTrigger value="regional">
+            <Globe className="h-3.5 w-3.5 mr-1.5" />
+            Regional
+          </TabsTrigger>
+          <TabsTrigger value="backup">
+            <Download className="h-3.5 w-3.5 mr-1.5" />
+            Backup
           </TabsTrigger>
         </TabsList>
 
@@ -584,6 +685,133 @@ export function SettingsPage() {
                 <Button className="mt-4 w-full" variant="outline">
                   Upgrade to Pro
                 </Button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* Invoice Settings */}
+        <TabsContent value="invoice">
+          <div className="rounded-lg border border-border bg-card p-6 space-y-5">
+            <h2 className="text-base font-semibold text-foreground">Invoice Settings</h2>
+
+            <div className="space-y-1.5">
+              <Label>Invoice Number Prefix</Label>
+              <Input placeholder="INV" value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value)} className="max-w-xs" />
+              <p className="text-xs text-muted-foreground">e.g. INV → INV-20260723-001</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Terms & Conditions</Label>
+              <textarea
+                value={invoiceTerms}
+                onChange={(e) => setInvoiceTerms(e.target.value)}
+                placeholder="Thank you for your business!"
+                rows={3}
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              />
+            </div>
+
+            <div className="space-y-3">
+              <Label>Bank Details (for invoice footer)</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Bank Name</Label>
+                  <Input placeholder="e.g. SBI" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Account Number</Label>
+                  <Input placeholder="1234567890" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">IFSC Code</Label>
+                  <Input placeholder="SBIN0001234" value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} className="uppercase" />
+                </div>
+              </div>
+            </div>
+
+            <Button onClick={() => saveInvoiceSettingsMutation.mutate()} disabled={saveInvoiceSettingsMutation.isPending}>
+              {saveInvoiceSettingsMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Invoice Settings'}
+            </Button>
+          </div>
+        </TabsContent>
+
+        {/* Regional Settings */}
+        <TabsContent value="regional">
+          <div className="rounded-lg border border-border bg-card p-6 space-y-5">
+            <h2 className="text-base font-semibold text-foreground">Regional Settings</h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <Label>Currency Symbol</Label>
+                <select value={currency} onChange={(e) => setCurrency(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                  <option value="₹">₹ — Indian Rupee</option>
+                  <option value="$">$ — US Dollar</option>
+                  <option value="€">€ — Euro</option>
+                  <option value="£">£ — British Pound</option>
+                  <option value="AED">AED — UAE Dirham</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Date Format</Label>
+                <select value={dateFormat} onChange={(e) => setDateFormat(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                  <option value="DD/MM/YYYY">DD/MM/YYYY (India)</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY (US)</option>
+                  <option value="YYYY-MM-DD">YYYY-MM-DD (ISO)</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Timezone</Label>
+                <select value={timezone} onChange={(e) => setTimezone(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                  <option value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</option>
+                  <option value="Asia/Dubai">Asia/Dubai (GST +4:00)</option>
+                  <option value="Asia/Singapore">Asia/Singapore (SGT +8:00)</option>
+                  <option value="America/New_York">America/New_York (EST)</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </div>
+            </div>
+
+            <Button onClick={() => saveRegionalMutation.mutate()} disabled={saveRegionalMutation.isPending}>
+              {saveRegionalMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Regional Settings'}
+            </Button>
+          </div>
+        </TabsContent>
+
+        {/* Backup & Export */}
+        <TabsContent value="backup">
+          <div className="rounded-lg border border-border bg-card p-6 space-y-5">
+            <h2 className="text-base font-semibold text-foreground">Backup & Data Export</h2>
+            <p className="text-sm text-muted-foreground">
+              Download all your business data as a CSV file. This includes products, customers, sales, purchases, and expenses.
+            </p>
+
+            <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <Download className="h-5 w-5 text-primary" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Full Data Export</p>
+                  <p className="text-xs text-muted-foreground">Products, Customers, Sales, Purchases, Expenses — single CSV file</p>
+                </div>
+              </div>
+              <Button onClick={exportAllData} disabled={exportLoading} className="w-full sm:w-auto">
+                {exportLoading ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Exporting...</> : <><Download className="h-4 w-4" /> Download Backup</>}
+              </Button>
+            </div>
+
+            <div className="rounded-lg border border-red-800/40 bg-red-950/20 p-4">
+              <div className="flex items-start gap-3">
+                <Trash2 className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-red-400">Danger Zone</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Deleting your account or organization cannot be undone. Please export your data first.
+                    Contact support to delete your account.
+                  </p>
+                </div>
               </div>
             </div>
           </div>

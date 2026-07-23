@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Filter, SlidersHorizontal, Plus, Minus, AlertTriangle } from 'lucide-react'
+import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableHeader,
@@ -24,6 +25,7 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { formatINR } from '@billscape/core'
 import type { StockMovementReason } from '@billscape/core'
 
 type StockFilter = 'all' | 'low' | 'out'
@@ -144,28 +146,102 @@ export function InventoryPage() {
     return <Badge variant="success">In Stock</Badge>
   }
 
+  // Stock movements (ledger & history)
+  const { data: movements, isLoading: movementsLoading } = useQuery({
+    queryKey: ['stock_movements', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('stock_movements')
+        .select('*, products(name)')
+        .eq('organization_id', orgId!)
+        .order('created_at', { ascending: false })
+        .limit(200)
+      return data ?? []
+    },
+  })
+
+  // Opening stock form state
+  const [openingProduct, setOpeningProduct] = useState('')
+  const [openingQty, setOpeningQty] = useState(0)
+  const [openingNote, setOpeningNote] = useState('')
+
+  const openingMutation = useMutation({
+    mutationFn: async () => {
+      if (!orgId || !user) throw new Error('Not logged in')
+      const { data: product } = await supabase
+        .from('products')
+        .select('id, name')
+        .eq('organization_id', orgId)
+        .ilike('name', openingProduct.trim())
+        .maybeSingle()
+      if (!product) throw new Error('Product not found — check spelling')
+      if (openingQty <= 0) throw new Error('Quantity must be greater than 0')
+
+      const { error: invErr } = await supabase
+        .from('inventory')
+        .upsert({ organization_id: orgId, product_id: product.id, stock_qty: openingQty }, { onConflict: 'product_id' })
+      if (invErr) throw invErr
+
+      await supabase.from('stock_movements').insert({
+        organization_id: orgId,
+        product_id: product.id,
+        qty_change: openingQty,
+        reason: 'opening',
+        note: openingNote.trim() || 'Opening stock entry',
+        created_by: user.id,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['stock_movements', orgId] })
+      toast.success('Opening stock set')
+      setOpeningProduct(''); setOpeningQty(0); setOpeningNote('')
+    },
+    onError: (err: Error) => toast.error('Failed', err.message),
+  })
+
   const openAdjust = (item: InventoryRow) => {
     setAdjustTarget(item)
     setAdjustQty(0)
     setAdjustType('+')
-    setAdjustReason('purchase')
+    setAdjustReason('adjustment')
     setAdjustNote('')
   }
 
+  const totalValue = inventory?.reduce((sum, i) => sum + i.stock_qty * 0, 0) ?? 0
+  void totalValue
+
   return (
-    <div className="p-4 lg:p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-white">Inventory</h1>
-          <p className="text-sm text-zinc-400 mt-0.5">
-            {filteredInventory?.length ?? 0} products
+    <div className="p-4 lg:p-6 space-y-6">
+      <div>
+        <h1 className="text-xl font-bold text-foreground">Inventory Management</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Stock levels, movements, and adjustments</p>
+      </div>
+
+      {/* Summary KPIs */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground mb-1">Total SKUs</p>
+          <p className="text-2xl font-bold text-foreground">{inventory?.length ?? 0}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground mb-1">Low Stock Items</p>
+          <p className="text-2xl font-bold text-yellow-400">
+            {inventory?.filter((i) => i.stock_qty > 0 && i.stock_qty <= i.reorder_level).length ?? 0}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground mb-1">Out of Stock</p>
+          <p className="text-2xl font-bold text-red-400">
+            {inventory?.filter((i) => i.stock_qty === 0).length ?? 0}
           </p>
         </div>
       </div>
 
       {/* Expiring soon alert */}
       {expiringBatches && expiringBatches.length > 0 && (
-        <div className="mb-4 rounded-lg border border-yellow-700 bg-yellow-900/20 p-3">
+        <div className="rounded-lg border border-yellow-700 bg-yellow-900/20 p-3">
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle className="h-4 w-4 text-yellow-400" />
             <span className="text-sm font-semibold text-yellow-300">{expiringBatches.length} batch(es) expiring within 30 days</span>
@@ -174,12 +250,9 @@ export function InventoryPage() {
             {expiringBatches.slice(0, 5).map((b: any, i: number) => (
               <div key={i} className="text-xs text-yellow-200/70 flex gap-2">
                 <span className="font-medium">{b.products?.name ?? 'Unknown'}</span>
-                <span>•</span>
-                <span>Batch {b.batch_no}</span>
-                <span>•</span>
-                <span>Exp: {b.expiry_date}</span>
-                <span>•</span>
-                <span>Qty: {b.qty}</span>
+                <span>•</span><span>Batch {b.batch_no}</span>
+                <span>•</span><span>Exp: {b.expiry_date}</span>
+                <span>•</span><span>Qty: {b.qty}</span>
               </div>
             ))}
             {expiringBatches.length > 5 && (
@@ -189,117 +262,193 @@ export function InventoryPage() {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        <div className="relative min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-          <Input
-            placeholder="Search products..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <div className="flex rounded-lg bg-zinc-800 p-1 gap-1">
-          {([
-            { value: 'all', label: 'All' },
-            { value: 'low', label: 'Low Stock' },
-            { value: 'out', label: 'Out of Stock' },
-          ] as const).map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={cn(
-                'rounded-md px-3 py-1 text-xs font-medium transition-all',
-                filter === f.value
-                  ? 'bg-indigo-600 text-white shadow'
-                  : 'text-zinc-400 hover:text-zinc-200',
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <Tabs defaultValue="stock-list">
+        <TabsList>
+          <TabsTrigger value="stock-list">Stock List</TabsTrigger>
+          <TabsTrigger value="movements">Ledger & History</TabsTrigger>
+          <TabsTrigger value="adjustments">Adjustments</TabsTrigger>
+          <TabsTrigger value="opening">Opening Stock</TabsTrigger>
+        </TabsList>
 
-      {/* Table */}
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Product</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead className="text-right">Current Stock</TableHead>
-              <TableHead className="text-right">Reorder Level</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 8 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <div className="h-4 bg-zinc-800 rounded animate-pulse" />
+        {/* ── Tab 1: Stock List ── */}
+        <TabsContent value="stock-list" className="mt-4 space-y-4">
+          <div className="flex flex-wrap gap-3">
+            <div className="relative min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search products..." value={search}
+                onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            </div>
+            <div className="flex rounded-lg bg-secondary p-1 gap-1">
+              {([{ value: 'all', label: 'All' }, { value: 'low', label: 'Low Stock' }, { value: 'out', label: 'Out of Stock' }] as const).map((f) => (
+                <button key={f.value} onClick={() => setFilter(f.value)}
+                  className={cn('rounded-md px-3 py-1 text-xs font-medium transition-all',
+                    filter === f.value ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground')}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Product</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Current Stock</TableHead>
+                  <TableHead className="text-right">Reorder Level</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <TableRow key={i}>{Array.from({ length: 6 }).map((_, j) => (
+                      <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                    ))}</TableRow>
+                  ))
+                ) : filteredInventory && filteredInventory.length > 0 ? (
+                  filteredInventory.map((item) => (
+                    <TableRow key={item.product_id}>
+                      <TableCell className="font-medium text-foreground">{item.products?.name ?? 'Unknown'}</TableCell>
+                      <TableCell className="text-muted-foreground text-sm">{item.products?.categories?.name ?? '—'}</TableCell>
+                      <TableCell className="text-right">
+                        <span className={cn('font-semibold tabular-nums',
+                          item.stock_qty === 0 ? 'text-red-400' : item.stock_qty <= item.reorder_level ? 'text-yellow-400' : 'text-foreground')}>
+                          {item.stock_qty}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">{item.reorder_level}</TableCell>
+                      <TableCell>{getStatusBadge(item)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openAdjust(item)}>
+                          <SlidersHorizontal className="h-3 w-3" /> Adjust
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-12">No inventory records found</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+
+        {/* ── Tab 2: Ledger & History ── */}
+        <TabsContent value="movements" className="mt-4">
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead>Note</TableHead>
+                  <TableHead className="text-right">Qty Change</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {movementsLoading ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => (
+                      <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                    ))}</TableRow>
+                  ))
+                ) : movements && movements.length > 0 ? (
+                  movements.map((m: any) => (
+                    <TableRow key={m.id}>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                        {new Date(m.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </TableCell>
+                      <TableCell className="text-sm font-medium text-foreground">{m.products?.name ?? '—'}</TableCell>
+                      <TableCell>
+                        <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize',
+                          m.reason === 'sale' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                          m.reason === 'purchase' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                          m.reason === 'return' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+                          m.reason === 'damage' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                          m.reason === 'opening' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
+                          'bg-zinc-500/10 text-zinc-400 border-zinc-500/20')}>
+                          {m.reason}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{m.note ?? '—'}</TableCell>
+                      <TableCell className="text-right">
+                        <span className={cn('font-semibold tabular-nums text-sm',
+                          m.qty_change > 0 ? 'text-emerald-400' : 'text-red-400')}>
+                          {m.qty_change > 0 ? '+' : ''}{m.qty_change}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
+                      No stock movements yet
                     </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : filteredInventory && filteredInventory.length > 0 ? (
-              filteredInventory.map((item) => (
-                <TableRow key={item.product_id}>
-                  <TableCell>
-                    <span className="font-medium text-zinc-100">
-                      {item.products?.name ?? 'Unknown'}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-zinc-400 text-sm">
-                      {item.products?.categories?.name ?? '—'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <span
-                      className={cn(
-                        'font-semibold tabular-nums',
-                        item.stock_qty === 0
-                          ? 'text-red-400'
-                          : item.stock_qty <= item.reorder_level
-                          ? 'text-yellow-400'
-                          : 'text-zinc-200',
-                      )}
-                    >
-                      {item.stock_qty}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right text-zinc-400">
-                    {item.reorder_level}
-                  </TableCell>
-                  <TableCell>{getStatusBadge(item)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => openAdjust(item)}
-                    >
-                      <SlidersHorizontal className="h-3 w-3" />
-                      Adjust
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-zinc-500 py-12">
-                  No inventory records found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+
+        {/* ── Tab 3: Adjustments ── */}
+        <TabsContent value="adjustments" className="mt-4">
+          <div className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6">
+            <div className="flex items-center gap-2 mb-2">
+              <SlidersHorizontal className="h-5 w-5 text-primary" />
+              <h2 className="text-base font-semibold text-foreground">Manual Stock Adjustment</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">Select a product from the Stock List and click Adjust, or use this form to adjust any product.</p>
+            <p className="text-xs text-zinc-500 mt-2">
+              Click <strong className="text-foreground">Adjust</strong> on any row in the Stock List tab to open the adjustment dialog for that product.
+            </p>
+            <div className="rounded-lg bg-secondary p-3 text-xs text-muted-foreground space-y-1">
+              <p>• <strong>Add Stock</strong> — received goods, corrections</p>
+              <p>• <strong>Remove Stock</strong> — damage, loss, theft</p>
+              <p>• All adjustments are recorded in Ledger & History</p>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ── Tab 4: Opening Stock ── */}
+        <TabsContent value="opening" className="mt-4">
+          <div className="max-w-md rounded-lg border border-border bg-card p-6 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <PackageOpen className="h-5 w-5 text-primary" />
+              <h2 className="text-base font-semibold text-foreground">Set Opening Stock</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Enter the initial stock quantity for a product. This sets the stock level and records a movement with reason "opening".
+            </p>
+            <div className="space-y-1.5">
+              <Label>Product Name *</Label>
+              <Input placeholder="Type exact product name" value={openingProduct}
+                onChange={(e) => setOpeningProduct(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Opening Quantity *</Label>
+              <Input type="number" min={1} value={openingQty}
+                onChange={(e) => setOpeningQty(Math.max(0, parseInt(e.target.value) || 0))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note (optional)</Label>
+              <Input placeholder="e.g. Stock count on 23 Jul 2026" value={openingNote}
+                onChange={(e) => setOpeningNote(e.target.value)} />
+            </div>
+            <Button className="w-full" onClick={() => openingMutation.mutate()}
+              disabled={openingMutation.isPending || !openingProduct.trim() || openingQty <= 0}>
+              {openingMutation.isPending
+                ? <><History className="h-4 w-4 animate-spin mr-1" />Setting...</>
+                : 'Set Opening Stock'}
+            </Button>
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Adjust stock dialog */}
       <Dialog open={!!adjustTarget} onOpenChange={() => setAdjustTarget(null)}>
