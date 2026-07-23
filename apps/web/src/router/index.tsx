@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import type { UserRole } from '@billscape/core'
 import { LoginPage } from '@/pages/auth/LoginPage'
 import { OnboardingPage } from '@/pages/auth/OnboardingPage'
 import { AppShell } from '@/components/layout/AppShell'
@@ -19,6 +20,8 @@ import { ReturnsPage } from '@/pages/returns/ReturnsPage'
 import { QuotationsPage } from '@/pages/quotations/QuotationsPage'
 import { LoyaltyPage } from '@/pages/loyalty/LoyaltyPage'
 import { ActivityPage } from '@/pages/activity/ActivityPage'
+import { ShiftsPage } from '@/pages/shifts/ShiftsPage'
+import { LedgerPage } from '@/pages/ledger/LedgerPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -31,6 +34,13 @@ function RequireOrg({ children }: { children: React.ReactNode }) {
   const { org, loading } = useAuth()
   if (loading) return <FullScreenLoader />
   if (!org) return <Navigate to="/onboarding" replace />
+  return <>{children}</>
+}
+
+function RequireRole({ roles, children }: { roles: UserRole[]; children: React.ReactNode }) {
+  const { role, loading } = useAuth()
+  if (loading) return <FullScreenLoader />
+  if (!role || !roles.includes(role)) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -71,17 +81,19 @@ export function AppRouter() {
                   <Route path="products/new" element={<ProductFormPage />} />
                   <Route path="products/:id/edit" element={<ProductFormPage />} />
                   <Route path="inventory" element={<InventoryPage />} />
-                  <Route path="purchases" element={<PurchasesPage />} />
-                  <Route path="suppliers" element={<SuppliersPage />} />
+                  <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
+                  <Route path="suppliers" element={<RequireRole roles={['owner', 'manager']}><SuppliersPage /></RequireRole>} />
                   <Route path="customers" element={<CustomersPage />} />
-                  <Route path="expenses" element={<ExpensesPage />} />
-                  <Route path="promotions" element={<PromotionsPage />} />
+                  <Route path="expenses" element={<RequireRole roles={['owner', 'manager']}><ExpensesPage /></RequireRole>} />
+                  <Route path="promotions" element={<RequireRole roles={['owner', 'manager']}><PromotionsPage /></RequireRole>} />
                   <Route path="returns" element={<ReturnsPage />} />
                   <Route path="quotations" element={<QuotationsPage />} />
                   <Route path="loyalty" element={<LoyaltyPage />} />
-                  <Route path="activity" element={<ActivityPage />} />
-                  <Route path="reports" element={<ReportsPage />} />
-                  <Route path="settings" element={<SettingsPage />} />
+                  <Route path="activity" element={<RequireRole roles={['owner', 'manager']}><ActivityPage /></RequireRole>} />
+                  <Route path="reports" element={<RequireRole roles={['owner', 'manager']}><ReportsPage /></RequireRole>} />
+                  <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />
+                  <Route path="ledger" element={<RequireRole roles={['owner', 'manager']}><LedgerPage /></RequireRole>} />
+                  <Route path="settings" element={<RequireRole roles={['owner']}><SettingsPage /></RequireRole>} />
                 </Routes>
               </AppShell>
             </RequireOrg>

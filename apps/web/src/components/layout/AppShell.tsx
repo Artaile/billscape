@@ -21,10 +21,13 @@ import {
   FileText,
   Star,
   Activity,
+  Clock,
+  BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
+import type { UserRole } from '@billscape/core'
 
 interface NavItem {
   label: string
@@ -32,6 +35,8 @@ interface NavItem {
   icon: React.ElementType
   badge?: string
   group?: string
+  /** If defined, only users with one of these roles see this item. Undefined = all roles. */
+  allowedRoles?: Array<UserRole>
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -39,22 +44,24 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS' },
   { label: 'Products', href: '/products', icon: Package },
   { label: 'Inventory', href: '/inventory', icon: Boxes },
-  { label: 'Purchases', href: '/purchases', icon: ShoppingBag },
-  { label: 'Suppliers', href: '/suppliers', icon: Truck },
+  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, allowedRoles: ['owner', 'manager'] },
+  { label: 'Suppliers', href: '/suppliers', icon: Truck, allowedRoles: ['owner', 'manager'] },
   { label: 'Customers', href: '/customers', icon: Users },
   { label: 'Returns', href: '/returns', icon: RotateCcw },
   { label: 'Quotations', href: '/quotations', icon: FileText },
   { label: 'Loyalty', href: '/loyalty', icon: Star },
-  { label: 'Expenses', href: '/expenses', icon: Receipt },
-  { label: 'Promotions', href: '/promotions', icon: Tag },
-  { label: 'Activity', href: '/activity', icon: Activity },
-  { label: 'Reports', href: '/reports', icon: BarChart3 },
-  { label: 'Settings', href: '/settings', icon: Settings },
+  { label: 'Expenses', href: '/expenses', icon: Receipt, allowedRoles: ['owner', 'manager'] },
+  { label: 'Promotions', href: '/promotions', icon: Tag, allowedRoles: ['owner', 'manager'] },
+  { label: 'Activity', href: '/activity', icon: Activity, allowedRoles: ['owner', 'manager'] },
+  { label: 'Shifts', href: '/shifts', icon: Clock, allowedRoles: ['owner', 'manager'] },
+  { label: 'Ledger', href: '/ledger', icon: BookOpen, allowedRoles: ['owner', 'manager'] },
+  { label: 'Reports', href: '/reports', icon: BarChart3, allowedRoles: ['owner', 'manager'] },
+  { label: 'Settings', href: '/settings', icon: Settings, allowedRoles: ['owner'] },
 ]
 
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
-  const { user, org, signOut } = useAuth()
+  const { user, org, role, signOut } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -94,7 +101,9 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       {/* Nav Links */}
       <nav className="flex-1 overflow-y-auto py-4 px-2">
         <ul className="space-y-0.5">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) =>
+            !item.allowedRoles || (role != null && item.allowedRoles.includes(role))
+          ).map((item) => {
             const isActive =
               item.href === '/dashboard'
                 ? location.pathname === '/dashboard' || location.pathname === '/'
