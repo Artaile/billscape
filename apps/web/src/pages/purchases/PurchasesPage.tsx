@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, X, Eye, ShoppingBag, Trash2, Loader2 } from 'lucide-react'
+import { Plus, X, Eye, ShoppingBag, Trash2, Loader2, Pencil } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -50,6 +50,7 @@ interface PurchaseItem {
 
 interface Purchase {
   id: string
+  purchase_no: string | null
   invoice_no: string | null
   total_amount: number
   notes: string | null
@@ -70,6 +71,13 @@ interface ViewPurchase extends Purchase {
   purchase_items_detail?: PurchaseItemDetail[]
 }
 
+// Only allow digits, format as "XXXXX XXXXX" (5+5), max 10 digits
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10)
+  if (digits.length <= 5) return digits
+  return `${digits.slice(0, 5)} ${digits.slice(5)}`
+}
+
 const emptyItem = (): PurchaseItem => ({
   product_id: null,
   product_name: '',
@@ -77,6 +85,126 @@ const emptyItem = (): PurchaseItem => ({
   unit_cost: 0,
   line_total: 0,
 })
+
+// Shared items table used for both New and Edit dialogs
+function ItemsTable({
+  items,
+  productSearches,
+  productDropdownOpen,
+  dropdownRef,
+  products,
+  setProductSearches,
+  setProductDropdownOpen,
+  updateItem,
+  removeItem,
+  selectProduct,
+  getFilteredProducts,
+}: {
+  items: PurchaseItem[]
+  productSearches: string[]
+  productDropdownOpen: number | null
+  dropdownRef: React.MutableRefObject<HTMLDivElement | null>
+  products: Product[] | undefined
+  setProductSearches: React.Dispatch<React.SetStateAction<string[]>>
+  setProductDropdownOpen: React.Dispatch<React.SetStateAction<number | null>>
+  updateItem: (index: number, patch: Partial<PurchaseItem>) => void
+  removeItem: (index: number) => void
+  selectProduct: (index: number, product: Product) => void
+  getFilteredProducts: (search: string) => Product[]
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="w-[40%]">Product</TableHead>
+          <TableHead className="w-[15%]">Qty</TableHead>
+          <TableHead className="w-[20%]">Unit Cost (₹)</TableHead>
+          <TableHead className="w-[18%] text-right">Total</TableHead>
+          <TableHead className="w-[7%]"></TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {items.map((item, index) => {
+          const filteredProducts = getFilteredProducts(productSearches[index] ?? '')
+          return (
+            <TableRow key={index}>
+              <TableCell className="py-1.5 relative">
+                <div ref={productDropdownOpen === index ? dropdownRef : null} className="relative">
+                  <Input
+                    placeholder="Search or type product name..."
+                    value={productSearches[index] ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setProductSearches((prev) => {
+                        const next = [...prev]
+                        next[index] = val
+                        return next
+                      })
+                      updateItem(index, { product_id: null, product_name: val })
+                      setProductDropdownOpen(index)
+                    }}
+                    onFocus={() => setProductDropdownOpen(index)}
+                    className="h-8 text-sm"
+                  />
+                  {productDropdownOpen === index && filteredProducts.length > 0 && (
+                    <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
+                      {filteredProducts.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
+                          onMouseDown={(e) => { e.preventDefault(); selectProduct(index, p) }}
+                        >
+                          <span>{p.name}</span>
+                          <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell className="py-1.5">
+                <Input
+                  type="number"
+                  min={1}
+                  value={item.qty}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => updateItem(index, { qty: Number(e.target.value) || 0 })}
+                  className="h-8 text-sm w-full"
+                />
+              </TableCell>
+              <TableCell className="py-1.5">
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={item.unit_cost}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => updateItem(index, { unit_cost: Number(e.target.value) || 0 })}
+                  className="h-8 text-sm w-full"
+                />
+              </TableCell>
+              <TableCell className="text-right text-sm font-medium text-zinc-200 py-1.5">
+                {formatINR(item.line_total)}
+              </TableCell>
+              <TableCell className="py-1.5">
+                {items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeItem(index)}
+                    className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </TableCell>
+            </TableRow>
+          )
+        })}
+      </TableBody>
+    </Table>
+  )
+}
 
 export function PurchasesPage() {
   const { org, user } = useAuth()
@@ -88,6 +216,9 @@ export function PurchasesPage() {
   const [viewLoading, setViewLoading] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
+  // Shared form state for New + Edit
+  const [editingPurchase, setEditingPurchase] = useState<ViewPurchase | null>(null)
+  const [showEdit, setShowEdit] = useState(false)
   const [supplierId, setSupplierId] = useState<string>('')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [notes, setNotes] = useState('')
@@ -110,7 +241,7 @@ export function PurchasesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('purchases')
-        .select('id, invoice_no, total_amount, notes, created_at, suppliers(name), purchase_items(id)')
+        .select('id, purchase_no, invoice_no, total_amount, notes, created_at, suppliers(name), purchase_items(id)')
         .eq('organization_id', orgId!)
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -164,6 +295,7 @@ export function PurchasesPage() {
     setShowAddSupplier(false)
     setNewSupplierName('')
     setNewSupplierPhone('')
+    setEditingPurchase(null)
   }
 
   function updateItem(index: number, patch: Partial<PurchaseItem>) {
@@ -209,13 +341,18 @@ export function PurchasesPage() {
 
   async function handleAddSupplier() {
     if (!newSupplierName.trim()) return
+    const rawDigits = newSupplierPhone.replace(/\D/g, '')
+    if (rawDigits.length > 0 && rawDigits.length < 10) {
+      toast.error('Invalid phone number', 'Enter a 10-digit India mobile number.')
+      return
+    }
     setSavingSupplier(true)
     const { data, error } = await supabase
       .from('suppliers')
       .insert({
         organization_id: orgId!,
         name: newSupplierName.trim(),
-        phone: newSupplierPhone.trim() || null,
+        phone: rawDigits || null,
       })
       .select('id')
       .single()
@@ -238,11 +375,22 @@ export function PurchasesPage() {
       const validItems = items.filter((it) => it.product_name.trim() && it.qty > 0)
       if (validItems.length === 0) throw new Error('Add at least one item')
 
+      // Generate purchase number: PUR-YYYYMMDD-XXXX
+      const now = new Date()
+      const datePart = now.toISOString().slice(0, 10).replace(/-/g, '')
+      const { count } = await supabase
+        .from('purchases')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', orgId!)
+      const seq = String((count ?? 0) + 1).padStart(4, '0')
+      const purchaseNo = `PUR-${datePart}-${seq}`
+
       const { data: purchase, error: purchaseError } = await supabase
         .from('purchases')
         .insert({
           organization_id: orgId!,
           supplier_id: supplierId || null,
+          purchase_no: purchaseNo,
           invoice_no: invoiceNo.trim() || null,
           notes: notes.trim() || null,
           total_amount: totalAmount,
@@ -268,32 +416,27 @@ export function PurchasesPage() {
       )
       if (itemsError) throw itemsError
 
-      // Only update inventory for items linked to a real product
       for (const it of validItems) {
         if (!it.product_id) continue
-
         const { data: inv } = await supabase
           .from('inventory')
           .select('stock_qty')
           .eq('product_id', it.product_id)
           .eq('organization_id', orgId!)
           .maybeSingle()
-
         const currentQty = inv?.stock_qty ?? 0
         await supabase.from('inventory').upsert(
-          {
-            product_id: it.product_id,
-            organization_id: orgId!,
-            stock_qty: currentQty + it.qty,
-          },
+          { product_id: it.product_id, organization_id: orgId!, stock_qty: currentQty + it.qty },
           { onConflict: 'product_id,organization_id' }
         )
       }
+
+      return purchaseNo
     },
-    onSuccess: () => {
+    onSuccess: (purchaseNo) => {
       queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
-      toast.success('Purchase saved')
+      toast.success(`Purchase saved — ${purchaseNo}`)
       resetForm()
       setShowNew(false)
     },
@@ -302,9 +445,59 @@ export function PurchasesPage() {
     },
   })
 
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingPurchase) throw new Error('No purchase selected')
+      const validItems = items.filter((it) => it.product_name.trim() && it.qty > 0)
+      if (validItems.length === 0) throw new Error('Add at least one item')
+
+      const { error: updateError } = await supabase
+        .from('purchases')
+        .update({
+          supplier_id: supplierId || null,
+          invoice_no: invoiceNo.trim() || null,
+          notes: notes.trim() || null,
+          total_amount: totalAmount,
+        })
+        .eq('id', editingPurchase.id)
+        .eq('organization_id', orgId!)
+      if (updateError) throw updateError
+
+      // Replace items: delete old, insert new
+      const { error: delErr } = await supabase
+        .from('purchase_items')
+        .delete()
+        .eq('purchase_id', editingPurchase.id)
+        .eq('organization_id', orgId!)
+      if (delErr) throw delErr
+
+      const { error: itemsError } = await supabase.from('purchase_items').insert(
+        validItems.map((it) => ({
+          purchase_id: editingPurchase.id,
+          organization_id: orgId!,
+          product_id: it.product_id ?? null,
+          product_name: it.product_name.trim(),
+          qty: it.qty,
+          unit_cost: it.unit_cost,
+          line_total: it.line_total,
+        }))
+      )
+      if (itemsError) throw itemsError
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
+      toast.success('Purchase updated')
+      resetForm()
+      setShowEdit(false)
+    },
+    onError: (err: Error) => {
+      toast.error('Failed to update purchase', err.message)
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      // Delete purchase_items first (foreign key)
       const { error: itemsErr } = await supabase
         .from('purchase_items')
         .delete()
@@ -342,6 +535,173 @@ export function PurchasesPage() {
     setViewPurchase({ ...purchase, purchase_items_detail: data ?? [] })
   }
 
+  async function handleEditPurchase(purchase: Purchase) {
+    setViewLoading(true)
+    const { data, error } = await supabase
+      .from('purchase_items')
+      .select('id, product_name, qty, unit_cost, line_total')
+      .eq('purchase_id', purchase.id)
+    setViewLoading(false)
+    if (error) {
+      toast.error('Failed to load purchase details', error.message)
+      return
+    }
+    setEditingPurchase({ ...purchase, purchase_items_detail: data ?? [] })
+    setSupplierId(
+      purchase.suppliers
+        ? (suppliers?.find((s) => s.name === purchase.suppliers!.name)?.id ?? '')
+        : ''
+    )
+    setInvoiceNo(purchase.invoice_no ?? '')
+    setNotes(purchase.notes ?? '')
+    const loadedItems: PurchaseItem[] = (data ?? []).map((it) => ({
+      product_id: null,
+      product_name: it.product_name,
+      qty: it.qty,
+      unit_cost: it.unit_cost,
+      line_total: it.line_total,
+    }))
+    setItems(loadedItems.length > 0 ? loadedItems : [emptyItem()])
+    setProductSearches(loadedItems.map((it) => it.product_name))
+    setShowEdit(true)
+  }
+
+  // Shared form body for New + Edit dialogs
+  function PurchaseForm() {
+    return (
+      <div className="space-y-5">
+        {/* Supplier */}
+        <div className="space-y-1.5">
+          <Label>Supplier</Label>
+          <div className="flex gap-2">
+            <select
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+              className="flex-1 h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="" className="bg-zinc-900">Select supplier (optional)</option>
+              {suppliers?.map((s) => (
+                <option key={s.id} value={s.id} className="bg-zinc-900">{s.name}</option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 px-3"
+              onClick={() => setShowAddSupplier((v) => !v)}
+              title="Add new supplier"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {showAddSupplier && (
+            <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-900 p-3 space-y-2">
+              <p className="text-xs font-medium text-zinc-400">Quick-add supplier</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Name *</Label>
+                  <Input
+                    placeholder="Supplier name"
+                    value={newSupplierName}
+                    onChange={(e) => setNewSupplierName(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Phone</Label>
+                  <Input
+                    placeholder="98765 43210"
+                    value={newSupplierPhone}
+                    inputMode="numeric"
+                    onChange={(e) => setNewSupplierPhone(formatPhone(e.target.value))}
+                    className="h-8 text-sm"
+                    maxLength={11}
+                  />
+                  {newSupplierPhone.replace(/\D/g, '').length > 0 &&
+                    newSupplierPhone.replace(/\D/g, '').length < 10 && (
+                    <p className="text-[11px] text-amber-400">Enter 10-digit mobile number</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => { setShowAddSupplier(false); setNewSupplierName(''); setNewSupplierPhone('') }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={!newSupplierName.trim() || savingSupplier}
+                  onClick={handleAddSupplier}
+                >
+                  {savingSupplier ? 'Adding...' : 'Add'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Invoice No</Label>
+            <Input
+              placeholder="INV-001 (optional)"
+              value={invoiceNo}
+              onChange={(e) => setInvoiceNo(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Notes</Label>
+            <Input
+              placeholder="Optional notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Items */}
+        <div className="space-y-2">
+          <Label>Items</Label>
+          <div className="rounded-lg border border-zinc-800 overflow-hidden">
+            <ItemsTable
+              items={items}
+              productSearches={productSearches}
+              productDropdownOpen={productDropdownOpen}
+              dropdownRef={dropdownRef}
+              products={products}
+              setProductSearches={setProductSearches}
+              setProductDropdownOpen={setProductDropdownOpen}
+              updateItem={updateItem}
+              removeItem={removeItem}
+              selectProduct={selectProduct}
+              getFilteredProducts={getFilteredProducts}
+            />
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={addItem} className="text-xs h-7">
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Add Item
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 pt-1">
+          <span className="text-sm text-zinc-400">Total</span>
+          <span className="text-lg font-bold text-white">{formatINR(totalAmount)}</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="p-4 lg:p-6">
       <div className="flex items-center justify-between mb-6">
@@ -364,6 +724,7 @@ export function PurchasesPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Purchase No</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Supplier</TableHead>
                 <TableHead>Invoice No</TableHead>
@@ -376,6 +737,9 @@ export function PurchasesPage() {
               {purchases && purchases.length > 0 ? (
                 purchases.map((p) => (
                   <TableRow key={p.id}>
+                    <TableCell className="font-mono text-xs text-indigo-300 whitespace-nowrap">
+                      {p.purchase_no ?? <span className="text-zinc-600">—</span>}
+                    </TableCell>
                     <TableCell className="text-zinc-400 text-sm whitespace-nowrap">
                       {formatDate(p.created_at)}
                     </TableCell>
@@ -402,6 +766,15 @@ export function PurchasesPage() {
                           <Eye className="h-3.5 w-3.5 mr-1" />
                           View
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-zinc-400 hover:text-white"
+                          onClick={() => handleEditPurchase(p)}
+                        >
+                          <Pencil className="h-3.5 w-3.5 mr-1" />
+                          Edit
+                        </Button>
                         <button
                           onClick={() => setDeleteConfirmId(p.id)}
                           className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
@@ -415,7 +788,7 @@ export function PurchasesPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-16">
+                  <TableCell colSpan={7} className="text-center py-16">
                     <div className="flex flex-col items-center gap-3 text-zinc-500">
                       <ShoppingBag className="h-10 w-10 text-zinc-700" />
                       <p className="text-sm">No purchases yet. Click New Purchase to record stock received.</p>
@@ -434,216 +807,9 @@ export function PurchasesPage() {
           <DialogHeader>
             <DialogTitle>New Purchase</DialogTitle>
           </DialogHeader>
-
-          <div className="space-y-5">
-            {/* Supplier */}
-            <div className="space-y-1.5">
-              <Label>Supplier</Label>
-              <div className="flex gap-2">
-                <select
-                  value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
-                  className="flex-1 h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="" className="bg-zinc-900">Select supplier (optional)</option>
-                  {suppliers?.map((s) => (
-                    <option key={s.id} value={s.id} className="bg-zinc-900">
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-9 px-3"
-                  onClick={() => setShowAddSupplier((v) => !v)}
-                  title="Add new supplier"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-
-              {showAddSupplier && (
-                <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-900 p-3 space-y-2">
-                  <p className="text-xs font-medium text-zinc-400">Quick-add supplier</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Name *</Label>
-                      <Input
-                        placeholder="Supplier name"
-                        value={newSupplierName}
-                        onChange={(e) => setNewSupplierName(e.target.value)}
-                        className="h-8 text-sm"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Phone</Label>
-                      <Input
-                        placeholder="Phone"
-                        value={newSupplierPhone}
-                        onChange={(e) => setNewSupplierPhone(e.target.value)}
-                        className="h-8 text-sm"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => { setShowAddSupplier(false); setNewSupplierName(''); setNewSupplierPhone('') }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-7 text-xs"
-                      disabled={!newSupplierName.trim() || savingSupplier}
-                      onClick={handleAddSupplier}
-                    >
-                      {savingSupplier ? 'Adding...' : 'Add'}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Invoice No</Label>
-                <Input
-                  placeholder="INV-001 (optional)"
-                  value={invoiceNo}
-                  onChange={(e) => setInvoiceNo(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Notes</Label>
-                <Input
-                  placeholder="Optional notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Items */}
-            <div className="space-y-2">
-              <Label>Items</Label>
-              <div className="rounded-lg border border-zinc-800 overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[40%]">Product</TableHead>
-                      <TableHead className="w-[15%]">Qty</TableHead>
-                      <TableHead className="w-[20%]">Unit Cost (₹)</TableHead>
-                      <TableHead className="w-[18%] text-right">Total</TableHead>
-                      <TableHead className="w-[7%]"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((item, index) => {
-                      const filteredProducts = getFilteredProducts(productSearches[index] ?? '')
-                      return (
-                        <TableRow key={index}>
-                          <TableCell className="py-1.5 relative">
-                            <div ref={productDropdownOpen === index ? dropdownRef : null} className="relative">
-                              <Input
-                                placeholder="Search or type product name..."
-                                value={productSearches[index] ?? ''}
-                                onChange={(e) => {
-                                  const val = e.target.value
-                                  setProductSearches((prev) => {
-                                    const next = [...prev]
-                                    next[index] = val
-                                    return next
-                                  })
-                                  updateItem(index, { product_id: null, product_name: val })
-                                  setProductDropdownOpen(index)
-                                }}
-                                onFocus={() => setProductDropdownOpen(index)}
-                                className="h-8 text-sm"
-                              />
-                              {productDropdownOpen === index && filteredProducts.length > 0 && (
-                                <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                                  {filteredProducts.map((p) => (
-                                    <button
-                                      key={p.id}
-                                      type="button"
-                                      className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                                      onMouseDown={(e) => { e.preventDefault(); selectProduct(index, p) }}
-                                    >
-                                      <span>{p.name}</span>
-                                      <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-1.5">
-                            <Input
-                              type="number"
-                              min={1}
-                              value={item.qty}
-                              onChange={(e) => updateItem(index, { qty: Number(e.target.value) || 0 })}
-                              className="h-8 text-sm w-full"
-                            />
-                          </TableCell>
-                          <TableCell className="py-1.5">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={item.unit_cost}
-                              onChange={(e) => updateItem(index, { unit_cost: Number(e.target.value) || 0 })}
-                              className="h-8 text-sm w-full"
-                            />
-                          </TableCell>
-                          <TableCell className="text-right text-sm font-medium text-zinc-200 py-1.5">
-                            {formatINR(item.line_total)}
-                          </TableCell>
-                          <TableCell className="py-1.5">
-                            {items.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => removeItem(index)}
-                                className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <Button type="button" variant="outline" size="sm" onClick={addItem} className="text-xs h-7">
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                Add Item
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <span className="text-sm text-zinc-400">Total</span>
-              <span className="text-lg font-bold text-white">{formatINR(totalAmount)}</span>
-            </div>
-          </div>
-
+          <PurchaseForm />
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => { resetForm(); setShowNew(false) }}
-            >
+            <Button type="button" variant="outline" onClick={() => { resetForm(); setShowNew(false) }}>
               Cancel
             </Button>
             <Button
@@ -651,7 +817,44 @@ export function PurchasesPage() {
               disabled={saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
             >
-              {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
+              {saveMutation.isPending
+                ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</>
+                : 'Save Purchase'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Purchase Dialog */}
+      <Dialog open={showEdit} onOpenChange={(open) => { if (!open) { resetForm(); setShowEdit(false) } }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Edit Purchase
+              {editingPurchase?.purchase_no && (
+                <span className="ml-2 font-mono text-sm text-indigo-300">{editingPurchase.purchase_no}</span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          {viewLoading ? (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <PurchaseForm />
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { resetForm(); setShowEdit(false) }}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={updateMutation.isPending}
+              onClick={() => updateMutation.mutate()}
+            >
+              {updateMutation.isPending
+                ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</>
+                : 'Save Changes'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -667,7 +870,12 @@ export function PurchasesPage() {
           ) : viewPurchase && (
             <>
               <DialogHeader>
-                <DialogTitle>Purchase Details</DialogTitle>
+                <DialogTitle>
+                  Purchase Details
+                  {viewPurchase.purchase_no && (
+                    <span className="ml-2 font-mono text-sm text-indigo-300">{viewPurchase.purchase_no}</span>
+                  )}
+                </DialogTitle>
               </DialogHeader>
               <div className="space-y-3 text-sm">
                 <div className="grid grid-cols-2 gap-2 text-sm">
@@ -750,7 +958,9 @@ export function PurchasesPage() {
               disabled={deleteMutation.isPending}
               onClick={() => deleteConfirmId && deleteMutation.mutate(deleteConfirmId)}
             >
-              {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Deleting...</> : 'Delete'}
+              {deleteMutation.isPending
+                ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Deleting...</>
+                : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -52,6 +52,12 @@ const emptyForm = (): SupplierFormState => ({
   address: '',
 })
 
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10)
+  if (digits.length <= 5) return digits
+  return `${digits.slice(0, 5)} ${digits.slice(5)}`
+}
+
 export function SuppliersPage() {
   const { org } = useAuth()
   const orgId = org?.id
@@ -112,11 +118,15 @@ export function SuppliersPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!formState.name.trim()) throw new Error('Name is required')
+      const rawDigits = formState.phone.replace(/\D/g, '')
+      if (rawDigits.length > 0 && rawDigits.length < 10) {
+        throw new Error('Phone number must be 10 digits (India mobile number)')
+      }
 
       const payload = {
         organization_id: orgId!,
         name: formState.name.trim(),
-        phone: formState.phone.trim() || null,
+        phone: rawDigits || null,
         email: formState.email.trim() || null,
         gstin: formState.gstin.trim() || null,
         address: formState.address.trim() || null,
@@ -329,11 +339,16 @@ export function SuppliersPage() {
               <Label htmlFor="sup-phone">Phone</Label>
               <Input
                 id="sup-phone"
-                type="tel"
-                placeholder="9876543210"
+                inputMode="numeric"
+                placeholder="98765 43210"
                 value={formState.phone}
-                onChange={(e) => setField('phone', e.target.value)}
+                onChange={(e) => setField('phone', formatPhone(e.target.value))}
+                maxLength={11}
               />
+              {formState.phone.replace(/\D/g, '').length > 0 &&
+                formState.phone.replace(/\D/g, '').length < 10 && (
+                <p className="text-[11px] text-amber-400">Enter 10-digit mobile number</p>
+              )}
             </div>
 
             <div className="space-y-1.5">

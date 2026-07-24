@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Store, Mail, Lock, Loader2, UserPlus, LogIn, ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { Store, Mail, Lock, Loader2, UserPlus, LogIn, ArrowLeft, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
@@ -11,10 +11,22 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 
-const emailSchema = z.object({
+const signInSchema = z.object({
   email: z.string().email('Enter a valid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
 })
+
+const signUpSchema = z.object({
+  email: z.string().email('Enter a valid email address'),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+    .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character'),
+})
+
+const emailSchema = signInSchema
 
 const forgotSchema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -25,11 +37,24 @@ type ForgotValues = z.infer<typeof forgotSchema>
 
 type Mode = 'signin' | 'signup' | 'forgot' | 'verify-email' | 'forgot-sent'
 
+function getPasswordStrength(pw: string) {
+  const checks = {
+    length: pw.length >= 8,
+    upper: /[A-Z]/.test(pw),
+    lower: /[a-z]/.test(pw),
+    special: /[^A-Za-z0-9]/.test(pw),
+  }
+  const score = Object.values(checks).filter(Boolean).length
+  return { checks, score }
+}
+
 export function LoginPage() {
   const navigate = useNavigate()
   const [mode, setMode] = useState<Mode>('signin')
   const [loading, setLoading] = useState(false)
   const [verifyEmail, setVerifyEmail] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [passwordValue, setPasswordValue] = useState('')
 
   const {
     register,
@@ -37,7 +62,7 @@ export function LoginPage() {
     reset,
     formState: { errors },
   } = useForm<EmailValues>({
-    resolver: zodResolver(emailSchema),
+    resolver: zodResolver(mode === 'signup' ? signUpSchema : signInSchema),
   })
 
   const {
@@ -51,6 +76,8 @@ export function LoginPage() {
 
   const switchMode = (m: Mode) => {
     setMode(m)
+    setShowPassword(false)
+    setPasswordValue('')
     reset()
     resetForgot()
   }
@@ -326,16 +353,57 @@ export function LoginPage() {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
                     <Input
                       id="password"
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       placeholder="••••••••"
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                      {...register('password')}
+                      {...register('password', {
+                        onChange: (e) => setPasswordValue(e.target.value),
+                      })}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
                   </div>
                   {errors.password && (
                     <p className="text-xs text-red-400">{errors.password.message}</p>
                   )}
+                  {mode === 'signup' && passwordValue.length > 0 && (() => {
+                    const { checks, score } = getPasswordStrength(passwordValue)
+                    const strengthLabel = score <= 1 ? 'Weak' : score === 2 ? 'Fair' : score === 3 ? 'Good' : 'Strong'
+                    const strengthColor = score <= 1 ? 'bg-red-500' : score === 2 ? 'bg-yellow-500' : score === 3 ? 'bg-blue-500' : 'bg-emerald-500'
+                    const textColor = score <= 1 ? 'text-red-400' : score === 2 ? 'text-yellow-400' : score === 3 ? 'text-blue-400' : 'text-emerald-400'
+                    return (
+                      <div className="space-y-2 mt-1">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 flex gap-1">
+                            {[1,2,3,4].map((i) => (
+                              <div key={i} className={cn('h-1 flex-1 rounded-full transition-all', i <= score ? strengthColor : 'bg-zinc-700')} />
+                            ))}
+                          </div>
+                          <span className={cn('text-xs font-medium', textColor)}>{strengthLabel}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            { key: 'length', label: '8+ characters' },
+                            { key: 'upper', label: 'Uppercase letter (A-Z)' },
+                            { key: 'lower', label: 'Lowercase letter (a-z)' },
+                            { key: 'special', label: 'Special character (!@#...)' },
+                          ].map(({ key, label }) => (
+                            <div key={key} className={cn('flex items-center gap-1.5 text-[11px]', checks[key as keyof typeof checks] ? 'text-emerald-400' : 'text-zinc-500')}>
+                              <div className={cn('h-1.5 w-1.5 rounded-full', checks[key as keyof typeof checks] ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                              {label}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
 
                 <Button
