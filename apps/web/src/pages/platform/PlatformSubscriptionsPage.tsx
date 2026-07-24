@@ -17,12 +17,17 @@ export function PlatformSubscriptionsPage() {
     queryKey: ['platform-subscriptions'],
     queryFn: async () => {
       const [subsRes, orgsRes, plansRes] = await Promise.all([
-        supabase.from('org_plans').select('*, organizations(id, name, status), plans(id, name, monthly_price)').order('created_at', { ascending: false }),
-        supabase.from('organizations').select('id, name').order('name'),
+        supabase.from('org_plans').select('*, plans(id, name, monthly_price)').order('created_at', { ascending: false }),
+        supabase.from('organizations').select('id, name, status').order('name'),
         supabase.from('plans').select('id, name, monthly_price').eq('is_active', true).order('monthly_price'),
       ])
+      const orgsMap = Object.fromEntries((orgsRes.data ?? []).map((o: any) => [o.id, o]))
+      const subs = (subsRes.data ?? []).map((s: any) => ({
+        ...s,
+        org: orgsMap[s.organization_id] ?? null,
+      }))
       return {
-        subs: (subsRes.data ?? []) as any[],
+        subs,
         orgs: (orgsRes.data ?? []) as any[],
         plans: (plansRes.data ?? []) as any[],
       }
@@ -145,7 +150,7 @@ export function PlatformSubscriptionsPage() {
                   <td className="px-5 py-4">
                     <Link to={`/platform/tenants/${sub.organization_id}`}
                       className="font-medium text-white hover:text-indigo-400 transition-colors">
-                      {sub.organizations?.name ?? '—'}
+                      {sub.org?.name ?? '—'}
                     </Link>
                   </td>
                   <td className="px-4 py-4 text-slate-300">{sub.plans?.name ?? '—'}</td>
