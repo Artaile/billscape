@@ -34,16 +34,20 @@ const DialogContent = React.forwardRef<
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
-      // Prevent Radix from focusing the dialog container itself on open.
-      // Instead focus is handled naturally by the first interactive child.
+      // Prevent Radix from hijacking focus on open — let the user's click/tab control it
       onOpenAutoFocus={(e) => {
         if (onOpenAutoFocus) { onOpenAutoFocus(e); return }
         e.preventDefault()
-        // Move focus to first focusable input/select/button inside dialog
-        const el = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(
-          'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])'
-        )
-        el?.focus()
+      }}
+      // Prevent Radix FocusScope from stealing focus back to the dialog container
+      // when an input inside is focused and React re-renders the tree
+      onFocusOutside={(e) => e.preventDefault()}
+      // Prevent Radix from moving focus back into dialog when clicking inputs
+      onInteractOutside={(e) => {
+        // Only prevent if the interaction target is inside the dialog itself
+        const target = e.target as HTMLElement
+        const dialogEl = (e.currentTarget as HTMLElement)
+        if (dialogEl.contains(target)) e.preventDefault()
       }}
       className={cn(
         'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-zinc-700 bg-zinc-900 p-6 shadow-xl duration-200 outline-none',
