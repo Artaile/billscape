@@ -38,7 +38,7 @@ export function PlatformUsagePage() {
         supabase.from('organizations').select('id, name, status').order('name'),
         supabase.from('org_plans').select('organization_id, plans(limits, name)'),
         supabase.from('products').select('id, organization_id').eq('is_active', true),
-        supabase.from('sales').select('id, organization_id'),
+        supabase.from('sales').select('id, organization_id, created_at'),
         supabase.from('employees').select('id, organization_id').eq('is_active', true),
         supabase.from('customers').select('id, organization_id'),
       ])
@@ -57,7 +57,7 @@ export function PlatformUsagePage() {
         // Count per org
         const now = new Date()
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-        const orgSalesThisMonth = sales.filter((s) => s.organization_id === org.id)
+        const orgSalesThisMonth = sales.filter((s) => s.organization_id === org.id && new Date(s.created_at) >= monthStart)
 
         return {
           ...org,

@@ -70,7 +70,7 @@ export function PlatformSubscriptionsPage() {
   }
 
   const filtered = (data?.subs ?? []).filter((s: any) =>
-    search.trim() ? s.organizations?.name?.toLowerCase().includes(search.toLowerCase()) : true
+    search.trim() ? s.org?.name?.toLowerCase().includes(search.toLowerCase()) : true
   )
 
   return (
