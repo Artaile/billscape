@@ -60,6 +60,18 @@
   --sidebar-border: 0 0% 88%;
 }
 
+/* Dialog container must never show a focus ring — brand color injection overrides
+   CSS variables with !important so we need direct property overrides here too */
+[role="dialog"] {
+  outline: none !important;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1) !important;
+}
+[role="dialog"]:focus,
+[role="dialog"]:focus-visible {
+  outline: none !important;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1) !important;
+}
+
 @layer base {
   * {
     @apply border-border;

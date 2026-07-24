@@ -44,13 +44,14 @@ const DialogContent = React.forwardRef<
       onFocusOutside={(e) => e.preventDefault()}
       // Prevent Radix from moving focus back into dialog when clicking inputs
       onInteractOutside={(e) => {
-        // Only prevent if the interaction target is inside the dialog itself
         const target = e.target as HTMLElement
         const dialogEl = (e.currentTarget as HTMLElement)
         if (dialogEl.contains(target)) e.preventDefault()
       }}
+      // Force no ring/outline regardless of brand color CSS variable injection
+      style={{ outline: 'none', boxShadow: 'var(--tw-shadow)', ring: 'none' } as React.CSSProperties}
       className={cn(
-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-zinc-700 bg-zinc-900 p-6 shadow-xl duration-200 outline-none',
+        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-zinc-700 bg-zinc-900 p-6 shadow-xl duration-200 outline-none ring-0 focus:ring-0 focus-visible:ring-0 focus:outline-none',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
