@@ -33,6 +33,8 @@ Supabase project ID: bzvbkscspzdschskbqtd
 - shadcn/ui components throughout
 - Brand color applied via injected <style> tag with !important to override Tailwind CSS specificity
   (see apps/web/src/lib/brandColor.ts — hexToHsl + style tag injection)
+- Brand color injects --ring with !important — dialog containers must use outline:none !important
+  and box-shadow override in index.css [role="dialog"]:focus to prevent blue ring flash
 
 ## Pages & Routes (all under AppShell, require auth + org)
 | Route | Component | Notes |
@@ -43,7 +45,7 @@ Supabase project ID: bzvbkscspzdschskbqtd
 | /products/new | ProductFormPage | Brand field, variants, batch tracking |
 | /products/:id/edit | ProductFormPage | |
 | /inventory | InventoryPage | 4 tabs: Stock List, Ledger & History, Adjustments, Opening Stock |
-| /purchases | PurchasesPage | owner + manager only |
+| /purchases | PurchasesPage | owner + manager only — New Purchase, Edit, Import CSV, purchase_no |
 | /suppliers | SuppliersPage | owner + manager only |
 | /customers | CustomersPage | |
 | /expenses | ExpensesPage | owner + manager only |
@@ -62,6 +64,8 @@ Supabase project ID: bzvbkscspzdschskbqtd
 ## Auth flows
 - Email/password login only (Phone OTP tab removed)
 - Signup → "Check your email" screen (mailer_autoconfirm = false in Supabase)
+- Signup password rules: min 8 chars, uppercase, lowercase, special character (zod schema + strength meter UI)
+- Password field has show/hide Eye icon toggle on both signin and signup
 - Email verified → onAuthStateChange SIGNED_IN → RequireOrg → /onboarding
 - Onboarding → creates org + membership → /dashboard
 - Forgot password → resetPasswordForEmail with redirectTo /reset-password
@@ -99,6 +103,7 @@ currency, date_format, timezone
 
 ## Critical DB fixes applied
 - purchases.invoice_ref renamed to invoice_no
+- purchases.purchase_no added (text, nullable, unique per org) — auto-generated as PUR-YYYYMMDD-XXXX on save
 - purchase_items.product_id made nullable (free-text items don't need a product record)
 - inventory trigger skip_null_product_inventory: ignores inserts with product_id = null
 - increment_stock_on_purchase trigger: early RETURN NEW when product_id IS NULL
@@ -111,9 +116,39 @@ currency, date_format, timezone
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
 - purchases.invoice_no (was "invoice_ref" — renamed)
+- purchases.purchase_no (new column, added 2026-07-24)
 
 ## RLS pattern
 All tenant tables use: organization_id IN (SELECT organization_id FROM memberships WHERE user_id = auth.uid())
+
+## Phone number input pattern (all phone fields app-wide)
+- inputMode="numeric", type="text", maxLength={11}
+- formatted as "XXXXX XXXXX" (5 digits + space + 5 digits) via formatPhone()
+- only digits allowed — alphabet blocked via onChange replace(/\D/g, '')
+- validation: 10 digits required for India mobile; warn if fewer, block save if invalid
+- applies to: SuppliersPage, CustomersPage, PurchasesPage quick-add supplier
+
+## Purchases page features (as of 2026-07-25)
+- Table columns: Purchase No | Date | Supplier | Invoice No | Items | Total Amount | Actions
+- Actions per row: View | Edit | Delete
+- Purchase No auto-generated on save: PUR-YYYYMMDD-XXXX (sequential per org per day)
+- New Purchase dialog: supplier select + quick-add supplier, invoice no, notes, items table
+- Items table: product search/free-text, Qty (text+inputMode=numeric), Unit Cost (text+inputMode=decimal)
+- Qty and Unit Cost use type="text" (NOT type="number") so onFocus→select() works reliably
+- Import CSV: download template → upload → editable preview table → verify → save as purchase
+- Edit: loads existing items, replaces purchase_items on save (no inventory re-adjustment currently)
+
+## Dialog / Radix UI focus rules (CRITICAL — do not revert)
+- All dialogs use DialogContent from apps/web/src/components/ui/dialog.tsx
+- onOpenAutoFocus: always e.preventDefault() — Radix must not focus the dialog container
+- onFocusOutside: always e.preventDefault() — prevents Radix FocusScope from stealing focus
+  back to the dialog container on every React re-render (each keystroke)
+- onInteractOutside: preventDefault only when target is inside dialog
+- Dialog container has outline:none + ring-0 + focus:ring-0 Tailwind classes
+- index.css has [role="dialog"]:focus { outline:none !important; box-shadow: shadow-only !important }
+  to defeat brand color --ring !important injection
+- PurchaseFormBody is defined at FILE TOP LEVEL (outside PurchasesPage function) — if defined
+  inside the parent component it gets a new identity on every render → unmount/remount → focus lost
 
 ## POS Hold Bills
 - Stored in sessionStorage as array under key `billscape_held_bills`
@@ -121,7 +156,7 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - UI: "Hold" button → named dialog → "Held Bills N" badge to resume
 - Multiple named holds supported; competitor had none
 
-## Sidebar nav order (as of 2026-07-24)
+## Sidebar nav order (as of 2026-07-25)
 Dashboard → Billing (POS) → Products → Inventory → Purchases → Suppliers → Customers →
 Returns → Quotations → Loyalty → **Employees** → **Roles** → Expenses → Promotions →
 Activity → Shifts → Ledger → Reports → Settings
