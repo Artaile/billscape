@@ -166,6 +166,8 @@ export interface Supplier {
 }
 
 // ─── Cart / Billing ───────────────────────────────────────────────────────────
+export type DiscountType = 'flat' | 'percent'
+
 export interface CartItem {
   product_id: string
   product_name: string
@@ -174,6 +176,8 @@ export interface CartItem {
   unit_price: number
   qty: number
   discount_pct: number
+  discount_type?: DiscountType
+  discount_amount?: number
   barcode_value?: string
 }
 
@@ -196,6 +200,8 @@ export interface InvoiceTotals {
   tax_total: number
   grand_total: number
   is_interstate: boolean
+  order_discount_amount: number
+  net_payable: number
 }
 
 // ─── Sales ────────────────────────────────────────────────────────────────────
@@ -208,12 +214,20 @@ export interface Sale {
   discount_total: number
   tax_total: number
   grand_total: number
+  order_discount_type?: DiscountType
+  order_discount_value?: number
+  order_discount_amount?: number
+  net_payable?: number
   payment_mode: PaymentMode
   cash_amount?: number
   card_amount?: number
   upi_amount?: number
   created_by: string
   created_at: string
+  voided_at?: string
+  voided_by?: string
+  void_reason?: string
+  purge_after?: string
 }
 
 export interface SaleItem {
@@ -225,6 +239,8 @@ export interface SaleItem {
   qty: number
   unit_price: number
   discount_pct: number
+  discount_type?: DiscountType
+  discount_amount?: number
   tax_rate: GSTRate
   cgst_amount: number
   sgst_amount: number
