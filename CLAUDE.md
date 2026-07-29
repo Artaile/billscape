@@ -40,7 +40,7 @@ Supabase project ID: bzvbkscspzdschskbqtd
 | Route | Component | Notes |
 |---|---|---|
 | /dashboard | DashboardPage | KPI cards, GST Overview, 7-day chart, low stock, top products, activity |
-| /billing | BillingPage | POS — barcode scan, named hold bills (multi-hold), WhatsApp receipt |
+| /billing | BillingPage | Tabs: POS + History (see Billing tab sections below) |
 | /products | ProductsPage | Import CSV / Export CSV, barcode label print |
 | /products/new | ProductFormPage | Brand field, variants, batch tracking |
 | /products/:id/edit | ProductFormPage | |
@@ -79,7 +79,9 @@ Supabase project ID: bzvbkscspzdschskbqtd
 - categories, inventory, stock_movements (reason enum: sale/purchase/adjustment/return/damage/opening)
 - product_variants (product_id, size, color, price_delta, stock_qty, barcode_value)
 - inventory_batches (product_id, batch_no, expiry_date, qty, cost_price)
-- sales, sale_items (cgst_amount, sgst_amount, igst_amount per line)
+- sales (cgst_amount... via sale_items; **voided_at, voided_by, void_reason, purge_after** — recycle bin;
+  **order_discount_type, order_discount_value, order_discount_amount, net_payable** — post-tax bill discount)
+- sale_items (cgst_amount, sgst_amount, igst_amount per line; **discount_type, discount_amount** — flat/percent line discount, alongside existing discount_pct)
 - purchases, purchase_items (product_id nullable — free-text items allowed)
 - suppliers, customers
 - expenses (id, org_id, description, amount, category, expense_date, notes)
@@ -112,6 +114,10 @@ currency, date_format, timezone
 - products.brand added
 - employees table created with RLS
 - roles table created with RLS; default system roles (Owner/Manager/Cashier) auto-inserted per org on migration
+- migration 012_billing_history.sql (2026-07-28): sales/sale_items void + discount columns (see schema above);
+  increment_inventory(p_org_id, p_product_id, p_qty) RPC created — was referenced by ReturnsPage but never
+  actually existed in any prior migration; UPDATE/DELETE RLS policies added on sales + sale_items (previously
+  only SELECT/INSERT existed, which silently blocked any edit/delete/void feature)
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -150,11 +156,51 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - PurchaseFormBody is defined at FILE TOP LEVEL (outside PurchasesPage function) — if defined
   inside the parent component it gets a new identity on every render → unmount/remount → focus lost
 
+## Billing tab structure (as of 2026-07-28)
+- BillingPage.tsx is now a thin tab shell (Tabs from ui/tabs.tsx): POS | History
+- apps/web/src/components/billing/POSTab.tsx — all POS logic (was previously inline in BillingPage.tsx)
+- apps/web/src/components/billing/HistoryTab.tsx — bill list + view/edit/delete + recycle bin
+- apps/web/src/components/billing/QuickAddCustomerDialog.tsx — inline customer creation from POS
+- POS layout: product panel is the WIDE side (lg:w-[60%] xl:w-[65%]), cart is narrow
+  (lg:w-[40%] xl:w-[35%]) — do not revert to the old 55/45 split, was explicit user feedback
+
 ## POS Hold Bills
 - Stored in sessionStorage as array under key `billscape_held_bills`
 - Each held bill: { id, name, cart, customer, savedAt }
 - UI: "Hold" button → named dialog → "Held Bills N" badge to resume
 - Multiple named holds supported; competitor had none
+
+## POS discounts (line-level and bill-level)
+- Line-level (per cart item): toggle between % and ₹ flat via discount_type, applied BEFORE tax
+  (reduces taxable_amount). CartItem.tsx renders the ₹/% segmented toggle next to the qty controls.
+- Bill-level (order discount): toggle between % and ₹ flat, applied AFTER tax on grand_total —
+  does NOT change the GST taxable value or breakup, only what the customer pays. This was an explicit
+  user decision (not the more "correct" GST-compliant approach of discounting before tax) — do not
+  move it before tax without re-confirming with the user.
+- packages/core/src/tax/gst.ts: computeLineTax accepts optional discountType/discountAmount params
+  (flat mode resolves via Math.min(amount, baseAmount) to prevent negative taxable value).
+  applyOrderDiscount(totals, type, value) is a separate pure function — clamps to [0, grand_total],
+  returns order_discount_amount + net_payable. InvoiceTotals now has these two extra fields.
+- InvoicePrint.tsx must render order_discount_amount / net_payable as "Bill Discount" / "Payable"
+  when order_discount_amount > 0 (easy to regress — this was missing on first pass and silently
+  under-reported what the customer actually paid on the printed invoice).
+
+## Bill edit / recycle bin (History tab)
+- Full item quantity edit allowed (not just metadata) — packages/api/src/sales.ts updateSale():
+  reverses old line stock via increment_inventory RPC + logs a stock_movements row
+  (reason: 'adjustment'), deletes old sale_items, inserts new sale_items (the existing
+  decrement_stock_on_sale INSERT trigger re-decrements automatically — do NOT also manually
+  decrement for the new lines, that would double-count).
+- Delete is a SOFT delete ("Recycle Bin"), not a hard delete: voidSale() reverses all line stock,
+  sets voided_at/voided_by/void_reason/purge_after (= now + 30 days). Sale stays in the DB.
+- Restore (restoreSale): re-decrements stock (mirrors original sale decrement — sale_items are NOT
+  re-inserted here so the INSERT trigger does not fire, must be done manually via RPC + stock_movements).
+- Permanent delete (purgeSale): hard-deletes sale_items then sales row. Only reachable from the Bin.
+- purgeExpiredVoidedSales(orgId) sweeps bin entries past purge_after — called lazily on History tab
+  mount (no cron/Edge Function; acceptable since the bin isn't viewed daily by every tenant).
+- getSales() defaults to voided_at IS NULL; pass { voidedOnly: true } for the Bin view.
+- Edit/Delete actions in HistoryTab are gated to owner/manager via useAuth().role — cashiers can
+  still View/Reprint.
 
 ## Sidebar nav order (as of 2026-07-25)
 Dashboard → Billing (POS) → Products → Inventory → Purchases → Suppliers → Customers →
