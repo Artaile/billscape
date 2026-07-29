@@ -93,6 +93,8 @@ export interface Product {
   tax_rate: GSTRate
   price: number
   cost_price: number
+  mrp?: number
+  special_price?: number
   barcode_value?: string
   image_url?: string
   track_stock: boolean
@@ -249,11 +251,19 @@ export interface SaleItem {
 }
 
 // ─── Purchases / Expenses ─────────────────────────────────────────────────────
+export type PurchaseType = 'credit' | 'cash'
+
 export interface Purchase {
   id: string
   organization_id: string
   supplier_id?: string
-  invoice_ref?: string
+  invoice_no?: string
+  purchase_no?: string
+  purchase_date?: string
+  purchase_type: PurchaseType
+  bill_discount_type?: DiscountType
+  bill_discount_value?: number
+  round_off: number
   total_amount: number
   notes?: string
   created_by: string
@@ -263,9 +273,15 @@ export interface Purchase {
 export interface PurchaseItem {
   id: string
   purchase_id: string
-  product_id: string
+  product_id: string | null
+  product_name: string
+  tax_rate: GSTRate
   qty: number
   unit_cost: number
+  taxable_amount: number
+  cgst_amount: number
+  sgst_amount: number
+  igst_amount: number
   line_total: number
 }
 

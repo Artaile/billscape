@@ -75,14 +75,18 @@ Supabase project ID: bzvbkscspzdschskbqtd
 - organizations (id, name, gstin, state_code, country, business_type, plan enum[free/pro/enterprise], status enum[active/suspended], address)
 - memberships (org_id + user_id + role enum[super_admin/owner/manager/cashier])
 - profiles (id, full_name, avatar_url, phone)
-- products (id, org_id, category_id, name, sku, hsn_code, tax_rate, price, cost_price, barcode_value, image_url, track_stock, is_active, has_batches, has_variants, **brand**)
+- products (id, org_id, category_id, name, sku, hsn_code, tax_rate, price, cost_price, **mrp**,
+  **special_price**, barcode_value, image_url, track_stock, is_active, has_batches, has_variants, **brand**)
 - categories, inventory, stock_movements (reason enum: sale/purchase/adjustment/return/damage/opening)
 - product_variants (product_id, size, color, price_delta, stock_qty, barcode_value)
 - inventory_batches (product_id, batch_no, expiry_date, qty, cost_price)
 - sales (cgst_amount... via sale_items; **voided_at, voided_by, void_reason, purge_after** — recycle bin;
   **order_discount_type, order_discount_value, order_discount_amount, net_payable** — post-tax bill discount)
 - sale_items (cgst_amount, sgst_amount, igst_amount per line; **discount_type, discount_amount** — flat/percent line discount, alongside existing discount_pct)
-- purchases, purchase_items (product_id nullable — free-text items allowed)
+- purchases (id, org_id, supplier_id, invoice_no, purchase_no, **purchase_date**, **purchase_type**
+  enum[credit/cash], **bill_discount_type**, **bill_discount_value**, **round_off**, total_amount, notes)
+- purchase_items (product_id nullable — free-text items allowed; **tax_rate**, **taxable_amount**,
+  **cgst_amount**, **sgst_amount**, **igst_amount** added for per-line GST — see Purchases page section)
 - suppliers, customers
 - expenses (id, org_id, description, amount, category, expense_date, notes)
 - **returns** (id, org_id, **return_type** enum[sale/purchase], original_invoice_no, **purchase_ref**, reason, refund_mode, refund_amount, notes)
@@ -118,6 +122,10 @@ currency, date_format, timezone
   increment_inventory(p_org_id, p_product_id, p_qty) RPC created — was referenced by ReturnsPage but never
   actually existed in any prior migration; UPDATE/DELETE RLS policies added on sales + sale_items (previously
   only SELECT/INSERT existed, which silently blocked any edit/delete/void feature)
+- migration 013_purchase_enhancements.sql (2026-07-29): purchases/purchase_items/products columns for the
+  unified purchase+product-creation flow (see Purchases page section); fixed a live stock double-counting
+  bug where `PurchasesPage.tsx`'s `savePurchaseItems` manually upserted `inventory` on top of what the
+  `increment_stock_on_purchase` trigger already applied on every `purchase_items` insert
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -134,15 +142,59 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - validation: 10 digits required for India mobile; warn if fewer, block save if invalid
 - applies to: SuppliersPage, CustomersPage, PurchasesPage quick-add supplier
 
-## Purchases page features (as of 2026-07-25)
+## Purchases page features (as of 2026-07-29)
+- **New Purchase / Edit Purchase are FULL PAGES** (`/purchases/new`, `/purchases/:id/edit`), not
+  dialogs — `PurchasesPage.tsx` keeps only the list table + View/Delete/Import CSV dialogs.
+  `PurchaseFormBody` (the old dialog-based item-entry component) was deleted entirely.
 - Table columns: Purchase No | Date | Supplier | Invoice No | Items | Total Amount | Actions
-- Actions per row: View | Edit | Delete
+- Actions per row: View | Edit (→ full page) | Delete
 - Purchase No auto-generated on save: PUR-YYYYMMDD-XXXX (sequential per org per day)
-- New Purchase dialog: supplier select + quick-add supplier, invoice no, notes, items table
-- Items table: product search/free-text, Qty (text+inputMode=numeric), Unit Cost (text+inputMode=decimal)
-- Qty and Unit Cost use type="text" (NOT type="number") so onFocus→select() works reliably
+- `PurchaseFormPage.tsx` (`apps/web/src/pages/purchases/`): header (supplier select + inline
+  quick-add, invoice no, date, purchase type Credit/Cash, notes) → an "Add Item" entry strip
+  (Product search-or-create, Code, Barcode, GST%, Purchase Rate, Qty, MRP, Retail Price, SP)
+  → items table → footer totals (CGST/SGST or IGST, Bill Discount, Round Off, Total).
+- **Unified purchase entry + product creation** (fixes the old "double entry" problem): typing
+  a product name that doesn't match an existing product auto-generates SKU (`generateSku()`)
+  and barcode (`generateBarcode()`, both in `packages/core/src/codes.ts`), badges the row "New",
+  and creates the product row on Save via `packages/api/src/purchases.ts`'s `createPurchase`
+  (which calls `createProduct` internally) — no separate trip to `/products/new` needed.
+  Selecting an existing product locks Code/Barcode read-only and prefills GST/rates, with an
+  "Update this product's cost/price/GST" checkbox (default ON) to sync changed rates back.
+- Debounced live uniqueness check on Code/Barcode fields (queries `products` directly) — blocks
+  duplicates before Save is even attempted, not just on DB constraint violation.
+- GST is computed per-line via `packages/core`'s `computeGST`/`computeLineTax` (previously
+  purchases had NO tax computation at all — this is new). Interstate vs intrastate is derived
+  from `org.state_code` (2-letter alpha, e.g. "TN") vs the supplier's GSTIN — **GSTIN's first 2
+  digits are numeric** (e.g. "33"), so a `stateCodeFromGSTIN()` lookup table in
+  `packages/core/src/gstinStates.ts` maps GSTIN numeric prefixes to alpha state codes before
+  comparing; comparing raw GSTIN digits against `org.state_code` directly (as first attempted)
+  is WRONG and makes every supplier-with-GSTIN look interstate.
+- **Stock double-count bug (fixed 2026-07-29)**: the app used to manually upsert `inventory`
+  in `savePurchaseItems` AFTER inserting `purchase_items`, on top of the DB trigger
+  `increment_stock_on_purchase` (which already does its own upsert + `stock_movements` insert
+  on every `purchase_items` INSERT) — stock was being incremented 2x per purchase item. Fixed
+  by removing the app-side upsert everywhere (New, Edit, Import CSV) — the trigger is now the
+  sole source of stock adjustment on insert.
+- **Edit** (`updatePurchase` in `packages/api/src/purchases.ts`): updates header fields, then
+  reverses the ORIGINAL items' stock contribution first (via `increment_inventory` RPC with a
+  negative qty + an `adjustment` `stock_movements` row, mirroring `updateSale`'s pattern in
+  `sales.ts`), then delete+reinserts `purchase_items` — the trigger fires on the reinsert and
+  adds the NEW quantities. Net effect: final stock reflects only the edited quantities, not
+  old+new stacked. Do not call `createPurchase` for edits — it has no `purchase_no` and will
+  hit the `purchases_purchase_no_org_idx` unique constraint.
+- Items table: product search/free-text, Qty (text+inputMode=numeric), Unit Cost/rate fields
+  (text+inputMode=decimal) — Qty and Unit Cost use type="text" (NOT type="number") so
+  onFocus→select() works reliably; this pattern is used for ALL numeric fields in this flow.
 - Import CSV: download template → upload → editable preview table → verify → save as purchase
-- Edit: loads existing items, replaces purchase_items on save (no inventory re-adjustment currently)
+  (unchanged qty×cost-only shape, no GST — still uses the app-level `savePurchaseItems` helper
+  in `PurchasesPage.tsx`, now fixed to not double-count stock).
+- `products.mrp` and `products.special_price` (nullable numeric) added — MRP is the printed
+  label price, Special Price is an optional promo/discounted price; wiring SP into POS checkout
+  logic is NOT done yet (v2).
+- `purchases.purchase_date`, `purchases.purchase_type` (credit/cash), `purchases.bill_discount_type`,
+  `purchases.bill_discount_value`, `purchases.round_off` added; `purchase_items.tax_rate`,
+  `taxable_amount`, `cgst_amount`, `sgst_amount`, `igst_amount` added (migration
+  `013_purchase_enhancements.sql`).
 
 ## Dialog / Radix UI focus rules (CRITICAL — do not revert)
 - All dialogs use DialogContent from apps/web/src/components/ui/dialog.tsx

@@ -23,11 +23,7 @@ export function formatDateTime(date: string | Date) {
   }).format(new Date(date))
 }
 
-export function generateBarcode(): string {
-  const timestamp = Date.now().toString(36).toUpperCase()
-  const random = Math.random().toString(36).slice(2, 6).toUpperCase()
-  return `BS${timestamp}${random}`
-}
+export { generateBarcode, generateSku } from '@billscape/core'
 
 export function debounce<T extends (...args: unknown[]) => unknown>(fn: T, ms: number) {
   let timer: ReturnType<typeof setTimeout>

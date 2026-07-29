@@ -794,10 +794,12 @@ export type Database = {
           id: string
           image_url: string | null
           is_active: boolean
+          mrp: number | null
           name: string
           organization_id: string
           price: number
           sku: string | null
+          special_price: number | null
           tax_rate: number
           track_stock: boolean
         }
@@ -813,10 +815,12 @@ export type Database = {
           id?: string
           image_url?: string | null
           is_active?: boolean
+          mrp?: number | null
           name: string
           organization_id: string
           price: number
           sku?: string | null
+          special_price?: number | null
           tax_rate?: number
           track_stock?: boolean
         }
@@ -832,10 +836,12 @@ export type Database = {
           id?: string
           image_url?: string | null
           is_active?: boolean
+          mrp?: number | null
           name?: string
           organization_id?: string
           price?: number
           sku?: string | null
+          special_price?: number | null
           tax_rate?: number
           track_stock?: boolean
         }
@@ -950,33 +956,48 @@ export type Database = {
       }
       purchase_items: {
         Row: {
+          cgst_amount: number
           id: string
+          igst_amount: number
           line_total: number
           organization_id: string | null
           product_id: string | null
           product_name: string
           purchase_id: string
           qty: number
+          sgst_amount: number
+          tax_rate: number
+          taxable_amount: number
           unit_cost: number
         }
         Insert: {
+          cgst_amount?: number
           id?: string
+          igst_amount?: number
           line_total: number
           organization_id?: string | null
           product_id?: string | null
           product_name?: string
           purchase_id: string
           qty: number
+          sgst_amount?: number
+          tax_rate?: number
+          taxable_amount?: number
           unit_cost: number
         }
         Update: {
+          cgst_amount?: number
           id?: string
+          igst_amount?: number
           line_total?: number
           organization_id?: string | null
           product_id?: string | null
           product_name?: string
           purchase_id?: string
           qty?: number
+          sgst_amount?: number
+          tax_rate?: number
+          taxable_amount?: number
           unit_cost?: number
         }
         Relationships: [
@@ -1005,35 +1026,50 @@ export type Database = {
       }
       purchases: {
         Row: {
+          bill_discount_type: string | null
+          bill_discount_value: number | null
           created_at: string
           created_by: string
           id: string
           invoice_no: string | null
           notes: string | null
           organization_id: string
+          purchase_date: string | null
           purchase_no: string | null
+          purchase_type: string
+          round_off: number
           supplier_id: string | null
           total_amount: number
         }
         Insert: {
+          bill_discount_type?: string | null
+          bill_discount_value?: number | null
           created_at?: string
           created_by: string
           id?: string
           invoice_no?: string | null
           notes?: string | null
           organization_id: string
+          purchase_date?: string | null
           purchase_no?: string | null
+          purchase_type?: string
+          round_off?: number
           supplier_id?: string | null
           total_amount?: number
         }
         Update: {
+          bill_discount_type?: string | null
+          bill_discount_value?: number | null
           created_at?: string
           created_by?: string
           id?: string
           invoice_no?: string | null
           notes?: string | null
           organization_id?: string
+          purchase_date?: string | null
           purchase_no?: string | null
+          purchase_type?: string
+          round_off?: number
           supplier_id?: string | null
           total_amount?: number
         }

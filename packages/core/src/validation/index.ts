@@ -21,6 +21,8 @@ export const ProductSchema = z.object({
   tax_rate: GSTRateSchema,
   price: z.number().positive('Selling price must be greater than 0'),
   cost_price: z.number().min(0, 'Cost price cannot be negative'),
+  mrp: z.number().min(0).optional(),
+  special_price: z.number().min(0).optional(),
   barcode_value: z.string().max(100).optional(),
   track_stock: z.boolean().default(true),
 })
@@ -62,7 +64,39 @@ export const OrgSettingsSchema = z.object({
   invoice_footer: z.string().max(200).optional(),
 })
 
+export const PurchaseItemSchema = z
+  .object({
+    product_id: z.string().uuid().nullable(),
+    is_new_product: z.boolean().default(false),
+    product_name: z.string().min(1, 'Product name is required'),
+    sku: z.string().max(50).optional(),
+    barcode_value: z.string().max(100).optional(),
+    tax_rate: GSTRateSchema,
+    qty: z.number().positive('Qty must be greater than 0'),
+    unit_cost: z.number().min(0, 'Purchase rate cannot be negative'),
+    mrp: z.number().min(0).optional(),
+    price: z.number().min(0, 'Retail price cannot be negative'),
+    special_price: z.number().min(0).optional(),
+  })
+  .refine(
+    (item) => item.product_id !== null || (item.sku && item.barcode_value),
+    { message: 'New products must have a product code and barcode', path: ['sku'] },
+  )
+
+export const PurchaseSchema = z.object({
+  supplier_id: z.string().uuid().nullable(),
+  invoice_no: z.string().max(50).optional(),
+  purchase_date: z.string().optional(),
+  purchase_type: z.enum(['credit', 'cash']).default('credit'),
+  notes: z.string().max(500).optional(),
+  items: z.array(PurchaseItemSchema).min(1, 'Add at least one item'),
+  bill_discount_type: z.enum(['flat', 'percent']).optional(),
+  bill_discount_value: z.number().min(0).optional(),
+})
+
 export type ProductInput = z.infer<typeof ProductSchema>
 export type CartItemInput = z.infer<typeof CartItemSchema>
 export type SaleInput = z.infer<typeof SaleSchema>
 export type OrgSettingsInput = z.infer<typeof OrgSettingsSchema>
+export type PurchaseItemInput = z.infer<typeof PurchaseItemSchema>
+export type PurchaseInput = z.infer<typeof PurchaseSchema>

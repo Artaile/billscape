@@ -20,6 +20,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { ProductSchema, type ProductInput } from '@billscape/core'
 import { generateBarcode } from '@/lib/utils'
+import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -71,6 +72,8 @@ export function ProductFormPage() {
       tax_rate: 18,
       price: 0,
       cost_price: 0,
+      mrp: undefined,
+      special_price: undefined,
       barcode_value: '',
       track_stock: true,
     },
@@ -167,6 +170,8 @@ export function ProductFormPage() {
         tax_rate: existingProduct.tax_rate as 0 | 5 | 12 | 18 | 28,
         price: existingProduct.price,
         cost_price: existingProduct.cost_price,
+        mrp: existingProduct.mrp ?? undefined,
+        special_price: existingProduct.special_price ?? undefined,
         barcode_value: existingProduct.barcode_value ?? '',
         track_stock: existingProduct.track_stock,
       })
@@ -234,35 +239,7 @@ export function ProductFormPage() {
   }
 
   const handlePrintLabel = () => {
-    const printWindow = window.open('', '_blank', 'width=400,height=300')
-    if (!printWindow) return
-    const bc = barcodeValue ?? ''
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Product Label</title>
-          <style>
-            @page { size: 58mm 40mm; margin: 0; }
-            body { margin: 0; padding: 4mm; font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 32mm; }
-            h3 { font-size: 9px; margin: 0 0 2mm; text-align: center; max-width: 50mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            svg { width: 50mm; height: 18mm; }
-            p { font-size: 8px; margin: 1mm 0 0; }
-          </style>
-          <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3/dist/JsBarcode.all.min.js"></script>
-        </head>
-        <body>
-          <h3>${watch('name')}</h3>
-          <svg id="barcode"></svg>
-          <p>₹${watch('price')}</p>
-          <script>
-            JsBarcode('#barcode', '${bc}', { format: 'CODE128', width: 1, height: 30, displayValue: true, fontSize: 8 });
-            window.onload = () => { window.print(); window.close(); };
-          </script>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
+    printBarcodeLabel(watch('name'), barcodeValue ?? '', watch('price'))
   }
 
   const saveMutation = useMutation({
@@ -289,6 +266,8 @@ export function ProductFormPage() {
         tax_rate: values.tax_rate,
         price: values.price,
         cost_price: values.cost_price,
+        mrp: values.mrp ?? null,
+        special_price: values.special_price ?? null,
         barcode_value: values.barcode_value || null,
         track_stock: values.track_stock,
         image_url: imageUrl,
@@ -481,7 +460,7 @@ export function ProductFormPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label htmlFor="price">Selling Price (₹) *</Label>
+              <Label htmlFor="price">Retail Price (₹) *</Label>
               <Input
                 id="price"
                 type="number"
@@ -503,6 +482,30 @@ export function ProductFormPage() {
                 {...register('cost_price', { valueAsNumber: true })}
               />
               {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mrp">MRP (₹)</Label>
+              <Input
+                id="mrp"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                {...register('mrp', { valueAsNumber: true })}
+              />
+              {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="special_price">Special Price (₹)</Label>
+              <Input
+                id="special_price"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                {...register('special_price', { valueAsNumber: true })}
+              />
+              {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
             </div>
           </div>
 

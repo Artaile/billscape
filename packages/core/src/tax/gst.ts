@@ -125,6 +125,23 @@ export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
   }
 }
 
+// Purchase lines have no per-line discount (bill-level discount only, via applyOrderDiscount),
+// so they're mapped to CartItem with discount_pct: 0 and reuse computeGST unchanged.
+export function computePurchaseTotals(
+  ctx: GSTContext,
+  items: { unit_cost: number; qty: number; tax_rate: GSTRate }[],
+): InvoiceTotals {
+  const cartItems: CartItem[] = items.map((it, i) => ({
+    product_id: String(i),
+    product_name: '',
+    tax_rate: it.tax_rate,
+    unit_price: it.unit_cost,
+    qty: it.qty,
+    discount_pct: 0,
+  }))
+  return computeGST(ctx, cartItems)
+}
+
 // Order-level discount, applied AFTER tax on the grand total (payment-time adjustment,
 // does not affect the GST taxable value or breakup).
 export function applyOrderDiscount(

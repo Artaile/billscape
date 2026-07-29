@@ -21,6 +21,7 @@ import { CustomersPage } from '@/pages/customers/CustomersPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { PurchasesPage } from '@/pages/purchases/PurchasesPage'
+import { PurchaseFormPage } from '@/pages/purchases/PurchaseFormPage'
 import { SuppliersPage } from '@/pages/suppliers/SuppliersPage'
 import { ExpensesPage } from '@/pages/expenses/ExpensesPage'
 import { PromotionsPage } from '@/pages/promotions/PromotionsPage'
@@ -122,6 +123,8 @@ export function AppRouter() {
                   <Route path="products/:id/edit" element={<ProductFormPage />} />
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
+                  <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
+                  <Route path="purchases/:id/edit" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
                   <Route path="suppliers" element={<RequireRole roles={['owner', 'manager']}><SuppliersPage /></RequireRole>} />
                   <Route path="customers" element={<CustomersPage />} />
                   <Route path="expenses" element={<RequireRole roles={['owner', 'manager']}><ExpensesPage /></RequireRole>} />
