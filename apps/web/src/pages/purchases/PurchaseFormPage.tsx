@@ -542,38 +542,39 @@ export function PurchaseFormPage() {
                     </button>
                   )}
                 </div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Product identity</p>
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 items-end">
-                  <div className="col-span-2 xl:col-span-2 space-y-1 relative" ref={dropdownRef}>
-                    <Label className="text-xs">Product</Label>
-                    <Input
-                      ref={productNameRef}
-                      placeholder="Search or type new product"
-                      value={entrySearch}
-                      onChange={(e) => handleEntryNameChange(e.target.value)}
-                      onFocus={() => setEntryDropdownOpen(true)}
-                      className="h-8 text-sm"
-                    />
-                    {entry.product_name && (
-                      <span className={cn('absolute -top-1 right-0 text-[10px] px-1.5 py-0.5 rounded-full',
-                        entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
-                        {entry.is_new_product ? 'New' : 'Existing'}
-                      </span>
-                    )}
-                    {entryDropdownOpen && filtered.length > 0 && (
-                      <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                        {filtered.map((p) => (
-                          <button key={p.id} type="button"
-                            className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                            onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
-                            <span>{p.name}</span>
-                            <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                {/* Row 1: Product name (full width) */}
+                <div className="space-y-1 relative" ref={dropdownRef}>
+                  <Label className="text-xs">Product</Label>
+                  <Input
+                    ref={productNameRef}
+                    placeholder="Search or type new product"
+                    value={entrySearch}
+                    onChange={(e) => handleEntryNameChange(e.target.value)}
+                    onFocus={() => setEntryDropdownOpen(true)}
+                    className="h-9 text-sm"
+                  />
+                  {entry.product_name && (
+                    <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
+                      entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
+                      {entry.is_new_product ? 'New' : 'Existing'}
+                    </span>
+                  )}
+                  {entryDropdownOpen && filtered.length > 0 && (
+                    <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
+                      {filtered.map((p) => (
+                        <button key={p.id} type="button"
+                          className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
+                          onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                          <span>{p.name}</span>
+                          <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
+                {/* Row 2: Code, Barcode, GST%, Rate, Qty */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                   <div className="space-y-1">
                     <Label className="text-xs">Product Code</Label>
                     <div className="flex gap-1">
@@ -581,7 +582,7 @@ export function PurchaseFormPage() {
                         value={entry.sku}
                         disabled={!entry.is_new_product}
                         onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                        className="h-8 text-xs font-mono"
+                        className="h-9 text-xs font-mono"
                       />
                       {entry.is_new_product && (
                         <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
@@ -598,7 +599,7 @@ export function PurchaseFormPage() {
                         value={entry.barcode_value}
                         disabled={!entry.is_new_product}
                         onChange={(e) => { setEntry((p) => ({ ...p, barcode_value: e.target.value, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                        className="h-8 text-xs font-mono"
+                        className="h-9 text-xs font-mono"
                       />
                       {entry.is_new_product && (
                         <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
@@ -613,7 +614,7 @@ export function PurchaseFormPage() {
                     <select
                       value={entry.tax_rate}
                       onChange={(e) => setEntry((p) => ({ ...p, tax_rate: Number(e.target.value) as GSTRate }))}
-                      className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
+                      className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
                     >
                       {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
                     </select>
@@ -622,44 +623,43 @@ export function PurchaseFormPage() {
                   <div className="space-y-1">
                     <Label className="text-xs">Purchase Rate</Label>
                     <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-8 text-sm" />
+                      onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
                   </div>
 
                   <div className="space-y-1">
                     <Label className="text-xs">Qty</Label>
                     <Input type="text" inputMode="numeric" value={entry.qty} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9]/g, '') || '0' }))} className="h-8 text-sm text-center" />
+                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9]/g, '') || '0' }))} className="h-9 text-sm text-center" />
                   </div>
                 </div>
 
                 <Separator />
-                <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Pricing</p>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+
+                {/* Row 3: MRP, Retail, SP, Add button */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
                   <div className="space-y-1">
                     <Label className="text-xs">MRP</Label>
                     <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-8 text-sm" />
+                      onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Retail Price</Label>
                     <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-8 text-sm" />
+                      onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">SP (Special Price)</Label>
+                    <Label className="text-xs">SP (Special)</Label>
                     <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-8 text-sm" />
+                      onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
                   </div>
-                  <div className="flex items-end">
-                    <Button type="button" size="sm" className="h-8 w-full" onClick={addEntryToGrid}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
-                      {editingIndex !== null ? (
-                        <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
-                      ) : (
-                        <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
-                      )}
-                    </Button>
-                  </div>
+                  <Button type="button" size="sm" className="h-9 w-full" onClick={addEntryToGrid}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
+                    {editingIndex !== null ? (
+                      <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
+                    ) : (
+                      <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
+                    )}
+                  </Button>
                 </div>
                 {entry.codeError && <p className="text-xs text-red-400">{entry.codeError}</p>}
                 {!entry.is_new_product && entry.product_id && (
@@ -677,20 +677,20 @@ export function PurchaseFormPage() {
                     <ListChecks className="h-4 w-4 text-indigo-400" />Items ({rows.length})
                   </h2>
                 </div>
-                <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
-                <Table>
+                <div className="max-h-[420px] overflow-y-auto">
+                <Table className="min-w-[900px]">
                   <TableHeader className="sticky top-0 z-10 bg-zinc-900">
                     <TableRow>
-                      <TableHead>Product Code</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Rate</TableHead>
-                      <TableHead className="text-right">GST%</TableHead>
-                      <TableHead className="text-right">Qty</TableHead>
-                      <TableHead>Barcode</TableHead>
-                      <TableHead className="text-right">MRP</TableHead>
-                      <TableHead className="text-right">Retail</TableHead>
-                      <TableHead className="text-right">SP</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="whitespace-nowrap">Product Code</TableHead>
+                      <TableHead className="whitespace-nowrap">Product</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Rate</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">GST%</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
+                      <TableHead className="whitespace-nowrap">Barcode</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">MRP</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Retail</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">SP</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Total</TableHead>
                       <TableHead className="w-[5%]"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -699,21 +699,23 @@ export function PurchaseFormPage() {
                       <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
                     ) : rows.map((r, i) => (
                       <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
-                        <TableCell className="font-mono text-xs text-zinc-400">{r.sku}</TableCell>
-                        <TableCell className="text-sm text-zinc-200">
-                          {r.product_name}
-                          <span className={cn('ml-2 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
-                            {r.is_new_product ? 'New' : 'Existing'}
-                          </span>
+                        <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.sku}</TableCell>
+                        <TableCell className="text-sm text-zinc-200 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span>{r.product_name}</span>
+                            <span className={cn('shrink-0 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
+                              {r.is_new_product ? 'New' : 'Existing'}
+                            </span>
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300">{formatINR(parseNum(r.unit_cost))}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-400">{r.tax_rate}%</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300">{parseNum(r.qty)}</TableCell>
-                        <TableCell className="font-mono text-xs text-zinc-400">{r.barcode_value}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-400">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300">{formatINR(parseNum(r.price))}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-400">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
-                        <TableCell className="text-right text-sm font-medium text-white">{formatINR(toMoney(parseNum(r.unit_cost) * parseNum(r.qty)))}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.unit_cost))}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.tax_rate}%</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{parseNum(r.qty)}</TableCell>
+                        <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.barcode_value}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.price))}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
+                        <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(r.unit_cost) * parseNum(r.qty)))}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
