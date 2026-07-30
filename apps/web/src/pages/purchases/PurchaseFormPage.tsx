@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -406,19 +406,27 @@ export function PurchaseFormPage() {
   const filtered = getFiltered(entrySearch)
 
   return (
-    <div className="p-4 lg:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <h1 className="text-xl font-bold text-white">{isEdit ? 'Edit Purchase' : 'New Purchase'}</h1>
-          {(purchaseNoPreview || existing?.data?.purchase.purchase_no) && (
-            <p className="text-xs font-mono text-indigo-300 mt-0.5">
-              {existing?.data?.purchase.purchase_no ?? purchaseNoPreview}
-            </p>
-          )}
+    <div className="p-4 lg:p-6 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <h1 className="text-xl font-bold text-white">{isEdit ? 'Edit Purchase' : 'New Purchase'}</h1>
+            {(purchaseNoPreview || existing?.data?.purchase.purchase_no) && (
+              <p className="text-xs font-mono text-indigo-300 mt-0.5">
+                {existing?.data?.purchase.purchase_no ?? purchaseNoPreview}
+              </p>
+            )}
+          </div>
         </div>
+        {rows.length > 0 && !loadingExisting && (
+          <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2">
+            <span className="text-xs text-zinc-500">{rows.length} item{rows.length > 1 ? 's' : ''} · Total</span>
+            <span className="text-base font-bold text-white">{formatINR(grandTotal)}</span>
+          </div>
+        )}
       </div>
 
       {loadingExisting ? (
@@ -427,7 +435,9 @@ export function PurchaseFormPage() {
         <div className="space-y-5">
           {/* Header card */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-            <h2 className="text-sm font-semibold text-zinc-300">Purchase Details</h2>
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <Truck className="h-4 w-4 text-indigo-400" />Purchase Details
+            </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label>Supplier</Label>
@@ -517,7 +527,9 @@ export function PurchaseFormPage() {
           {/* Entry strip */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-zinc-300">{editingIndex !== null ? 'Edit Item' : 'Add Item'}</h2>
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <Package className="h-4 w-4 text-indigo-400" />{editingIndex !== null ? 'Edit Item' : 'Add Item'}
+              </h2>
               {editingIndex !== null && (
                 <button type="button" onClick={cancelEdit} className="text-xs text-zinc-500 hover:text-zinc-300">
                   Cancel edit
@@ -655,10 +667,13 @@ export function PurchaseFormPage() {
           {/* Items table */}
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <div className="px-5 pt-4 pb-1 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-zinc-300">Items ({rows.length})</h2>
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <ListChecks className="h-4 w-4 text-indigo-400" />Items ({rows.length})
+              </h2>
             </div>
+            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-zinc-900">
                 <TableRow>
                   <TableHead>Product Code</TableHead>
                   <TableHead>Product</TableHead>
@@ -677,7 +692,7 @@ export function PurchaseFormPage() {
                 {rows.length === 0 ? (
                   <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
                 ) : rows.map((r, i) => (
-                  <TableRow key={i} className={cn(editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
+                  <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
                     <TableCell className="font-mono text-xs text-zinc-400">{r.sku}</TableCell>
                     <TableCell className="text-sm text-zinc-200">
                       {r.product_name}
@@ -707,10 +722,14 @@ export function PurchaseFormPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
 
           {/* Footer totals */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
+            </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div><span className="text-zinc-500">Taxable Amount</span><p className="text-zinc-200 font-medium">{formatINR(totals.taxable_amount)}</p></div>
               {interstate ? (

@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Plus, X, Eye, ShoppingBag, Trash2, Loader2, Pencil,
+  Plus, X, Eye, ShoppingBag, Trash2, Loader2, Pencil, Printer,
   Upload, Download, FileSpreadsheet, AlertCircle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
 import { generatePurchaseNo, getPurchaseWithItems } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
+import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -368,12 +369,14 @@ export function PurchasesPage() {
                   <div className="flex-1">
                     <p className="text-sm font-medium text-zinc-200">Upload your filled CSV file</p>
                     <p className="text-xs text-zinc-500 mt-0.5">Supplier PDF or image import is not supported — use CSV only for accurate data</p>
-                    <label className="mt-2 cursor-pointer inline-block">
-                      <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
-                      <div className="flex items-center gap-2 rounded-md border border-dashed border-zinc-600 bg-zinc-900 px-4 py-3 text-sm text-zinc-300 hover:border-indigo-500 hover:text-white transition-colors">
-                        <Upload className="h-4 w-4" />Choose CSV file
-                      </div>
-                    </label>
+                    <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
+                    <button
+                      type="button"
+                      onClick={() => importFileRef.current?.click()}
+                      className="mt-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-600 bg-zinc-900 px-4 py-3 text-sm text-zinc-300 hover:border-indigo-500 hover:text-white transition-colors"
+                    >
+                      <Upload className="h-4 w-4" />Choose CSV file
+                    </button>
                   </div>
                 </div>
               </div>
@@ -509,7 +512,7 @@ export function PurchasesPage() {
 
       {/* ── View Purchase Dialog ── */}
       <Dialog open={!!viewPurchase} onOpenChange={(o) => { if (!o) setViewPurchase(null) }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           {viewLoading
             ? <div className="flex items-center justify-center h-32"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
             : viewPurchase && (() => {
@@ -537,7 +540,24 @@ export function PurchasesPage() {
                       <div className="col-span-2"><span className="text-zinc-500">Notes</span><p className="text-zinc-200">{purchase.notes ?? '—'}</p></div>
                     </div>
                     <Separator />
-                    <div className="rounded-lg border border-zinc-800 overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-zinc-300">Items</h3>
+                      {items.some((it) => it.products?.barcode_value) && (
+                        <Button
+                          type="button" variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={() => {
+                            for (const it of items) {
+                              if (it.products?.barcode_value) {
+                                printBarcodeLabel(it.product_name, it.products.barcode_value, it.products.price ?? it.unit_cost)
+                              }
+                            }
+                          }}
+                        >
+                          <Printer className="h-3.5 w-3.5 mr-1" />Print All Labels
+                        </Button>
+                      )}
+                    </div>
+                    <div className="rounded-lg border border-zinc-800 overflow-x-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -547,12 +567,16 @@ export function PurchasesPage() {
                             <TableHead className="text-right">Qty</TableHead>
                             <TableHead className="text-right">Unit Cost</TableHead>
                             <TableHead>Barcode</TableHead>
+                            <TableHead className="text-right">MRP</TableHead>
+                            <TableHead className="text-right">Retail</TableHead>
+                            <TableHead className="text-right">SP</TableHead>
                             <TableHead className="text-right">Total</TableHead>
+                            <TableHead className="w-[5%]"></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {items.length === 0
-                            ? <TableRow><TableCell colSpan={7} className="text-center text-zinc-500 py-4">No items</TableCell></TableRow>
+                            ? <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-4">No items</TableCell></TableRow>
                             : items.map((it) => (
                               <TableRow key={it.id}>
                                 <TableCell className="font-mono text-xs text-zinc-400">{it.products?.sku ?? '—'}</TableCell>
@@ -561,7 +585,22 @@ export function PurchasesPage() {
                                 <TableCell className="text-right text-zinc-400">{it.qty}</TableCell>
                                 <TableCell className="text-right text-zinc-400">{formatINR(it.unit_cost)}</TableCell>
                                 <TableCell className="font-mono text-xs text-zinc-400">{it.products?.barcode_value ?? '—'}</TableCell>
+                                <TableCell className="text-right text-zinc-400">{it.products?.mrp != null ? formatINR(it.products.mrp) : '—'}</TableCell>
+                                <TableCell className="text-right text-zinc-400">{it.products?.price != null ? formatINR(it.products.price) : '—'}</TableCell>
+                                <TableCell className="text-right text-zinc-400">{it.products?.special_price != null ? formatINR(it.products.special_price) : '—'}</TableCell>
                                 <TableCell className="text-right font-medium text-white">{formatINR(it.line_total)}</TableCell>
+                                <TableCell>
+                                  {it.products?.barcode_value && (
+                                    <button
+                                      type="button"
+                                      title="Print label"
+                                      onClick={() => printBarcodeLabel(it.product_name, it.products!.barcode_value!, it.products?.price ?? it.unit_cost)}
+                                      className="p-1 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+                                    >
+                                      <Printer className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                </TableCell>
                               </TableRow>
                             ))}
                         </TableBody>
