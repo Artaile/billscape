@@ -504,292 +504,304 @@ export function PurchaseFormPage() {
                   <Label>Date</Label>
                   <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
                 </div>
-                <div className="space-y-1.5 col-span-2">
-                  <Label>Purchase Type</Label>
-                  <div className="flex gap-2">
-                    {(['credit', 'cash'] as const).map((t) => (
-                      <button key={t} type="button" onClick={() => setPurchaseType(t)}
-                        className={cn('px-3 py-1.5 rounded-md text-sm font-medium border transition-all capitalize',
-                          purchaseType === t ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600')}>
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Notes</Label>
-              <Input placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Purchase Type</Label>
+                <div className="flex gap-2">
+                  {(['credit', 'cash'] as const).map((t) => (
+                    <button key={t} type="button" onClick={() => setPurchaseType(t)}
+                      className={cn('px-3 py-1.5 rounded-md text-sm font-medium border transition-all capitalize',
+                        purchaseType === t ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600')}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Notes</Label>
+                <Input placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              </div>
             </div>
           </div>
 
-          {/* Entry strip */}
-          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-                <Package className="h-4 w-4 text-indigo-400" />{editingIndex !== null ? 'Edit Item' : 'Add Item'}
-              </h2>
-              {editingIndex !== null && (
-                <button type="button" onClick={cancelEdit} className="text-xs text-zinc-500 hover:text-zinc-300">
-                  Cancel edit
-                </button>
-              )}
-            </div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Product identity</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 items-end">
-              <div className="col-span-2 lg:col-span-2 space-y-1 relative" ref={dropdownRef}>
-                <Label className="text-xs">Product</Label>
-                <Input
-                  ref={productNameRef}
-                  placeholder="Search or type new product"
-                  value={entrySearch}
-                  onChange={(e) => handleEntryNameChange(e.target.value)}
-                  onFocus={() => setEntryDropdownOpen(true)}
-                  className="h-8 text-sm"
-                />
-                {entry.product_name && (
-                  <span className={cn('absolute -top-1 right-0 text-[10px] px-1.5 py-0.5 rounded-full',
-                    entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
-                    {entry.is_new_product ? 'New' : 'Existing'}
-                  </span>
-                )}
-                {entryDropdownOpen && filtered.length > 0 && (
-                  <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                    {filtered.map((p) => (
-                      <button key={p.id} type="button"
-                        className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                        onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
-                        <span>{p.name}</span>
-                        <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Product Code</Label>
-                <div className="flex gap-1">
-                  <Input
-                    value={entry.sku}
-                    disabled={!entry.is_new_product}
-                    onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                    className="h-8 text-xs font-mono"
-                  />
-                  {entry.is_new_product && (
-                    <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                      <RefreshCw className="h-3 w-3" />
+          {/* Two-column body: item entry + table on the left, bill summary sticky on the right */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 items-start">
+            <div className="space-y-5 min-w-0">
+              {/* Entry strip */}
+              <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                    <Package className="h-4 w-4 text-indigo-400" />{editingIndex !== null ? 'Edit Item' : 'Add Item'}
+                  </h2>
+                  {editingIndex !== null && (
+                    <button type="button" onClick={cancelEdit} className="text-xs text-zinc-500 hover:text-zinc-300">
+                      Cancel edit
                     </button>
                   )}
                 </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Barcode</Label>
-                <div className="flex gap-1">
-                  <Input
-                    value={entry.barcode_value}
-                    disabled={!entry.is_new_product}
-                    onChange={(e) => { setEntry((p) => ({ ...p, barcode_value: e.target.value, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                    className="h-8 text-xs font-mono"
-                  />
-                  {entry.is_new_product && (
-                    <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                      <RefreshCw className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">GST %</Label>
-                <select
-                  value={entry.tax_rate}
-                  onChange={(e) => setEntry((p) => ({ ...p, tax_rate: Number(e.target.value) as GSTRate }))}
-                  className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
-                >
-                  {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Purchase Rate</Label>
-                <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
-                  onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-8 text-sm" />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Qty</Label>
-                <Input type="text" inputMode="numeric" value={entry.qty} onFocus={(e) => e.target.select()}
-                  onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9]/g, '') || '0' }))} className="h-8 text-sm text-center" />
-              </div>
-            </div>
-
-            <Separator />
-            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Pricing</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
-              <div className="space-y-1">
-                <Label className="text-xs">MRP</Label>
-                <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
-                  onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-8 text-sm" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Retail Price</Label>
-                <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
-                  onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-8 text-sm" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">SP (Special Price)</Label>
-                <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
-                  onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-8 text-sm" />
-              </div>
-              <div className="flex items-end">
-                <Button type="button" size="sm" className="h-8 w-full" onClick={addEntryToGrid}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
-                  {editingIndex !== null ? (
-                    <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
-                  ) : (
-                    <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
-                  )}
-                </Button>
-              </div>
-            </div>
-            {entry.codeError && <p className="text-xs text-red-400">{entry.codeError}</p>}
-            {!entry.is_new_product && entry.product_id && (
-              <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
-                <input type="checkbox" checked={entry.update_existing_pricing} onChange={(e) => setEntry((p) => ({ ...p, update_existing_pricing: e.target.checked }))} />
-                Update this product's cost/price/GST to the values above
-              </label>
-            )}
-          </div>
-
-          {/* Items table */}
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <div className="px-5 pt-4 pb-1 flex items-center justify-between">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-                <ListChecks className="h-4 w-4 text-indigo-400" />Items ({rows.length})
-              </h2>
-            </div>
-            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-zinc-900">
-                <TableRow>
-                  <TableHead>Product Code</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead className="text-right">Rate</TableHead>
-                  <TableHead className="text-right">GST%</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead>Barcode</TableHead>
-                  <TableHead className="text-right">MRP</TableHead>
-                  <TableHead className="text-right">Retail</TableHead>
-                  <TableHead className="text-right">SP</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="w-[5%]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.length === 0 ? (
-                  <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
-                ) : rows.map((r, i) => (
-                  <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
-                    <TableCell className="font-mono text-xs text-zinc-400">{r.sku}</TableCell>
-                    <TableCell className="text-sm text-zinc-200">
-                      {r.product_name}
-                      <span className={cn('ml-2 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
-                        {r.is_new_product ? 'New' : 'Existing'}
+                <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Product identity</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 items-end">
+                  <div className="col-span-2 xl:col-span-2 space-y-1 relative" ref={dropdownRef}>
+                    <Label className="text-xs">Product</Label>
+                    <Input
+                      ref={productNameRef}
+                      placeholder="Search or type new product"
+                      value={entrySearch}
+                      onChange={(e) => handleEntryNameChange(e.target.value)}
+                      onFocus={() => setEntryDropdownOpen(true)}
+                      className="h-8 text-sm"
+                    />
+                    {entry.product_name && (
+                      <span className={cn('absolute -top-1 right-0 text-[10px] px-1.5 py-0.5 rounded-full',
+                        entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
+                        {entry.is_new_product ? 'New' : 'Existing'}
                       </span>
-                    </TableCell>
-                    <TableCell className="text-right text-sm text-zinc-300">{formatINR(parseNum(r.unit_cost))}</TableCell>
-                    <TableCell className="text-right text-sm text-zinc-400">{r.tax_rate}%</TableCell>
-                    <TableCell className="text-right text-sm text-zinc-300">{parseNum(r.qty)}</TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400">{r.barcode_value}</TableCell>
-                    <TableCell className="text-right text-sm text-zinc-400">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
-                    <TableCell className="text-right text-sm text-zinc-300">{formatINR(parseNum(r.price))}</TableCell>
-                    <TableCell className="text-right text-sm text-zinc-400">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
-                    <TableCell className="text-right text-sm font-medium text-white">{formatINR(toMoney(parseNum(r.unit_cost) * parseNum(r.qty)))}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button type="button" onClick={() => removeRow(i)} className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                          <X className="h-3.5 w-3.5" />
-                        </button>
+                    )}
+                    {entryDropdownOpen && filtered.length > 0 && (
+                      <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
+                        {filtered.map((p) => (
+                          <button key={p.id} type="button"
+                            className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
+                            onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                            <span>{p.name}</span>
+                            <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                          </button>
+                        ))}
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            </div>
-          </div>
+                    )}
+                  </div>
 
-          {/* Footer totals */}
-          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div><span className="text-zinc-500">Taxable Amount</span><p className="text-zinc-200 font-medium">{formatINR(totals.taxable_amount)}</p></div>
-              {interstate ? (
-                <div><span className="text-zinc-500">IGST</span><p className="text-zinc-200 font-medium">{formatINR(totals.igst_total)}</p></div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Product Code</Label>
+                    <div className="flex gap-1">
+                      <Input
+                        value={entry.sku}
+                        disabled={!entry.is_new_product}
+                        onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
+                        className="h-8 text-xs font-mono"
+                      />
+                      {entry.is_new_product && (
+                        <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                          <RefreshCw className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Barcode</Label>
+                    <div className="flex gap-1">
+                      <Input
+                        value={entry.barcode_value}
+                        disabled={!entry.is_new_product}
+                        onChange={(e) => { setEntry((p) => ({ ...p, barcode_value: e.target.value, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
+                        className="h-8 text-xs font-mono"
+                      />
+                      {entry.is_new_product && (
+                        <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                          <RefreshCw className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">GST %</Label>
+                    <select
+                      value={entry.tax_rate}
+                      onChange={(e) => setEntry((p) => ({ ...p, tax_rate: Number(e.target.value) as GSTRate }))}
+                      className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
+                    >
+                      {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Purchase Rate</Label>
+                    <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-8 text-sm" />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Qty</Label>
+                    <Input type="text" inputMode="numeric" value={entry.qty} onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9]/g, '') || '0' }))} className="h-8 text-sm text-center" />
+                  </div>
+                </div>
+
+                <Separator />
+                <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Pricing</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+                  <div className="space-y-1">
+                    <Label className="text-xs">MRP</Label>
+                    <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Retail Price</Label>
+                    <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">SP (Special Price)</Label>
+                    <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-8 text-sm" />
+                  </div>
+                  <div className="flex items-end">
+                    <Button type="button" size="sm" className="h-8 w-full" onClick={addEntryToGrid}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
+                      {editingIndex !== null ? (
+                        <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
+                      ) : (
+                        <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+                {entry.codeError && <p className="text-xs text-red-400">{entry.codeError}</p>}
+                {!entry.is_new_product && entry.product_id && (
+                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+                    <input type="checkbox" checked={entry.update_existing_pricing} onChange={(e) => setEntry((p) => ({ ...p, update_existing_pricing: e.target.checked }))} />
+                    Update this product's cost/price/GST to the values above
+                  </label>
+                )}
+              </div>
+
+              {/* Items table */}
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-5 pt-4 pb-1 flex items-center justify-between">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                    <ListChecks className="h-4 w-4 text-indigo-400" />Items ({rows.length})
+                  </h2>
+                </div>
+                <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-zinc-900">
+                    <TableRow>
+                      <TableHead>Product Code</TableHead>
+                      <TableHead>Product</TableHead>
+                      <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="text-right">GST%</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead>Barcode</TableHead>
+                      <TableHead className="text-right">MRP</TableHead>
+                      <TableHead className="text-right">Retail</TableHead>
+                      <TableHead className="text-right">SP</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="w-[5%]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.length === 0 ? (
+                      <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
+                    ) : rows.map((r, i) => (
+                      <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
+                        <TableCell className="font-mono text-xs text-zinc-400">{r.sku}</TableCell>
+                        <TableCell className="text-sm text-zinc-200">
+                          {r.product_name}
+                          <span className={cn('ml-2 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
+                            {r.is_new_product ? 'New' : 'Existing'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300">{formatINR(parseNum(r.unit_cost))}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-400">{r.tax_rate}%</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300">{parseNum(r.qty)}</TableCell>
+                        <TableCell className="font-mono text-xs text-zinc-400">{r.barcode_value}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-400">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300">{formatINR(parseNum(r.price))}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-400">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
+                        <TableCell className="text-right text-sm font-medium text-white">{formatINR(toMoney(parseNum(r.unit_cost) * parseNum(r.qty)))}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button type="button" onClick={() => removeRow(i)} className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                </div>
+              </div>
+            </div>
+
+            {/* Right column: sticky bill summary + actions */}
+            <div className="space-y-5 lg:sticky lg:top-4">
+              <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                  <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
+                </h2>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-zinc-500">Taxable Amount</span><span className="text-zinc-200 font-medium">{formatINR(totals.taxable_amount)}</span></div>
+                  {interstate ? (
+                    <div className="flex justify-between"><span className="text-zinc-500">IGST</span><span className="text-zinc-200 font-medium">{formatINR(totals.igst_total)}</span></div>
+                  ) : (
+                    <>
+                      <div className="flex justify-between"><span className="text-zinc-500">CGST</span><span className="text-zinc-200 font-medium">{formatINR(totals.cgst_total)}</span></div>
+                      <div className="flex justify-between"><span className="text-zinc-500">SGST</span><span className="text-zinc-200 font-medium">{formatINR(totals.sgst_total)}</span></div>
+                    </>
+                  )}
+                  <div className="flex justify-between"><span className="text-zinc-500">Tax Total</span><span className="text-zinc-200 font-medium">{formatINR(totals.tax_total)}</span></div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs">Bill Discount</Label>
+                    <div className="flex items-center gap-1">
+                      <select value={billDiscountType} onChange={(e) => setBillDiscountType(e.target.value as 'flat' | 'percent')}
+                        className="h-8 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
+                        <option value="flat">₹</option>
+                        <option value="percent">%</option>
+                      </select>
+                      <Input type="text" inputMode="decimal" value={billDiscountValue} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setBillDiscountValue(e.target.value.replace(/[^0-9.]/g, '') || '0')} className="h-8 w-20 text-sm" />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+                    <input type="checkbox" checked={roundOffEnabled} onChange={(e) => setRoundOffEnabled(e.target.checked)} />
+                    Round Off
+                  </label>
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-zinc-400">Total Bill Amount</span>
+                  <span className="text-xl font-bold text-white">{formatINR(grandTotal)}</span>
+                </div>
+              </div>
+
+              {justSavedNewProducts.length > 0 ? (
+                <div className="rounded-lg border border-indigo-700 bg-indigo-950/30 p-4 space-y-3">
+                  <p className="text-sm text-zinc-200">
+                    Purchase saved. {justSavedNewProducts.length} new product{justSavedNewProducts.length > 1 ? 's' : ''} created — print barcode labels now?
+                  </p>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" size="sm" className="flex-1" onClick={handlePrintNewProductLabels}>
+                      <Printer className="h-3.5 w-3.5 mr-1" />Print Labels
+                    </Button>
+                    <Button type="button" size="sm" className="flex-1" onClick={() => navigate('/purchases')}>Continue</Button>
+                  </div>
+                </div>
               ) : (
-                <>
-                  <div><span className="text-zinc-500">CGST</span><p className="text-zinc-200 font-medium">{formatINR(totals.cgst_total)}</p></div>
-                  <div><span className="text-zinc-500">SGST</span><p className="text-zinc-200 font-medium">{formatINR(totals.sgst_total)}</p></div>
-                </>
+                <div className="flex gap-3">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => navigate('/purchases')}>Cancel</Button>
+                  <Button type="button" className="flex-1" disabled={saveMutation.isPending || rows.length === 0} onClick={() => saveMutation.mutate()}>
+                    {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
+                  </Button>
+                </div>
               )}
-              <div><span className="text-zinc-500">Tax Total</span><p className="text-zinc-200 font-medium">{formatINR(totals.tax_total)}</p></div>
-            </div>
-
-            <Separator />
-
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs">Bill Discount</Label>
-                <select value={billDiscountType} onChange={(e) => setBillDiscountType(e.target.value as 'flat' | 'percent')}
-                  className="h-8 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
-                  <option value="flat">₹</option>
-                  <option value="percent">%</option>
-                </select>
-                <Input type="text" inputMode="decimal" value={billDiscountValue} onFocus={(e) => e.target.select()}
-                  onChange={(e) => setBillDiscountValue(e.target.value.replace(/[^0-9.]/g, '') || '0')} className="h-8 w-24 text-sm" />
-              </div>
-              <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
-                <input type="checkbox" checked={roundOffEnabled} onChange={(e) => setRoundOffEnabled(e.target.checked)} />
-                Round Off
-              </label>
-            </div>
-
-            <Separator />
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Total Bill Amount</span>
-              <span className="text-xl font-bold text-white">{formatINR(grandTotal)}</span>
             </div>
           </div>
-
-          {justSavedNewProducts.length > 0 ? (
-            <div className="rounded-lg border border-indigo-700 bg-indigo-950/30 p-4 flex items-center justify-between gap-3">
-              <p className="text-sm text-zinc-200">
-                Purchase saved. {justSavedNewProducts.length} new product{justSavedNewProducts.length > 1 ? 's' : ''} created — print barcode labels now?
-              </p>
-              <div className="flex gap-2 shrink-0">
-                <Button type="button" variant="outline" size="sm" onClick={handlePrintNewProductLabels}>
-                  <Printer className="h-3.5 w-3.5 mr-1" />Print Labels
-                </Button>
-                <Button type="button" size="sm" onClick={() => navigate('/purchases')}>Continue</Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex gap-3">
-              <Button type="button" variant="outline" className="flex-1" onClick={() => navigate('/purchases')}>Cancel</Button>
-              <Button type="button" className="flex-1" disabled={saveMutation.isPending || rows.length === 0} onClick={() => saveMutation.mutate()}>
-                {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
-              </Button>
-            </div>
-          )}
         </div>
       )}
     </div>
