@@ -1,6 +1,7 @@
 import type { TypedSupabaseClient } from './client'
 import type { GSTContext, GSTRate } from '@billscape/core'
-import { computeLineTax, computeGST, isInterState, generateBarcode, generateSku } from '@billscape/core'
+import { computeLineTax, computeGST, isInterState, generateBarcode } from '@billscape/core'
+import { generateProductCode } from './products'
 import type { Database } from './database.types'
 
 type ProductInsert = Database['public']['Tables']['products']['Insert']
@@ -76,13 +77,13 @@ async function createProductForLine(
 
     // Only auto-retry if the colliding field was machine-generated, not user-typed.
     const canRetry =
-      (collidingField === 'sku' && !!line.sku?.startsWith('SKU')) ||
+      (collidingField === 'sku' && !!line.sku?.startsWith('PC')) ||
       (collidingField === 'barcode_value' && !!line.barcode_value?.startsWith('BS'))
 
     if (canRetry) {
       const retried: PurchaseLineInput = {
         ...line,
-        sku: collidingField === 'sku' ? generateSku() : line.sku,
+        sku: collidingField === 'sku' ? await generateProductCode(client, orgId) : line.sku,
         barcode_value: collidingField === 'barcode_value' ? generateBarcode() : line.barcode_value,
       }
       return createProductForLine(client, orgId, createdBy, retried, attempt + 1)

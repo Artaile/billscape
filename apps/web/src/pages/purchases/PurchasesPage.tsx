@@ -8,10 +8,11 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
-import { generatePurchaseNo } from '@billscape/api'
+import { generatePurchaseNo, getPurchaseWithItems } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { toast } from '@/hooks/use-toast'
+import { cn } from '@/lib/utils'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -49,15 +51,16 @@ interface Purchase {
   purchase_items: { id: string }[]
 }
 
-interface PurchaseItemDetail {
-  id: string; product_name: string; qty: number; unit_cost: number; line_total: number
-}
+interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
 
-interface ViewPurchase extends Purchase {
-  purchase_items_detail?: PurchaseItemDetail[]
-}
+type ViewPurchase = NonNullable<Awaited<ReturnType<typeof getPurchaseWithItems>>['data']>
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
+
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10)
+  return digits.length <= 5 ? digits : `${digits.slice(0, 5)} ${digits.slice(5)}`
+}
 
 function parseNum(s: string): number {
   const n = parseFloat(s.replace(/[^0-9.]/g, ''))
@@ -141,6 +144,11 @@ export function PurchasesPage() {
   const [importErrors, setImportErrors] = useState<string[]>([])
   const [importParsed, setImportParsed] = useState(false)
   const importFileRef = useRef<HTMLInputElement>(null)
+  const [importSupplierId, setImportSupplierId] = useState('')
+  const [showImportAddSupplier, setShowImportAddSupplier] = useState(false)
+  const [importNewSupplierName, setImportNewSupplierName] = useState('')
+  const [importNewSupplierPhone, setImportNewSupplierPhone] = useState('')
+  const [savingImportSupplier, setSavingImportSupplier] = useState(false)
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -158,6 +166,15 @@ export function PurchasesPage() {
     },
   })
 
+  const { data: suppliers } = useQuery({
+    queryKey: ['suppliers', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase.from('suppliers').select('id, name, phone, gstin').eq('organization_id', orgId!).order('name')
+      return (data ?? []) as Supplier[]
+    },
+  })
+
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   const deleteMutation = useMutation({
@@ -171,7 +188,7 @@ export function PurchasesPage() {
       queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
       toast.success('Purchase deleted')
       setDeleteConfirmId(null)
-      if (viewPurchase?.id === deleteConfirmId) setViewPurchase(null)
+      if (viewPurchase?.purchase.id === deleteConfirmId) setViewPurchase(null)
     },
     onError: (err: Error) => toast.error('Delete failed', err.message),
   })
@@ -185,6 +202,7 @@ export function PurchasesPage() {
       const total = validItems.reduce((s, it) => s + it.line_total, 0)
       const { data: purchase, error } = await supabase.from('purchases').insert({
         organization_id: orgId, purchase_no: purchaseNo, total_amount: total, created_by: user.id,
+        supplier_id: importSupplierId || null,
       }).select('id').single()
       if (error) throw error
       await savePurchaseItems(orgId, purchase.id, validItems)
@@ -195,6 +213,7 @@ export function PurchasesPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
       toast.success(`Import saved — ${purchaseNo}`)
       setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false)
+      setImportSupplierId(''); setShowImportAddSupplier(false); setImportNewSupplierName(''); setImportNewSupplierPhone('')
     },
     onError: (err: Error) => toast.error('Import failed', err.message),
   })
@@ -202,11 +221,12 @@ export function PurchasesPage() {
   // ── View loader ───────────────────────────────────────────────────────────
 
   async function handleViewPurchase(purchase: Purchase) {
+    if (!orgId) return
     setViewLoading(true)
-    const { data, error } = await supabase.from('purchase_items').select('id, product_name, qty, unit_cost, line_total').eq('purchase_id', purchase.id)
+    const { data, error } = await getPurchaseWithItems(supabase, orgId, purchase.id)
     setViewLoading(false)
-    if (error) { toast.error('Failed to load purchase details', error.message); return }
-    setViewPurchase({ ...purchase, purchase_items_detail: data ?? [] })
+    if (error || !data) { toast.error('Failed to load purchase details', error?.message); return }
+    setViewPurchase(data)
   }
 
   const handleImportFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -223,6 +243,22 @@ export function PurchasesPage() {
 
   function updateImportItem(index: number, patch: Partial<PurchaseItemForm>) {
     setImportItems((prev) => { const next = [...prev]; next[index] = { ...next[index], ...patch }; return next })
+  }
+
+  async function handleAddImportSupplier() {
+    if (!importNewSupplierName.trim() || !orgId) return
+    const rawDigits = importNewSupplierPhone.replace(/\D/g, '')
+    if (rawDigits.length > 0 && rawDigits.length < 10) { toast.error('Invalid phone', 'Enter a 10-digit India mobile number'); return }
+    setSavingImportSupplier(true)
+    const { data, error } = await supabase.from('suppliers').insert({ organization_id: orgId, name: importNewSupplierName.trim(), phone: rawDigits || null }).select('id').single()
+    setSavingImportSupplier(false)
+    if (error) { toast.error('Failed to add supplier'); return }
+    queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
+    setImportSupplierId(data.id)
+    setShowImportAddSupplier(false)
+    setImportNewSupplierName('')
+    setImportNewSupplierPhone('')
+    toast.success('Supplier added')
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -304,7 +340,7 @@ export function PurchasesPage() {
       </div>
 
       {/* ── Import CSV Dialog ── */}
-      <Dialog open={showImport} onOpenChange={(open) => { if (!open) { setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false) } }}>
+      <Dialog open={showImport} onOpenChange={(open) => { if (!open) { setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false); setImportSupplierId(''); setShowImportAddSupplier(false) } }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -361,6 +397,54 @@ export function PurchasesPage() {
               ) : (
                 <>
                   <p className="text-sm text-zinc-300"><span className="font-semibold text-white">{importItems.length}</span> items parsed — review and edit before saving.</p>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Supplier</Label>
+                    <div className="flex gap-2">
+                      <select
+                        value={importSupplierId}
+                        onChange={(e) => setImportSupplierId(e.target.value)}
+                        className="flex-1 h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="">Select supplier (optional)</option>
+                        {suppliers?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <Button type="button" variant="outline" size="sm" className="h-9 px-3"
+                        onClick={() => setShowImportAddSupplier(!showImportAddSupplier)} title="Add new supplier">
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {showImportAddSupplier && (
+                      <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 space-y-2">
+                        <p className="text-xs font-medium text-zinc-400">Quick-add supplier</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Name *</Label>
+                            <Input placeholder="Supplier name" value={importNewSupplierName} onChange={(e) => setImportNewSupplierName(e.target.value)} className="h-8 text-sm" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Phone</Label>
+                            <Input
+                              placeholder="98765 43210" inputMode="numeric" value={importNewSupplierPhone}
+                              onChange={(e) => setImportNewSupplierPhone(formatPhone(e.target.value))}
+                              className="h-8 text-sm" maxLength={11}
+                            />
+                            {importNewSupplierPhone.replace(/\D/g, '').length > 0 && importNewSupplierPhone.replace(/\D/g, '').length < 10 && (
+                              <p className="text-[11px] text-amber-400">10-digit number required</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <Button type="button" variant="ghost" size="sm" className="h-7 text-xs"
+                            onClick={() => { setShowImportAddSupplier(false); setImportNewSupplierName(''); setImportNewSupplierPhone('') }}>Cancel</Button>
+                          <Button type="button" size="sm" className="h-7 text-xs" disabled={!importNewSupplierName.trim() || savingImportSupplier} onClick={handleAddImportSupplier}>
+                            {savingImportSupplier ? 'Adding...' : 'Add'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="rounded-lg border border-zinc-800 overflow-hidden">
                     <Table>
                       <TableHeader>
@@ -413,7 +497,7 @@ export function PurchasesPage() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false) }}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false); setImportSupplierId(''); setShowImportAddSupplier(false) }}>Cancel</Button>
             {importParsed && importItems.length > 0 && (
               <Button disabled={importSaveMutation.isPending} onClick={() => importSaveMutation.mutate()}>
                 {importSaveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : `Save ${importItems.length} Items`}
@@ -425,61 +509,105 @@ export function PurchasesPage() {
 
       {/* ── View Purchase Dialog ── */}
       <Dialog open={!!viewPurchase} onOpenChange={(o) => { if (!o) setViewPurchase(null) }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           {viewLoading
             ? <div className="flex items-center justify-center h-32"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-            : viewPurchase && (
-              <>
-                <DialogHeader>
-                  <DialogTitle>
-                    Purchase Details
-                    {viewPurchase.purchase_no && <span className="ml-2 font-mono text-sm text-indigo-300">{viewPurchase.purchase_no}</span>}
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3 text-sm">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><span className="text-zinc-500">Date</span><p className="text-zinc-200">{formatDate(viewPurchase.created_at)}</p></div>
-                    <div><span className="text-zinc-500">Supplier</span><p className="text-zinc-200">{viewPurchase.suppliers?.name ?? '—'}</p></div>
-                    <div><span className="text-zinc-500">Invoice No</span><p className="font-mono text-zinc-200">{viewPurchase.invoice_no ?? '—'}</p></div>
-                    <div><span className="text-zinc-500">Notes</span><p className="text-zinc-200">{viewPurchase.notes ?? '—'}</p></div>
-                  </div>
-                  <Separator />
-                  <div className="rounded-lg border border-zinc-800 overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Product</TableHead>
-                          <TableHead className="text-right">Qty</TableHead>
-                          <TableHead className="text-right">Unit Cost</TableHead>
-                          <TableHead className="text-right">Total</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {viewPurchase.purchase_items_detail?.length === 0
-                          ? <TableRow><TableCell colSpan={4} className="text-center text-zinc-500 py-4">No items</TableCell></TableRow>
-                          : viewPurchase.purchase_items_detail?.map((it) => (
-                            <TableRow key={it.id}>
-                              <TableCell className="text-zinc-200">{it.product_name}</TableCell>
-                              <TableCell className="text-right text-zinc-400">{it.qty}</TableCell>
-                              <TableCell className="text-right text-zinc-400">{formatINR(it.unit_cost)}</TableCell>
-                              <TableCell className="text-right font-medium text-white">{formatINR(it.line_total)}</TableCell>
-                            </TableRow>
-                          ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <div className="flex justify-between items-center pt-1">
-                    <button onClick={() => setDeleteConfirmId(viewPurchase.id)} className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-400 transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" />Delete Purchase
-                    </button>
-                    <div className="flex items-center gap-3">
-                      <span className="text-zinc-400">Total</span>
-                      <span className="text-lg font-bold text-white">{formatINR(viewPurchase.total_amount)}</span>
+            : viewPurchase && (() => {
+              const { purchase, items } = viewPurchase
+              const taxableTotal = items.reduce((s, it) => s + (it.taxable_amount ?? 0), 0)
+              const cgstTotal = items.reduce((s, it) => s + (it.cgst_amount ?? 0), 0)
+              const sgstTotal = items.reduce((s, it) => s + (it.sgst_amount ?? 0), 0)
+              const igstTotal = items.reduce((s, it) => s + (it.igst_amount ?? 0), 0)
+              const taxTotal = cgstTotal + sgstTotal + igstTotal
+              const interstate = igstTotal > 0
+              return (
+                <>
+                  <DialogHeader>
+                    <DialogTitle>
+                      Purchase Details
+                      {purchase.purchase_no && <span className="ml-2 font-mono text-sm text-indigo-300">{purchase.purchase_no}</span>}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 text-sm">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      <div><span className="text-zinc-500">Date</span><p className="text-zinc-200">{formatDate(purchase.purchase_date ?? purchase.created_at)}</p></div>
+                      <div><span className="text-zinc-500">Supplier</span><p className="text-zinc-200">{purchase.suppliers?.name ?? '—'}</p></div>
+                      <div><span className="text-zinc-500">Invoice No</span><p className="font-mono text-zinc-200">{purchase.invoice_no ?? '—'}</p></div>
+                      <div><span className="text-zinc-500">Purchase Type</span><p className="text-zinc-200 capitalize">{purchase.purchase_type ?? '—'}</p></div>
+                      <div className="col-span-2"><span className="text-zinc-500">Notes</span><p className="text-zinc-200">{purchase.notes ?? '—'}</p></div>
+                    </div>
+                    <Separator />
+                    <div className="rounded-lg border border-zinc-800 overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Product Code</TableHead>
+                            <TableHead>Product</TableHead>
+                            <TableHead className="text-right">GST%</TableHead>
+                            <TableHead className="text-right">Qty</TableHead>
+                            <TableHead className="text-right">Unit Cost</TableHead>
+                            <TableHead>Barcode</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {items.length === 0
+                            ? <TableRow><TableCell colSpan={7} className="text-center text-zinc-500 py-4">No items</TableCell></TableRow>
+                            : items.map((it) => (
+                              <TableRow key={it.id}>
+                                <TableCell className="font-mono text-xs text-zinc-400">{it.products?.sku ?? '—'}</TableCell>
+                                <TableCell className="text-zinc-200">{it.product_name}</TableCell>
+                                <TableCell className="text-right text-zinc-400">{it.tax_rate}%</TableCell>
+                                <TableCell className="text-right text-zinc-400">{it.qty}</TableCell>
+                                <TableCell className="text-right text-zinc-400">{formatINR(it.unit_cost)}</TableCell>
+                                <TableCell className="font-mono text-xs text-zinc-400">{it.products?.barcode_value ?? '—'}</TableCell>
+                                <TableCell className="text-right font-medium text-white">{formatINR(it.line_total)}</TableCell>
+                              </TableRow>
+                            ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div><span className="text-zinc-500">Taxable Amount</span><p className="text-zinc-200 font-medium">{formatINR(taxableTotal)}</p></div>
+                        {interstate ? (
+                          <div><span className="text-zinc-500">IGST</span><p className="text-zinc-200 font-medium">{formatINR(igstTotal)}</p></div>
+                        ) : (
+                          <>
+                            <div><span className="text-zinc-500">CGST</span><p className="text-zinc-200 font-medium">{formatINR(cgstTotal)}</p></div>
+                            <div><span className="text-zinc-500">SGST</span><p className="text-zinc-200 font-medium">{formatINR(sgstTotal)}</p></div>
+                          </>
+                        )}
+                        <div><span className="text-zinc-500">Tax Total</span><p className="text-zinc-200 font-medium">{formatINR(taxTotal)}</p></div>
+                      </div>
+                      {(purchase.bill_discount_value ?? 0) > 0 && (
+                        <div className="flex justify-between text-zinc-400">
+                          <span>Bill Discount</span>
+                          <span>{purchase.bill_discount_type === 'percent' ? `${purchase.bill_discount_value}%` : formatINR(purchase.bill_discount_value ?? 0)}</span>
+                        </div>
+                      )}
+                      {(purchase.round_off ?? 0) !== 0 && (
+                        <div className="flex justify-between text-zinc-400">
+                          <span>Round Off</span>
+                          <span>{formatINR(purchase.round_off ?? 0)}</span>
+                        </div>
+                      )}
+                      <Separator />
+                      <div className="flex justify-between items-center pt-1">
+                        <button onClick={() => setDeleteConfirmId(purchase.id)} className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-400 transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />Delete Purchase
+                        </button>
+                        <div className="flex items-center gap-3">
+                          <span className="text-zinc-400">Total Bill Amount</span>
+                          <span className="text-lg font-bold text-white">{formatINR(purchase.total_amount)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </>
-            )}
+                </>
+              )
+            })()}
         </DialogContent>
       </Dialog>
 

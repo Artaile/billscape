@@ -1,15 +1,15 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, Loader2, Printer, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
-  generateBarcode, generateSku, stateCodeFromGSTIN,
+  generateBarcode, stateCodeFromGSTIN,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
-import { createPurchase, updatePurchase, generatePurchaseNo, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
+import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -88,6 +88,7 @@ export function PurchaseFormPage() {
   const [billDiscountValue, setBillDiscountValue] = useState('0')
   const [roundOffEnabled, setRoundOffEnabled] = useState(false)
   const [justSavedNewProducts, setJustSavedNewProducts] = useState<PurchaseRow[]>([])
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
 
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const productNameRef = useRef<HTMLInputElement | null>(null)
@@ -97,6 +98,28 @@ export function PurchaseFormPage() {
     enabled: !!orgId && !isEdit,
     queryFn: () => generatePurchaseNo(supabase, orgId!),
   })
+
+  // Sequential product code (PC0001, PC0002...) — pre-fetch the next available number once,
+  // then advance a local counter as new-product rows are added within this session so multiple
+  // rows in one purchase get distinct codes without re-querying the DB (products aren't
+  // committed until Save). Enabled even in edit mode since edits can add new-product rows too.
+  const { data: nextProductCodePreview } = useQuery({
+    queryKey: ['next-product-code', orgId],
+    enabled: !!orgId,
+    queryFn: () => generateProductCode(supabase, orgId!),
+  })
+  const [productCodeCounter, setProductCodeCounter] = useState<number | null>(null)
+  useEffect(() => {
+    if (nextProductCodePreview && productCodeCounter === null) {
+      const n = parseInt(nextProductCodePreview.replace(/^PC/, ''), 10)
+      setProductCodeCounter(isNaN(n) ? 1 : n)
+    }
+  }, [nextProductCodePreview, productCodeCounter])
+
+  function nextProductCode(): string {
+    const n = productCodeCounter ?? 1
+    return `PC${String(n).padStart(4, '0')}`
+  }
 
   const { data: existing, isLoading: loadingExisting } = useQuery({
     queryKey: ['purchase-edit', id, orgId],
@@ -224,7 +247,7 @@ export function PurchaseFormPage() {
     }
     setEntry((prev) => ({
       ...prev, product_id: null, is_new_product: true, product_name: val,
-      sku: prev.skuManuallyEdited ? prev.sku : (val ? generateSku() : ''),
+      sku: prev.skuManuallyEdited ? prev.sku : (val ? nextProductCode() : ''),
       barcode_value: prev.barcodeManuallyEdited ? prev.barcode_value : (val ? generateBarcode() : ''),
     }))
   }
@@ -250,7 +273,15 @@ export function PurchaseFormPage() {
       toast.error('Incomplete row', entry.is_new_product ? 'Product code and barcode are required for a new product' : 'Enter product name and qty')
       return
     }
-    setRows((prev) => [...prev, entry])
+    if (entry.is_new_product && !entry.skuManuallyEdited && entry.sku === nextProductCode()) {
+      setProductCodeCounter((n) => (n ?? 1) + 1)
+    }
+    if (editingIndex !== null) {
+      setRows((prev) => prev.map((r, i) => (i === editingIndex ? entry : r)))
+      setEditingIndex(null)
+    } else {
+      setRows((prev) => [...prev, entry])
+    }
     setEntry(emptyRow())
     setEntrySearch('')
     productNameRef.current?.focus()
@@ -258,6 +289,20 @@ export function PurchaseFormPage() {
 
   function removeRow(index: number) {
     setRows((prev) => prev.filter((_, i) => i !== index))
+    if (editingIndex === index) setEditingIndex(null)
+  }
+
+  function editRow(index: number) {
+    setEntry({ ...rows[index] })
+    setEntrySearch(rows[index].product_name)
+    setEditingIndex(index)
+    productNameRef.current?.focus()
+  }
+
+  function cancelEdit() {
+    setEntry(emptyRow())
+    setEntrySearch('')
+    setEditingIndex(null)
   }
 
   async function handleAddSupplier() {
@@ -382,6 +427,7 @@ export function PurchaseFormPage() {
         <div className="space-y-5">
           {/* Header card */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-zinc-300">Purchase Details</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label>Supplier</Label>
@@ -470,7 +516,15 @@ export function PurchaseFormPage() {
 
           {/* Entry strip */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-            <h2 className="text-sm font-semibold text-zinc-300">Add Item</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-300">{editingIndex !== null ? 'Edit Item' : 'Add Item'}</h2>
+              {editingIndex !== null && (
+                <button type="button" onClick={cancelEdit} className="text-xs text-zinc-500 hover:text-zinc-300">
+                  Cancel edit
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Product identity</p>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 items-end">
               <div className="col-span-2 lg:col-span-2 space-y-1 relative" ref={dropdownRef}>
                 <Label className="text-xs">Product</Label>
@@ -503,7 +557,7 @@ export function PurchaseFormPage() {
               </div>
 
               <div className="space-y-1">
-                <Label className="text-xs">Code</Label>
+                <Label className="text-xs">Product Code</Label>
                 <div className="flex gap-1">
                   <Input
                     value={entry.sku}
@@ -512,7 +566,7 @@ export function PurchaseFormPage() {
                     className="h-8 text-xs font-mono"
                   />
                   {entry.is_new_product && (
-                    <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: generateSku(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                    <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
                       <RefreshCw className="h-3 w-3" />
                     </button>
                   )}
@@ -560,6 +614,8 @@ export function PurchaseFormPage() {
               </div>
             </div>
 
+            <Separator />
+            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Pricing</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
               <div className="space-y-1">
                 <Label className="text-xs">MRP</Label>
@@ -579,7 +635,11 @@ export function PurchaseFormPage() {
               <div className="flex items-end">
                 <Button type="button" size="sm" className="h-8 w-full" onClick={addEntryToGrid}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
-                  <Plus className="h-3.5 w-3.5 mr-1" />Add to List
+                  {editingIndex !== null ? (
+                    <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
+                  ) : (
+                    <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
+                  )}
                 </Button>
               </div>
             </div>
@@ -594,10 +654,13 @@ export function PurchaseFormPage() {
 
           {/* Items table */}
           <div className="rounded-lg border border-border bg-card overflow-hidden">
+            <div className="px-5 pt-4 pb-1 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-300">Items ({rows.length})</h2>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Code</TableHead>
+                  <TableHead>Product Code</TableHead>
                   <TableHead>Product</TableHead>
                   <TableHead className="text-right">Rate</TableHead>
                   <TableHead className="text-right">GST%</TableHead>
@@ -614,7 +677,7 @@ export function PurchaseFormPage() {
                 {rows.length === 0 ? (
                   <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
                 ) : rows.map((r, i) => (
-                  <TableRow key={i}>
+                  <TableRow key={i} className={cn(editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
                     <TableCell className="font-mono text-xs text-zinc-400">{r.sku}</TableCell>
                     <TableCell className="text-sm text-zinc-200">
                       {r.product_name}
@@ -631,9 +694,14 @@ export function PurchaseFormPage() {
                     <TableCell className="text-right text-sm text-zinc-400">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
                     <TableCell className="text-right text-sm font-medium text-white">{formatINR(toMoney(parseNum(r.unit_cost) * parseNum(r.qty)))}</TableCell>
                     <TableCell>
-                      <button type="button" onClick={() => removeRow(i)} className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={() => removeRow(i)} className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
