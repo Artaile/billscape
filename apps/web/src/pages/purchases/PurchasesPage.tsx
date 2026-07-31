@@ -2,18 +2,17 @@ import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Plus, X, Eye, ShoppingBag, Trash2, Loader2, Pencil, Printer,
+  Plus, Eye, ShoppingBag, Trash2, Loader2, Pencil, Printer,
   Upload, Download, FileSpreadsheet, AlertCircle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
-import { generatePurchaseNo, getPurchaseWithItems } from '@billscape/api'
+import { getPurchaseWithItems } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
@@ -33,14 +32,6 @@ interface PurchaseItemForm {
   unit_cost: string
 }
 
-interface PurchaseItem {
-  product_id: string | null
-  product_name: string
-  qty: number
-  unit_cost: number
-  line_total: number
-}
-
 interface Purchase {
   id: string
   purchase_no: string | null
@@ -57,20 +48,6 @@ interface Supplier { id: string; name: string; phone: string | null; gstin: stri
 type ViewPurchase = NonNullable<Awaited<ReturnType<typeof getPurchaseWithItems>>['data']>
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
-
-function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 10)
-  return digits.length <= 5 ? digits : `${digits.slice(0, 5)} ${digits.slice(5)}`
-}
-
-function parseNum(s: string): number {
-  const n = parseFloat(s.replace(/[^0-9.]/g, ''))
-  return isNaN(n) ? 0 : n
-}
-
-function lineTotal(qty: string, unit_cost: string): number {
-  return parseNum(qty) * parseNum(unit_cost)
-}
 
 function downloadTemplate() {
   const csv = 'Product Name,Qty,Unit Cost (Rs)\nExample Product,10,250.00\n'
@@ -101,32 +78,6 @@ function parseCSV(text: string): { items: PurchaseItemForm[]; errors: string[] }
   return { items, errors }
 }
 
-function getValidItems(items: PurchaseItemForm[]): PurchaseItem[] {
-  return items
-    .filter((it) => it.product_name.trim() && parseNum(it.qty) > 0)
-    .map((it) => ({
-      product_id: it.product_id,
-      product_name: it.product_name.trim(),
-      qty: parseNum(it.qty),
-      unit_cost: parseNum(it.unit_cost),
-      line_total: lineTotal(it.qty, it.unit_cost),
-    }))
-}
-
-// Stock is adjusted solely by the DB trigger `increment_stock_on_purchase` on this insert —
-// do NOT also upsert `inventory` here (that was the pre-existing double-count bug: this
-// function used to manually re-upsert stock on top of what the trigger already applied).
-async function savePurchaseItems(orgId: string, purchaseId: string, validItems: PurchaseItem[]) {
-  const { error } = await supabase.from('purchase_items').insert(
-    validItems.map((it) => ({
-      purchase_id: purchaseId, organization_id: orgId,
-      product_id: it.product_id ?? null, product_name: it.product_name,
-      qty: it.qty, unit_cost: it.unit_cost, line_total: it.line_total,
-    }))
-  )
-  if (error) throw error
-}
-
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export function PurchasesPage() {
@@ -141,15 +92,8 @@ export function PurchasesPage() {
 
   // Import state
   const [showImport, setShowImport] = useState(false)
-  const [importItems, setImportItems] = useState<PurchaseItemForm[]>([])
   const [importErrors, setImportErrors] = useState<string[]>([])
-  const [importParsed, setImportParsed] = useState(false)
   const importFileRef = useRef<HTMLInputElement>(null)
-  const [importSupplierId, setImportSupplierId] = useState('')
-  const [showImportAddSupplier, setShowImportAddSupplier] = useState(false)
-  const [importNewSupplierName, setImportNewSupplierName] = useState('')
-  const [importNewSupplierPhone, setImportNewSupplierPhone] = useState('')
-  const [savingImportSupplier, setSavingImportSupplier] = useState(false)
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -194,31 +138,6 @@ export function PurchasesPage() {
     onError: (err: Error) => toast.error('Delete failed', err.message),
   })
 
-  const importSaveMutation = useMutation({
-    mutationFn: async () => {
-      if (!user || !orgId) throw new Error('Not logged in')
-      const validItems = getValidItems(importItems)
-      if (validItems.length === 0) throw new Error('No valid items to import')
-      const purchaseNo = await generatePurchaseNo(supabase, orgId)
-      const total = validItems.reduce((s, it) => s + it.line_total, 0)
-      const { data: purchase, error } = await supabase.from('purchases').insert({
-        organization_id: orgId, purchase_no: purchaseNo, total_amount: total, created_by: user.id,
-        supplier_id: importSupplierId || null,
-      }).select('id').single()
-      if (error) throw error
-      await savePurchaseItems(orgId, purchase.id, validItems)
-      return purchaseNo
-    },
-    onSuccess: (purchaseNo) => {
-      queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
-      queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
-      toast.success(`Import saved — ${purchaseNo}`)
-      setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false)
-      setImportSupplierId(''); setShowImportAddSupplier(false); setImportNewSupplierName(''); setImportNewSupplierPhone('')
-    },
-    onError: (err: Error) => toast.error('Import failed', err.message),
-  })
-
   // ── View loader ───────────────────────────────────────────────────────────
 
   async function handleViewPurchase(purchase: Purchase) {
@@ -236,31 +155,20 @@ export function PurchasesPage() {
     const reader = new FileReader()
     reader.onload = (ev) => {
       const { items, errors } = parseCSV(ev.target?.result as string)
-      setImportItems(items); setImportErrors(errors); setImportParsed(true)
+      if (items.length === 0) {
+        setImportErrors(errors.length ? errors : ['No valid rows found in this CSV'])
+        return
+      }
+      // Hand off to the full New Purchase form to review/edit GST, MRP, pricing and save —
+      // no separate quick-save path, so every purchase (typed or imported) goes through one flow.
+      navigate('/purchases/new', {
+        state: { importedRows: items.map((it) => ({ product_name: it.product_name, qty: it.qty, unit_cost: it.unit_cost })) },
+      })
+      setShowImport(false)
     }
     reader.readAsText(file)
     e.target.value = ''
-  }, [])
-
-  function updateImportItem(index: number, patch: Partial<PurchaseItemForm>) {
-    setImportItems((prev) => { const next = [...prev]; next[index] = { ...next[index], ...patch }; return next })
-  }
-
-  async function handleAddImportSupplier() {
-    if (!importNewSupplierName.trim() || !orgId) return
-    const rawDigits = importNewSupplierPhone.replace(/\D/g, '')
-    if (rawDigits.length > 0 && rawDigits.length < 10) { toast.error('Invalid phone', 'Enter a 10-digit India mobile number'); return }
-    setSavingImportSupplier(true)
-    const { data, error } = await supabase.from('suppliers').insert({ organization_id: orgId, name: importNewSupplierName.trim(), phone: rawDigits || null }).select('id').single()
-    setSavingImportSupplier(false)
-    if (error) { toast.error('Failed to add supplier'); return }
-    queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
-    setImportSupplierId(data.id)
-    setShowImportAddSupplier(false)
-    setImportNewSupplierName('')
-    setImportNewSupplierPhone('')
-    toast.success('Supplier added')
-  }
+  }, [navigate])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -272,7 +180,7 @@ export function PurchasesPage() {
           <p className="text-sm text-zinc-400 mt-0.5">{purchases?.length ?? 0} records</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setImportItems([]); setImportErrors([]); setImportParsed(false); setShowImport(true) }}>
+          <Button variant="outline" onClick={() => { setImportErrors([]); setShowImport(true) }}>
             <Upload className="h-4 w-4 mr-1" />Import CSV
           </Button>
           <Button onClick={() => navigate('/purchases/new')}>
@@ -341,171 +249,57 @@ export function PurchasesPage() {
       </div>
 
       {/* ── Import CSV Dialog ── */}
-      <Dialog open={showImport} onOpenChange={(open) => { if (!open) { setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false); setImportSupplierId(''); setShowImportAddSupplier(false) } }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={showImport} onOpenChange={(open) => { if (!open) { setShowImport(false); setImportErrors([]) } }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-indigo-400" />Import Purchase from CSV
             </DialogTitle>
           </DialogHeader>
 
-          {!importParsed ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 border border-indigo-600/40 text-xs font-bold text-indigo-300">1</div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-zinc-200">Download the template</p>
-                    <p className="text-xs text-zinc-500 mt-0.5">Fill in Product Name, Qty, and Unit Cost for each item</p>
-                    <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={downloadTemplate}>
-                      <Download className="h-3.5 w-3.5 mr-1" />Download Template (CSV)
-                    </Button>
-                  </div>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 border border-indigo-600/40 text-xs font-bold text-indigo-300">1</div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-zinc-200">Download the template</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Fill in Product Name, Qty, and Unit Cost for each item</p>
+                  <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={downloadTemplate}>
+                    <Download className="h-3.5 w-3.5 mr-1" />Download Template (CSV)
+                  </Button>
                 </div>
               </div>
-              <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 border border-indigo-600/40 text-xs font-bold text-indigo-300">2</div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-zinc-200">Upload your filled CSV file</p>
-                    <p className="text-xs text-zinc-500 mt-0.5">Supplier PDF or image import is not supported — use CSV only for accurate data</p>
-                    <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
-                    <button
-                      type="button"
-                      onClick={() => importFileRef.current?.click()}
-                      className="mt-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-600 bg-zinc-900 px-4 py-3 text-sm text-zinc-300 hover:border-indigo-500 hover:text-white transition-colors"
-                    >
-                      <Upload className="h-4 w-4" />Choose CSV file
-                    </button>
-                  </div>
+            </div>
+            <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 border border-indigo-600/40 text-xs font-bold text-indigo-300">2</div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-zinc-200">Upload your filled CSV file</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Takes you to New Purchase with items already filled in — review GST, MRP, pricing and supplier there, then save</p>
+                  <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
+                  <button
+                    type="button"
+                    onClick={() => importFileRef.current?.click()}
+                    className="mt-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-600 bg-zinc-900 px-4 py-3 text-sm text-zinc-300 hover:border-indigo-500 hover:text-white transition-colors"
+                  >
+                    <Upload className="h-4 w-4" />Choose CSV file
+                  </button>
                 </div>
               </div>
-              <p className="text-xs text-zinc-600 text-center">For supplier PDF / image — open the file, manually enter items using New Purchase.</p>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {importErrors.length > 0 && (
-                <div className="rounded-lg border border-amber-800/50 bg-amber-950/30 p-3 space-y-1">
-                  <div className="flex items-center gap-2 text-amber-400 text-xs font-medium">
-                    <AlertCircle className="h-3.5 w-3.5" />{importErrors.length} row(s) skipped:
-                  </div>
-                  {importErrors.map((e, i) => <p key={i} className="text-xs text-amber-500 pl-5">{e}</p>)}
+            {importErrors.length > 0 && (
+              <div className="rounded-lg border border-amber-800/50 bg-amber-950/30 p-3 space-y-1">
+                <div className="flex items-center gap-2 text-amber-400 text-xs font-medium">
+                  <AlertCircle className="h-3.5 w-3.5" />{importErrors.length} row(s) skipped:
                 </div>
-              )}
-              {importItems.length === 0 ? (
-                <div className="text-center py-8 text-zinc-500">
-                  <p className="text-sm">No valid items found. Check your CSV and try again.</p>
-                  <Button variant="outline" size="sm" className="mt-3" onClick={() => { setImportParsed(false); setImportItems([]); setImportErrors([]) }}>Try Again</Button>
-                </div>
-              ) : (
-                <>
-                  <p className="text-sm text-zinc-300"><span className="font-semibold text-white">{importItems.length}</span> items parsed — review and edit before saving.</p>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Supplier</Label>
-                    <div className="flex gap-2">
-                      <select
-                        value={importSupplierId}
-                        onChange={(e) => setImportSupplierId(e.target.value)}
-                        className="flex-1 h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="">Select supplier (optional)</option>
-                        {suppliers?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                      <Button type="button" variant="outline" size="sm" className="h-9 px-3"
-                        onClick={() => setShowImportAddSupplier(!showImportAddSupplier)} title="Add new supplier">
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    {showImportAddSupplier && (
-                      <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 space-y-2">
-                        <p className="text-xs font-medium text-zinc-400">Quick-add supplier</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Name *</Label>
-                            <Input placeholder="Supplier name" value={importNewSupplierName} onChange={(e) => setImportNewSupplierName(e.target.value)} className="h-8 text-sm" />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Phone</Label>
-                            <Input
-                              placeholder="98765 43210" inputMode="numeric" value={importNewSupplierPhone}
-                              onChange={(e) => setImportNewSupplierPhone(formatPhone(e.target.value))}
-                              className="h-8 text-sm" maxLength={11}
-                            />
-                            {importNewSupplierPhone.replace(/\D/g, '').length > 0 && importNewSupplierPhone.replace(/\D/g, '').length < 10 && (
-                              <p className="text-[11px] text-amber-400">10-digit number required</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <Button type="button" variant="ghost" size="sm" className="h-7 text-xs"
-                            onClick={() => { setShowImportAddSupplier(false); setImportNewSupplierName(''); setImportNewSupplierPhone('') }}>Cancel</Button>
-                          <Button type="button" size="sm" className="h-7 text-xs" disabled={!importNewSupplierName.trim() || savingImportSupplier} onClick={handleAddImportSupplier}>
-                            {savingImportSupplier ? 'Adding...' : 'Add'}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rounded-lg border border-zinc-800 overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-[45%]">Product Name</TableHead>
-                          <TableHead className="w-[18%]">Qty</TableHead>
-                          <TableHead className="w-[25%]">Unit Cost (₹)</TableHead>
-                          <TableHead className="w-[10%] text-right">Total</TableHead>
-                          <TableHead className="w-[5%]"></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {importItems.map((item, i) => (
-                          <TableRow key={i}>
-                            <TableCell className="py-1.5">
-                              <Input value={item.product_name} onChange={(e) => updateImportItem(i, { product_name: e.target.value })} className="h-8 text-sm" />
-                            </TableCell>
-                            <TableCell className="py-1.5">
-                              <Input type="text" inputMode="numeric" value={item.qty} onFocus={(e) => e.target.select()}
-                                onChange={(e) => updateImportItem(i, { qty: e.target.value.replace(/[^0-9]/g, '') || '0' })} className="h-8 text-sm text-center" />
-                            </TableCell>
-                            <TableCell className="py-1.5">
-                              <Input type="text" inputMode="decimal" value={item.unit_cost} onFocus={(e) => e.target.select()}
-                                onChange={(e) => updateImportItem(i, { unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' })} className="h-8 text-sm" />
-                            </TableCell>
-                            <TableCell className="text-right text-sm text-zinc-200 py-1.5">{formatINR(lineTotal(item.qty, item.unit_cost))}</TableCell>
-                            <TableCell className="py-1.5">
-                              <button type="button" onClick={() => setImportItems((prev) => prev.filter((_, j) => j !== i))}
-                                className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <div className="flex items-center justify-between pt-1">
-                    <Button variant="ghost" size="sm" className="text-xs text-zinc-500" onClick={() => { setImportParsed(false); setImportItems([]); setImportErrors([]) }}>
-                      ← Upload different file
-                    </Button>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-zinc-400">Total</span>
-                      <span className="text-lg font-bold text-white">{formatINR(importItems.reduce((s, it) => s + lineTotal(it.qty, it.unit_cost), 0))}</span>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                {importErrors.map((e, i) => <p key={i} className="text-xs text-amber-500 pl-5">{e}</p>)}
+              </div>
+            )}
+            <p className="text-xs text-zinc-600 text-center">For supplier PDF / image — open the file, manually enter items using New Purchase.</p>
+          </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowImport(false); setImportItems([]); setImportErrors([]); setImportParsed(false); setImportSupplierId(''); setShowImportAddSupplier(false) }}>Cancel</Button>
-            {importParsed && importItems.length > 0 && (
-              <Button disabled={importSaveMutation.isPending} onClick={() => importSaveMutation.mutate()}>
-                {importSaveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : `Save ${importItems.length} Items`}
-              </Button>
-            )}
+            <Button variant="outline" onClick={() => { setShowImport(false); setImportErrors([]) }}>Cancel</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

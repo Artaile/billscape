@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -42,6 +42,15 @@ interface PurchaseRow {
   codeError?: string
 }
 
+// Shape handed off by the CSV Import flow (PurchasesPage.tsx) via navigate(..., { state }) —
+// just the raw parsed columns; matching against existing products and filling in
+// sku/barcode/tax_rate/mrp/price happens here once the products list has loaded.
+export interface ImportedPurchaseRow {
+  product_name: string
+  qty: string
+  unit_cost: string
+}
+
 function parseNum(s: string): number {
   const n = parseFloat(s.replace(/[^0-9.]/g, ''))
   return isNaN(n) ? 0 : n
@@ -63,8 +72,11 @@ function formatPhone(raw: string): string {
 
 export function PurchaseFormPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { id } = useParams<{ id: string }>()
   const isEdit = !!id
+  const importedRows = (location.state as { importedRows?: ImportedPurchaseRow[]; importSupplierId?: string } | null)?.importedRows
+  const importSupplierIdFromState = (location.state as { importSupplierId?: string } | null)?.importSupplierId
   const { org, user } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -180,6 +192,47 @@ export function PurchaseFormPage() {
       return (data ?? []) as ExistingProduct[]
     },
   })
+
+  // Prefills the grid from a CSV Import CSV hand-off (see PurchasesPage.tsx) — runs once
+  // products has loaded so each row can be matched by exact name to an existing product
+  // (carrying over its GST/MRP/retail/SP/code/barcode); unmatched names become new-product
+  // rows with an auto-generated code + barcode, same as typing a new name in the Add Item form.
+  const importConsumedRef = useRef(false)
+  useEffect(() => {
+    if (importConsumedRef.current) return
+    if (!importedRows || importedRows.length === 0) return
+    if (!products) return
+    importConsumedRef.current = true
+
+    let counter = productCodeCounter ?? 1
+    const newRows: PurchaseRow[] = importedRows.map((imp) => {
+      const match = products.find((p) => p.name.toLowerCase() === imp.product_name.trim().toLowerCase())
+      if (match) {
+        return {
+          product_id: match.id, is_new_product: false, product_name: match.name,
+          sku: match.sku ?? '', barcode_value: match.barcode_value ?? '',
+          tax_rate: match.tax_rate, qty: imp.qty, unit_cost: imp.unit_cost || String(match.cost_price),
+          mrp: match.mrp != null ? String(match.mrp) : '', price: String(match.price),
+          special_price: match.special_price != null ? String(match.special_price) : '',
+          update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
+        }
+      }
+      const sku = `PC${String(counter).padStart(4, '0')}`
+      counter += 1
+      return {
+        product_id: null, is_new_product: true, product_name: imp.product_name.trim(),
+        sku, barcode_value: generateBarcode(),
+        tax_rate: 18, qty: imp.qty, unit_cost: imp.unit_cost,
+        mrp: '', price: imp.unit_cost, special_price: '',
+        update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
+      }
+    })
+    setRows(newRows)
+    setProductCodeCounter(counter)
+    if (importSupplierIdFromState) setSupplierId(importSupplierIdFromState)
+    toast.success(`${newRows.length} item(s) imported from CSV`, 'Review GST, MRP and pricing before saving')
+    navigate(location.pathname, { replace: true, state: null })
+  }, [importedRows, products, productCodeCounter, importSupplierIdFromState, navigate, location.pathname])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
