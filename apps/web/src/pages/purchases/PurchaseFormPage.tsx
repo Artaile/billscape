@@ -406,7 +406,7 @@ export function PurchaseFormPage() {
   const filtered = getFiltered(entrySearch)
 
   return (
-    <div className="p-4 lg:p-6 max-w-7xl mx-auto">
+    <div className="p-4 lg:p-6 max-w-[1800px] mx-auto">
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
@@ -528,7 +528,7 @@ export function PurchaseFormPage() {
           </div>
 
           {/* Two-column body: item entry + table on the left, bill summary sticky on the right */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-5">
             <div className="space-y-5 min-w-0">
               {/* Entry strip */}
               <div className="rounded-lg border border-border bg-card p-5 space-y-3">
