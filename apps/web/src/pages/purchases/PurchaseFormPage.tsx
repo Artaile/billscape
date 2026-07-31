@@ -528,7 +528,7 @@ export function PurchaseFormPage() {
           </div>
 
           {/* Two-column body: item entry + table on the left, bill summary sticky on the right */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5">
             <div className="space-y-5 min-w-0">
               {/* Entry strip */}
               <div className="rounded-lg border border-border bg-card p-5 space-y-3">
