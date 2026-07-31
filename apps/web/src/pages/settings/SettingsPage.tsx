@@ -17,12 +17,14 @@ import {
   Globe,
   Download,
   Trash2,
+  Clock,
+  Pencil,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
-import type { UserRole } from '@billscape/core'
+import { formatINR, type UserRole } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -120,6 +122,104 @@ export function SettingsPage() {
   const [timezone, setTimezone] = useState(org?.branding?.timezone ?? 'Asia/Kolkata')
 
   const [exportLoading, setExportLoading] = useState(false)
+
+  // Routine templates state
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<any>(null)
+  const [tempName, setTempName] = useState('')
+  const [tempCategory, setTempCategory] = useState('rent')
+  const [tempAmount, setTempAmount] = useState('')
+  const [tempDueDay, setTempDueDay] = useState('5')
+  const [tempIsActive, setTempIsActive] = useState(true)
+
+  function openNewTemplate() {
+    setEditingTemplate(null)
+    setTempName('')
+    setTempCategory('rent')
+    setTempAmount('')
+    setTempDueDay('5')
+    setTempIsActive(true)
+    setTemplateDialogOpen(true)
+  }
+
+  function openEditTemplate(t: any) {
+    setEditingTemplate(t)
+    setTempName(t.name)
+    setTempCategory(t.category)
+    setTempAmount(String(t.default_amount))
+    setTempDueDay(String(t.due_day))
+    setTempIsActive(t.is_active)
+    setTemplateDialogOpen(true)
+  }
+
+  function saveTemplate() {
+    if (!tempName.trim()) { toast.error('Name is required'); return }
+    const day = parseInt(tempDueDay)
+    if (isNaN(day) || day < 1 || day > 31) { toast.error('Due day must be between 1 and 31'); return }
+    const amt = parseFloat(tempAmount)
+    if (isNaN(amt) || amt < 0) { toast.error('Default amount must be a positive number'); return }
+
+    saveTemplateMutation.mutate({
+      name: tempName.trim(),
+      category: tempCategory,
+      default_amount: amt,
+      due_day: day,
+      is_active: tempIsActive,
+    })
+  }
+
+  // Fetch routine templates
+  const { data: templates = [], isLoading: templatesLoading } = useQuery({
+    queryKey: ['recurring-templates', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('recurring_templates')
+        .select('*')
+        .eq('organization_id', orgId!)
+        .order('due_day', { ascending: true })
+      if (error) throw error
+      return data ?? []
+    }
+  })
+
+  const saveTemplateMutation = useMutation({
+    mutationFn: async (payload: any) => {
+      if (editingTemplate) {
+        const { error } = await supabase
+          .from('recurring_templates')
+          .update(payload)
+          .eq('id', editingTemplate.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('recurring_templates')
+          .insert({ ...payload, organization_id: orgId! })
+        if (error) throw error
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-templates', orgId] })
+      toast.success(editingTemplate ? 'Template updated' : 'Template created')
+      setTemplateDialogOpen(false)
+    },
+    onError: (err: Error) => toast.error('Failed to save template', err.message)
+  })
+
+  const deleteTemplateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('recurring_templates')
+        .delete()
+        .eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring-templates', orgId] })
+      toast.success('Template deleted')
+    },
+    onError: (err: Error) => toast.error('Failed to delete template', err.message)
+  })
 
   const shopForm = useForm<ShopInfoValues>({
     resolver: zodResolver(shopInfoSchema),
@@ -356,6 +456,10 @@ export function SettingsPage() {
           <TabsTrigger value="backup">
             <Download className="h-3.5 w-3.5 mr-1.5" />
             Backup
+          </TabsTrigger>
+          <TabsTrigger value="routine">
+            <Clock className="h-3.5 w-3.5 mr-1.5" />
+            Routine Works
           </TabsTrigger>
         </TabsList>
 
@@ -816,6 +920,77 @@ export function SettingsPage() {
             </div>
           </div>
         </TabsContent>
+
+        {/* Routine Works */}
+        <TabsContent value="routine">
+          <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Routine Works Configuration</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Set up monthly recurring tasks and expenses. Enabling these will show them in the navbar notification panel when they are due.
+                </p>
+              </div>
+              <Button size="sm" onClick={openNewTemplate}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                Add Template
+              </Button>
+            </div>
+
+            {templatesLoading ? (
+              <div className="flex items-center justify-center h-20">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : templates.length === 0 ? (
+              <div className="text-center py-8 border border-dashed border-border rounded-lg text-sm text-muted-foreground">
+                No routine templates configured yet. Add your first routine template (e.g. Rent, Salary, or Utilities).
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Task / Expense Name</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Default Amount</TableHead>
+                      <TableHead>Due Day</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {templates.map((t: any) => (
+                      <TableRow key={t.id} className={cn(!t.is_active && 'opacity-65')}>
+                        <TableCell className="font-medium text-zinc-200">{t.name}</TableCell>
+                        <TableCell className="capitalize text-zinc-400">{t.category}</TableCell>
+                        <TableCell className="text-zinc-300">{formatINR(t.default_amount)}</TableCell>
+                        <TableCell className="text-zinc-400">Day {t.due_day} of month</TableCell>
+                        <TableCell>
+                          <Badge variant={t.is_active ? 'default' : 'secondary'}>
+                            {t.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openEditTemplate(t)}>
+                              <Pencil className="h-3.5 w-3.5 text-zinc-400 hover:text-zinc-200" />
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-400"
+                              onClick={() => {
+                                if (confirm(`Delete template "${t.name}"?`)) deleteTemplateMutation.mutate(t.id)
+                              }}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
       </Tabs>
 
       {/* Invite member dialog */}
@@ -861,6 +1036,56 @@ export function SettingsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add / Edit Routine Template Dialog */}
+      <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingTemplate ? 'Edit Routine Template' : 'Add Routine Template'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="temp-name">Task Name *</Label>
+              <Input id="temp-name" placeholder="e.g. Shop Monthly Rent" value={tempName} onChange={(e) => setTempName(e.target.value)} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="temp-category">Category</Label>
+                <select id="temp-category" value={tempCategory} onChange={(e) => setTempCategory(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="rent" className="bg-zinc-900">Rent</option>
+                  <option value="salary" className="bg-zinc-900">Salary</option>
+                  <option value="utilities" className="bg-zinc-900">Utilities</option>
+                  <option value="maintenance" className="bg-zinc-900">Maintenance</option>
+                  <option value="other" className="bg-zinc-900">Other Expense</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="temp-due-day">Due Day of Month (1-31) *</Label>
+                <Input id="temp-due-day" type="number" min={1} max={31} value={tempDueDay} onChange={(e) => setTempDueDay(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="temp-amount">Default Amount (₹) *</Label>
+              <Input id="temp-amount" type="number" min={0} placeholder="0.00" value={tempAmount} onChange={(e) => setTempAmount(e.target.value)} />
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer pt-2">
+              <input type="checkbox" checked={tempIsActive} onChange={(e) => setTempIsActive(e.target.checked)} className="rounded border-zinc-700 bg-zinc-900" />
+              <span className="text-sm text-foreground">Template is Active</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTemplateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={saveTemplate} disabled={saveTemplateMutation.isPending}>
+              {saveTemplateMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : editingTemplate ? 'Update' : 'Add Template'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

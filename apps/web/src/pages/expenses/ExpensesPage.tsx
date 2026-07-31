@@ -52,6 +52,8 @@ const CATEGORY_COLORS: Record<string, string> = {
   Miscellaneous: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
 }
 
+
+
 interface Expense {
   id: string
   description: string
@@ -135,7 +137,7 @@ export function ExpensesPage() {
     setNotes('')
   }
 
-  const filtered = filterCategory === 'All' ? expenses : expenses.filter((e) => e.category === filterCategory)
+  const filtered = filterCategory === 'All' ? expenses : expenses.filter((e) => e.category?.toLowerCase() === filterCategory.toLowerCase())
   const totalThisMonth = expenses.filter((e) => {
     const d = new Date(e.expense_date)
     const now = new Date()
@@ -146,7 +148,7 @@ export function ExpensesPage() {
 
   const categoryTotals = CATEGORIES.map((cat) => ({
     cat,
-    total: expenses.filter((e) => e.category === cat).reduce((s, e) => s + e.amount, 0),
+    total: expenses.filter((e) => e.category?.toLowerCase() === cat.toLowerCase()).reduce((s, e) => s + e.amount, 0),
   })).filter((c) => c.total > 0).sort((a, b) => b.total - a.total)
 
   return (
@@ -257,7 +259,7 @@ export function ExpensesPage() {
                     {exp.notes && <p className="text-xs text-muted-foreground mt-0.5">{exp.notes}</p>}
                   </TableCell>
                   <TableCell>
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${CATEGORY_COLORS[exp.category] ?? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'}`}>
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${getCategoryColor(exp.category)}`}>
                       {exp.category}
                     </span>
                   </TableCell>

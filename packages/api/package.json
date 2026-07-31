@@ -10,7 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@billscape/core": "workspace:*",
+    "@billscape/core": "file:../core",
     "@supabase/supabase-js": "^2.50.5"
   },
   "devDependencies": {
