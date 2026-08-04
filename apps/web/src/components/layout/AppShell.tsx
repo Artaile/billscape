@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useNavigationGuard } from '@/contexts/NavigationGuardContext'
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -65,6 +66,8 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { requestNavigation } = useNavigationGuard()
   const { user, org, role, signOut } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -79,9 +82,11 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     .toUpperCase()
     .slice(0, 2)
 
-  const handleSignOut = async () => {
-    await signOut()
-    setUserMenuOpen(false)
+  const handleSignOut = () => {
+    requestNavigation(async () => {
+      await signOut()
+      setUserMenuOpen(false)
+    })
   }
 
   const SidebarContent = () => (
@@ -117,7 +122,17 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
               <li key={item.href}>
                 <Link
                   to={item.href}
-                  onClick={() => setSidebarOpen(false)}
+                  onClick={(e) => {
+                    if (location.pathname.startsWith(item.href)) {
+                      setSidebarOpen(false)
+                      return
+                    }
+                    e.preventDefault()
+                    requestNavigation(() => {
+                      setSidebarOpen(false)
+                      navigate(item.href)
+                    })
+                  }}
                   className={cn(
                     'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
                     isActive

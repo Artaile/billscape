@@ -23,9 +23,14 @@ import {
   X,
   MessageCircle,
   Receipt,
+  ChevronDown,
+  ChevronUp,
+  Split,
+  ArrowDownToLine,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { computeGST, computeLineTax, applyOrderDiscount, formatINR } from '@billscape/core'
 import { createSale, getSales } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
@@ -68,6 +73,8 @@ interface CompletedSale {
   invoiceNo: string
   totals: InvoiceTotals
   items: CartItem[]
+  paymentMode: string
+  paymentDetail?: string
 }
 
 export function POSTab() {
@@ -79,6 +86,8 @@ export function POSTab() {
   const [cart, setCart] = useState<CartItem[]>([])
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cash')
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [splitPayment, setSplitPayment] = useState(false)
+  const [splitAmounts, setSplitAmounts] = useState<Record<PaymentMode, string>>({ cash: '', card: '', upi: '' })
   const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null)
   const [showInvoice, setShowInvoice] = useState(false)
   const [productSearch, setProductSearch] = useState('')
@@ -92,6 +101,7 @@ export function POSTab() {
   // Order-level discount (applied post-tax, on grand total)
   const [orderDiscountType, setOrderDiscountType] = useState<DiscountType>('percent')
   const [orderDiscountValue, setOrderDiscountValue] = useState('')
+  const [showTaxDetails, setShowTaxDetails] = useState(false)
 
   // Customer state
   const [customerSearch, setCustomerSearch] = useState('')
@@ -102,6 +112,20 @@ export function POSTab() {
   // Keep a ref to current cart so onSuccess can capture it after cart is cleared
   const cartRef = useRef<CartItem[]>([])
   cartRef.current = cart
+
+  // Warn before leaving the page (tab close / refresh) with an unsaved cart
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (cartRef.current.length === 0) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [])
+
+  // Warn before in-app navigation away (sidebar links, sign out, etc.) with an unsaved cart
+  useRegisterNavigationGuard(useCallback(() => cartRef.current.length > 0, []))
 
   // Scanner state
   const scanInputRef = useRef<HTMLInputElement>(null)
@@ -176,7 +200,7 @@ export function POSTab() {
         .limit(50)
 
       if (productSearch) {
-        query = query.ilike('name', `%${productSearch}%`)
+        query = query.or(`name.ilike.%${productSearch}%,barcode_value.ilike.%${productSearch}%`)
       }
 
       const { data } = await query
@@ -275,6 +299,7 @@ export function POSTab() {
       }
       return [...prev, newItem]
     })
+    setProductSearch('')
   }, [])
 
   // USB scanner keyboard wedge handler
@@ -420,25 +445,44 @@ export function POSTab() {
 
   const completeSaleMutation = useMutation({
     mutationFn: async () => {
-      // Empty field = exact payment (net payable after any order discount)
-      const amountPaid = paymentAmount === '' ? totals.net_payable : (parseFloat(paymentAmount) || 0)
-      if (amountPaid < totals.net_payable) {
-        throw new Error(`Payment amount (${formatINR(amountPaid)}) is less than payable amount (${formatINR(totals.net_payable)})`)
-      }
       if (!orgId || !user) throw new Error('Not authenticated')
 
-      const cashMap: Record<PaymentMode, { cash_amount?: number; card_amount?: number; upi_amount?: number }> = {
-        cash: { cash_amount: amountPaid },
-        card: { card_amount: amountPaid },
-        upi: { upi_amount: amountPaid },
+      let paymentFields: {
+        payment_mode: PaymentMode | 'split'
+        cash_amount?: number
+        card_amount?: number
+        upi_amount?: number
+      }
+
+      if (splitPayment) {
+        if (splitTotal < totals.net_payable) {
+          throw new Error(`Split amount (${formatINR(splitTotal)}) is less than payable amount (${formatINR(totals.net_payable)})`)
+        }
+        paymentFields = {
+          payment_mode: 'split',
+          cash_amount: parseFloat(splitAmounts.cash) || 0,
+          card_amount: parseFloat(splitAmounts.card) || 0,
+          upi_amount: parseFloat(splitAmounts.upi) || 0,
+        }
+      } else {
+        // Empty field = exact payment (net payable after any order discount)
+        const amountPaid = paymentAmount === '' ? totals.net_payable : (parseFloat(paymentAmount) || 0)
+        if (amountPaid < totals.net_payable) {
+          throw new Error(`Payment amount (${formatINR(amountPaid)}) is less than payable amount (${formatINR(totals.net_payable)})`)
+        }
+        const cashMap: Record<PaymentMode, { cash_amount?: number; card_amount?: number; upi_amount?: number }> = {
+          cash: { cash_amount: amountPaid },
+          card: { card_amount: amountPaid },
+          upi: { upi_amount: amountPaid },
+        }
+        paymentFields = { payment_mode: paymentMode, ...cashMap[paymentMode] }
       }
 
       const result = await createSale(supabase as Parameters<typeof createSale>[0], {
         organization_id: orgId,
         customer_id: selectedCustomer?.id,
         items: cart,
-        payment_mode: paymentMode,
-        ...cashMap[paymentMode],
+        ...paymentFields,
         gst_context: gstContext,
         created_by: user.id,
         order_discount_type: resolvedOrderDiscountValue > 0 ? orderDiscountType : undefined,
@@ -455,15 +499,28 @@ export function POSTab() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const d = data as any
       const saleItems = cartRef.current
+      const saleRow = d.sale as { invoice_no: string; payment_mode: string; cash_amount: number | null; card_amount: number | null; upi_amount: number | null }
+      const paymentDetail =
+        saleRow.payment_mode === 'split'
+          ? [
+              saleRow.cash_amount ? `Cash ${formatINR(saleRow.cash_amount)}` : '',
+              saleRow.card_amount ? `Card ${formatINR(saleRow.card_amount)}` : '',
+              saleRow.upi_amount ? `UPI ${formatINR(saleRow.upi_amount)}` : '',
+            ].filter(Boolean).join(', ')
+          : undefined
       setCompletedSale({
         invoiceNo: d.sale.invoice_no,
         totals: d.totals,
         items: saleItems,
+        paymentMode: saleRow.payment_mode,
+        paymentDetail,
       })
       setLastSale({ invoiceNo: d.sale.invoice_no, grandTotal: d.totals.net_payable })
       setShowInvoice(true)
       setCart([])
       setPaymentAmount('')
+      setSplitPayment(false)
+      setSplitAmounts({ cash: '', card: '', upi: '' })
       setOrderDiscountValue('')
       queryClient.invalidateQueries({ queryKey: ['billing-products', orgId] })
       queryClient.invalidateQueries({ queryKey: ['today-summary', orgId] })
@@ -486,6 +543,14 @@ export function POSTab() {
   const amountPaid = paymentAmount === '' ? totals.net_payable : (parseFloat(paymentAmount) || 0)
   const change = Math.max(0, amountPaid - totals.net_payable)
 
+  const splitTotal = Math.round(
+    ((parseFloat(splitAmounts.cash) || 0) +
+      (parseFloat(splitAmounts.card) || 0) +
+      (parseFloat(splitAmounts.upi) || 0)) *
+      100,
+  ) / 100
+  const splitRemaining = Math.max(0, Math.round((totals.net_payable - splitTotal) * 100) / 100)
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Hidden scanner input - always focused */}
@@ -498,8 +563,8 @@ export function POSTab() {
         tabIndex={-1}
       />
 
-      {/* Left: Product panel (wider) */}
-      <div className="flex flex-col w-full lg:w-[60%] xl:w-[65%] border-r border-border overflow-hidden">
+      {/* Right: Product panel (narrower) */}
+      <div className="flex flex-col w-full lg:w-[40%] xl:w-[35%] overflow-hidden order-2">
         {/* Search bar */}
         <div className="p-3 border-b border-border">
           <div className="relative">
@@ -508,14 +573,24 @@ export function POSTab() {
               placeholder="Search products... (scan barcode or type)"
               value={productSearch}
               onChange={(e) => setProductSearch(e.target.value)}
-              className="pl-9"
+              className="pl-9 pr-9"
             />
+            {productSearch && (
+              <button
+                type="button"
+                onClick={() => setProductSearch('')}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Product grid */}
         <div className="flex-1 overflow-y-auto p-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {products?.map((product) => {
               const stock = getStock(product.inventory)
               const outOfStock = product.track_stock && stock <= 0
@@ -556,8 +631,8 @@ export function POSTab() {
         </div>
       </div>
 
-      {/* Right: Cart panel (narrower) */}
-      <div className="flex flex-col w-full lg:w-[40%] xl:w-[35%] overflow-hidden">
+      {/* Left: Cart panel (wider) */}
+      <div className="flex flex-col w-full lg:w-[60%] xl:w-[65%] border-r border-border overflow-hidden order-1">
         {/* Cart header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
@@ -597,7 +672,7 @@ export function POSTab() {
         )}
 
         {/* Customer picker */}
-        <div className="px-3 py-2 border-b border-border relative">
+        <div className="px-3 py-2 border-b border-border relative z-20">
           {selectedCustomer ? (
             <div className="flex items-center justify-between bg-secondary rounded-lg px-3 py-2">
               <div className="flex items-center gap-2">
@@ -664,7 +739,7 @@ export function POSTab() {
         </div>
 
         {/* Cart items */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-10 text-center">
               <ShoppingCart className="h-10 w-10 text-zinc-700 mb-3" />
@@ -687,8 +762,8 @@ export function POSTab() {
 
         {/* Totals */}
         {cart.length > 0 && (
-          <div className="border-t border-border bg-card">
-            <div className="px-4 py-3 space-y-1.5 text-xs">
+          <div className="border-t border-border bg-card shrink-0">
+            <div className="px-3 py-2 space-y-1 text-xs">
               <div className="flex justify-between text-zinc-400">
                 <span>Subtotal</span>
                 <span className="tabular-nums">{formatINR(totals.subtotal)}</span>
@@ -699,13 +774,22 @@ export function POSTab() {
                   <span className="tabular-nums">-{formatINR(totals.discount_total)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-zinc-400">
-                <span>Taxable Amount</span>
-                <span className="tabular-nums">{formatINR(totals.taxable_amount)}</span>
-              </div>
 
-              {/* Tax breakup */}
-              {totals.tax_breakup.map((line) => (
+              {/* Tax summary line (collapsible breakup) */}
+              {totals.tax_total > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowTaxDetails((v) => !v)}
+                  className="flex w-full justify-between items-center text-zinc-400 hover:text-zinc-300"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    GST
+                    {showTaxDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </span>
+                  <span className="tabular-nums">{formatINR(totals.tax_total)}</span>
+                </button>
+              )}
+              {showTaxDetails && totals.tax_breakup.map((line) => (
                 <div key={line.tax_rate} className="pl-2">
                   {totals.is_interstate ? (
                     <div className="flex justify-between text-zinc-500">
@@ -727,22 +811,22 @@ export function POSTab() {
                 </div>
               ))}
 
-              <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
-                <span className="text-sm font-bold text-white">Grand Total</span>
-                <span className="text-base font-bold text-zinc-300 tabular-nums">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-white">Grand Total</span>
+                <span className="font-semibold text-zinc-300 tabular-nums">
                   {formatINR(baseTotals.grand_total)}
                 </span>
               </div>
 
               {/* Order-level discount (applied after tax, on grand total) */}
-              <div className="flex items-center gap-2 pt-1">
-                <span className="text-zinc-400">Bill Discount</span>
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <span className="text-zinc-400 text-[11px]">Bill Discount</span>
                 <div className="flex rounded border border-zinc-700 overflow-hidden ml-auto">
                   <button
                     type="button"
                     onClick={() => setOrderDiscountType('percent')}
                     className={cn(
-                      'h-6 w-5 text-[10px] font-medium transition-colors',
+                      'h-5 w-5 text-[10px] font-medium transition-colors',
                       orderDiscountType === 'percent' ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
                     )}
                   >
@@ -752,7 +836,7 @@ export function POSTab() {
                     type="button"
                     onClick={() => setOrderDiscountType('flat')}
                     className={cn(
-                      'h-6 w-5 text-[10px] font-medium transition-colors border-l border-zinc-700',
+                      'h-5 w-5 text-[10px] font-medium transition-colors border-l border-zinc-700',
                       orderDiscountType === 'flat' ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
                     )}
                   >
@@ -767,7 +851,7 @@ export function POSTab() {
                   placeholder="0"
                   value={orderDiscountValue}
                   onChange={(e) => setOrderDiscountValue(e.target.value)}
-                  className="h-6 w-16 rounded border border-zinc-700 bg-zinc-900 px-1 text-center text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="h-5 w-14 rounded border border-zinc-700 bg-zinc-900 px-1 text-center text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
               {totals.order_discount_amount > 0 && (
@@ -777,64 +861,171 @@ export function POSTab() {
                 </div>
               )}
 
-              <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
-                <span className="text-base font-bold text-white">Payable</span>
-                <span className="text-xl font-bold text-indigo-300 tabular-nums">
+              <div className="flex justify-between items-center pt-1 border-t border-zinc-800">
+                <span className="text-sm font-bold text-white">Payable</span>
+                <span className="text-lg font-bold text-indigo-300 tabular-nums">
                   {formatINR(totals.net_payable)}
                 </span>
               </div>
             </div>
 
             {/* Payment section */}
-            <div className="px-4 pb-4 space-y-3">
-              {/* Payment mode tabs */}
-              <div className="flex rounded-lg bg-zinc-800 p-1 gap-1">
-                {(['cash', 'card', 'upi'] as PaymentMode[]).map((mode) => {
-                  const icons = { cash: Banknote, card: CreditCard, upi: Smartphone }
-                  const Icon = icons[mode]
-                  return (
-                    <button
-                      key={mode}
-                      onClick={() => setPaymentMode(mode)}
-                      className={cn(
-                        'flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all capitalize',
-                        paymentMode === mode
-                          ? 'bg-indigo-600 text-white shadow'
-                          : 'text-zinc-400 hover:text-zinc-200',
+            <div className="px-3 pb-3 space-y-2">
+              {!splitPayment && (
+                <>
+                  {/* Payment mode tabs + amount, single row */}
+                  <div className="flex items-stretch gap-1.5">
+                    <div className="flex rounded-lg bg-zinc-800 p-0.5 gap-0.5 shrink-0">
+                      {(['cash', 'card', 'upi'] as PaymentMode[]).map((mode) => {
+                        const icons = { cash: Banknote, card: CreditCard, upi: Smartphone }
+                        const Icon = icons[mode]
+                        return (
+                          <button
+                            key={mode}
+                            onClick={() => setPaymentMode(mode)}
+                            className={cn(
+                              'flex items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium capitalize transition-all',
+                              paymentMode === mode
+                                ? 'bg-indigo-600 text-white shadow'
+                                : 'text-zinc-400 hover:text-zinc-200',
+                            )}
+                          >
+                            <Icon className="h-4 w-4" />
+                            {mode}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder={`Amount received (${formatINR(totals.net_payable)})`}
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      className="text-sm font-bold text-white h-9 flex-1 min-w-0"
+                    />
+                  </div>
+
+                  {(change > 0 || (amountPaid > 0 && amountPaid < totals.net_payable)) && (
+                    <div className="flex justify-between text-xs">
+                      {amountPaid < totals.net_payable ? (
+                        <span className="flex items-center gap-1 text-red-400">
+                          <AlertCircle className="h-3 w-3" />
+                          Short by {formatINR(totals.net_payable - amountPaid)}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-zinc-400">Balance</span>
+                          <span className="font-semibold text-emerald-400">{formatINR(change)}</span>
+                        </>
                       )}
-                    >
-                      <Icon className="h-3 w-3" />
-                      {mode}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* Amount input */}
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400">Amount Received</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder={formatINR(totals.net_payable)}
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                  className="text-lg font-bold text-white h-11"
-                />
-              </div>
-
-              {change > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-400">Change</span>
-                  <span className="font-semibold text-emerald-400">{formatINR(change)}</span>
-                </div>
+                    </div>
+                  )}
+                </>
               )}
 
-              {amountPaid > 0 && amountPaid < totals.net_payable && (
-                <div className="flex items-center gap-1.5 text-xs text-red-400">
-                  <AlertCircle className="h-3.5 w-3.5" />
-                  Short by {formatINR(totals.net_payable - amountPaid)}
+              {/* Split payment toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSplitPayment((v) => {
+                    const next = !v
+                    if (next) {
+                      setSplitAmounts({ cash: totals.net_payable.toFixed(2), card: '', upi: '' })
+                    }
+                    return next
+                  })
+                }}
+                className={cn(
+                  'flex w-full items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                  splitPayment
+                    ? 'border-indigo-600 bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600/20'
+                    : 'border-zinc-700 bg-zinc-800/60 text-zinc-300 hover:bg-zinc-800 hover:text-white',
+                )}
+              >
+                <Split className="h-3.5 w-3.5" />
+                {splitPayment ? 'Use a single payment method' : 'Split payment across methods'}
+              </button>
+
+              {splitPayment && (
+                <div
+                  className={cn(
+                    'rounded-lg border p-2 transition-colors',
+                    splitRemaining <= 0
+                      ? 'border-emerald-800 bg-emerald-950/30'
+                      : 'border-zinc-800 bg-zinc-900/40',
+                  )}
+                >
+                  {/* Single row: 3 method fields + remaining/paid status */}
+                  <div className="flex items-stretch gap-1.5">
+                    {(['cash', 'card', 'upi'] as PaymentMode[]).map((mode) => {
+                      const meta = {
+                        cash: { icon: Banknote, ring: 'ring-emerald-500/40 text-emerald-400 bg-emerald-500/10' },
+                        card: { icon: CreditCard, ring: 'ring-indigo-500/40 text-indigo-400 bg-indigo-500/10' },
+                        upi: { icon: Smartphone, ring: 'ring-sky-500/40 text-sky-400 bg-sky-500/10' },
+                      }[mode]
+                      const Icon = meta.icon
+                      const filled = (parseFloat(splitAmounts[mode]) || 0) > 0
+                      const otherModesTotal = Math.round((splitTotal - (parseFloat(splitAmounts[mode]) || 0)) * 100) / 100
+                      const fillValue = Math.max(0, Math.round((totals.net_payable - otherModesTotal) * 100) / 100)
+                      return (
+                        <div
+                          key={mode}
+                          className="flex-1 min-w-0 flex flex-col gap-0.5 rounded-md bg-zinc-950/40 px-1.5 py-1 focus-within:ring-1 focus-within:ring-indigo-500"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className={cn(
+                              'flex h-4 w-4 shrink-0 items-center justify-center rounded-full ring-1',
+                              filled ? meta.ring : 'ring-zinc-700 text-zinc-500 bg-zinc-800/60',
+                            )}>
+                              <Icon className="h-2.5 w-2.5" />
+                            </span>
+                            <span className="text-[10px] text-zinc-500 capitalize truncate">{mode}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0"
+                              value={splitAmounts[mode]}
+                              onChange={(e) => setSplitAmounts((prev) => ({ ...prev, [mode]: e.target.value }))}
+                              className="w-full min-w-0 bg-transparent text-sm font-semibold text-zinc-100 tabular-nums focus:outline-none placeholder:text-zinc-600 placeholder:font-normal"
+                            />
+                            {fillValue > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSplitAmounts((prev) => ({ ...prev, [mode]: fillValue.toFixed(2) }))}
+                                title={`Fill remaining ${formatINR(fillValue)}`}
+                                className="shrink-0 flex items-center justify-center h-4 w-4 rounded-full text-indigo-400 hover:text-white hover:bg-indigo-600 transition-colors"
+                              >
+                                <ArrowDownToLine className="h-2.5 w-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Remaining-to-collect status */}
+                  <div className="flex items-center justify-between mt-1.5 px-0.5">
+                    <span className="text-[10px] text-zinc-500">
+                      {splitRemaining <= 0 ? 'Fully collected' : 'Remaining to collect'}
+                    </span>
+                    <span className={cn(
+                      'flex items-center gap-1 text-xs font-bold tabular-nums',
+                      splitRemaining <= 0 ? 'text-emerald-400' : 'text-amber-400',
+                    )}>
+                      {splitRemaining <= 0 ? (
+                        <>Paid <CheckCircle2 className="h-3 w-3" /></>
+                      ) : (
+                        formatINR(splitRemaining)
+                      )}
+                    </span>
+                  </div>
                 </div>
               )}
 
@@ -845,7 +1036,9 @@ export function POSTab() {
                 disabled={
                   cart.length === 0 ||
                   completeSaleMutation.isPending ||
-                  (amountPaid > 0 && amountPaid < totals.net_payable)
+                  (splitPayment
+                    ? splitTotal < totals.net_payable
+                    : (amountPaid > 0 && amountPaid < totals.net_payable))
                 }
               >
                 {completeSaleMutation.isPending ? (
@@ -856,7 +1049,7 @@ export function POSTab() {
                 ) : (
                   <>
                     <CheckCircle2 className="h-4 w-4" />
-                    Complete Sale
+                    Complete Sale · {formatINR(totals.net_payable)}
                   </>
                 )}
               </Button>
@@ -912,7 +1105,8 @@ export function POSTab() {
                 customerGstin={selectedCustomer?.gstin ?? undefined}
                 items={completedSale.items}
                 totals={completedSale.totals}
-                paymentMode={paymentMode}
+                paymentMode={completedSale.paymentMode}
+                paymentDetail={completedSale.paymentDetail}
               />
             </>
           )}

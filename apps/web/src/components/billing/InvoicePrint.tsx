@@ -18,6 +18,7 @@ interface InvoicePrintProps {
   items: CartItem[]
   totals: InvoiceTotals
   paymentMode: string
+  paymentDetail?: string
 }
 
 export function InvoicePrint({
@@ -33,6 +34,7 @@ export function InvoicePrint({
   items,
   totals,
   paymentMode,
+  paymentDetail,
 }: InvoicePrintProps) {
   const handlePrint = () => {
     window.print()
@@ -238,7 +240,10 @@ export function InvoicePrint({
         {/* Footer */}
         <div className="flex justify-between items-end border-t border-gray-300 pt-3">
           <div>
-            <p className="text-gray-600">Payment Mode: <strong className="capitalize">{paymentMode}</strong></p>
+            <p className="text-gray-600">
+              Payment Mode: <strong className="capitalize">{paymentMode}</strong>
+              {paymentDetail && <span className="text-gray-500"> ({paymentDetail})</span>}
+            </p>
             <p className="text-gray-400 text-[10px] mt-1">
               This is a computer generated invoice and does not require a signature.
             </p>
