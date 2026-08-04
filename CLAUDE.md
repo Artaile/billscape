@@ -208,13 +208,30 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - PurchaseFormBody is defined at FILE TOP LEVEL (outside PurchasesPage function) — if defined
   inside the parent component it gets a new identity on every render → unmount/remount → focus lost
 
-## Billing tab structure (as of 2026-07-28)
+## Billing tab structure (as of 2026-08-04)
 - BillingPage.tsx is now a thin tab shell (Tabs from ui/tabs.tsx): POS | History
 - apps/web/src/components/billing/POSTab.tsx — all POS logic (was previously inline in BillingPage.tsx)
 - apps/web/src/components/billing/HistoryTab.tsx — bill list + view/edit/delete + recycle bin
 - apps/web/src/components/billing/QuickAddCustomerDialog.tsx — inline customer creation from POS
-- POS layout: product panel is the WIDE side (lg:w-[60%] xl:w-[65%]), cart is narrow
-  (lg:w-[40%] xl:w-[35%]) — do not revert to the old 55/45 split, was explicit user feedback
+- **POS layout (flipped 2026-08-04)**: Cart is now the WIDE side on the LEFT (lg:w-[60%] xl:w-[65%],
+  `order-1`), product search/grid is narrower on the RIGHT (lg:w-[40%] xl:w-[35%], `order-2`) — uses
+  flexbox `order-*` classes rather than reordering JSX so the `border-r` stays correctly on the cart
+  panel's right edge. This reverses the original 2026-07-28 layout — do not flip back without
+  re-confirming with the user, both directions were explicit feedback at different times.
+- Product grid is a fixed 3-column grid (`grid-cols-3`, not responsive 2–5 col) — explicit user request.
+- Product search matches `name` OR `barcode_value` via `.or('name.ilike...,barcode_value.ilike...')`
+  (previously only matched name — silently broke manual barcode typing/search, not just USB scans).
+  Search box has a clear "X" button, and `productSearch` auto-clears the instant a product is
+  added to cart (click or scan) so the full grid reappears for the next lookup — no manual clearing
+  needed between scans.
+- **Unsaved-cart navigation guard**: `apps/web/src/contexts/NavigationGuardContext.tsx` (wraps the
+  whole app in App.tsx) lets any component register a `shouldBlock()` predicate via
+  `useRegisterNavigationGuard()`. POSTab registers `cart.length > 0`. AppShell's sidebar `Link`s and
+  sign-out button call `requestNavigation()` instead of navigating directly — if blocked, shows a
+  "Leave this bill?" confirm dialog (Stay / Leave & discard) instead of navigating. Also has a
+  `beforeunload` listener in POSTab for tab-close/refresh (native browser confirm). Does NOT fire for
+  an empty cart. Switching the POS↔History Radix tab does NOT trigger this (cart state persists,
+  since POSTab stays mounted under TabsContent) — only leaving `/billing` entirely does.
 
 ## POS Hold Bills
 - Stored in sessionStorage as array under key `billscape_held_bills`
@@ -236,6 +253,53 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - InvoicePrint.tsx must render order_discount_amount / net_payable as "Bill Discount" / "Payable"
   when order_discount_amount > 0 (easy to regress — this was missing on first pass and silently
   under-reported what the customer actually paid on the printed invoice).
+
+## POS cart UI density (as of 2026-08-04)
+- `CartItem.tsx`'s `CartItemRow` is a single compact line (~40px, was ~90px two-row layout):
+  name+price+GST on the left, qty stepper, discount %/₹ toggle, line total, remove icon, all inline.
+- Totals block in POSTab.tsx is minimal: Subtotal → collapsible "GST" summary line (tap to expand
+  CGST/SGST or IGST breakup, `showTaxDetails` state) → Grand Total → Bill Discount → Payable.
+  Net effect: 4+ cart items fit with room to spare before scrolling, instead of ~2 before scroll.
+- Customer search dropdown previously visually overlapped the cart item rows below it. Root cause
+  was NOT z-index/stacking — it was that `bg-popover` / `text-popover-foreground` were used in
+  POSTab.tsx but **`popover` was never registered as a color token in `tailwind.config.ts`**, so the
+  class emitted no CSS and the dropdown box was fully transparent (`background-color: rgba(0,0,0,0)`),
+  letting cart rows show through underneath a technically-correctly-stacked (z-50) but invisible
+  background. Fixed by adding `popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' }`
+  to the `colors` block in tailwind.config.ts — `--popover` CSS vars already existed in index.css.
+  If any other `bg-popover`/`text-popover` usage appears transparent, check this token exists first.
+  **Requires a dev server restart, not just HMR** — Tailwind reads `tailwind.config.ts` at PostCSS
+  build time, changes to it don't hot-reload.
+
+## POS split payment (as of 2026-08-04)
+- Single-payment mode: Cash/Card/Upi icon+label tabs sit in the SAME row as the amount input
+  (`flex items-stretch gap-1.5` — tabs `shrink-0`, input `flex-1`), not stacked on separate rows.
+  Below it: "Balance" (was "Change" — renamed per user feedback) shown in green when amount paid
+  exceeds payable, or "Short by ₹X" in red when under.
+- "Split payment across methods" toggle is a full-width bordered CTA button (not a plain text
+  link) — flips to a filled indigo "Use a single payment method" active state when split mode is on.
+- Split mode: Cash/Card/Upi render as ONE compact row (3 side-by-side compact fields, each with a
+  small colored icon badge — emerald cash / indigo card / sky upi — that lights up once filled),
+  not 3 stacked rows. Each field has an inline "fill remaining" down-arrow button that
+  auto-calculates and fills exactly what's left for that field. A single-line
+  "Remaining to collect ₹X" (amber) / "Paid ✓" (emerald, whole card turns green) status sits below
+  the row. Toggling split ON prefills Cash with the full payable (common case) rather than 3 blanks.
+- **Float-precision bug (fixed)**: `splitTotal`/`splitRemaining`/fill-button amounts MUST be rounded
+  to paise via `Math.round(x * 100) / 100` before comparing — e.g. `500 + 972.64 === 1472.6399999999999`
+  in JS, not `1472.64`, so raw comparison silently left "Fully collected" unreachable even when the
+  displayed (rounded) amounts matched exactly. Any new split-payment arithmetic must round the same way.
+- `createSale`'s `payment_mode: 'split'` + `cash_amount`/`card_amount`/`upi_amount` were already
+  schema-ready (migration existed) but had ZERO working consumers before this — fixed two blind spots
+  that assumed one exclusive `payment_mode` per sale:
+  - ShiftsPage.tsx cash-drawer reconciliation (`cashSalesTotal` query) now also sums the `cash_amount`
+    portion of `payment_mode = 'split'` rows, not just pure `'cash'` rows (was undercounting cash
+    drawer expectations for every split sale).
+  - ReportsPage.tsx "Payment Mode Split" now decomposes split sales into their actual cash/card/upi
+    components and merges into those buckets, instead of dumping the whole `grand_total` into an
+    opaque `split` bucket.
+- InvoicePrint.tsx has an optional `paymentDetail` prop — shows e.g. "Split (Cash ₹500.00, UPI
+  ₹402.78)" next to Payment Mode. POSTab computes this from the actual inserted `sales` row
+  (`saleRow.cash_amount` etc.), not from component state, since state resets before the invoice renders.
 
 ## Bill edit / recycle bin (History tab)
 - Full item quantity edit allowed (not just metadata) — packages/api/src/sales.ts updateSale():
