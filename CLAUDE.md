@@ -52,7 +52,7 @@ Supabase project ID: bzvbkscspzdschskbqtd
 | /promotions | PromotionsPage | Scope (order/product/category/store), max_uses cap, coupon codes |
 | /returns | ReturnsPage | Sale returns + Purchase returns; stock auto-adjustment on save |
 | /quotations | QuotationsPage | Draft/sent/accepted/rejected/expired; convert to invoice |
-| /loyalty | LoyaltyPage | Points earn/redeem, per-customer transaction history dialog |
+| /loyalty | LoyaltyPage | Points earn/redeem, per-customer transaction history dialog (manual admin view — POS is now the primary earn/redeem flow, see Loyalty Program section) |
 | /employees | EmployeesPage | CRUD, card UI, role badge, activate/deactivate; owner + manager only |
 | /roles | RolesPage | Roles list, Permission Matrix tab, Clone, Create custom role; owner only |
 | /activity | ActivityPage | Audit log; owner + manager only |
@@ -81,7 +81,9 @@ Supabase project ID: bzvbkscspzdschskbqtd
 - product_variants (product_id, size, color, price_delta, stock_qty, barcode_value)
 - inventory_batches (product_id, batch_no, expiry_date, qty, cost_price)
 - sales (cgst_amount... via sale_items; **voided_at, voided_by, void_reason, purge_after** — recycle bin;
-  **order_discount_type, order_discount_value, order_discount_amount, net_payable** — post-tax bill discount)
+  **order_discount_type, order_discount_value, order_discount_amount, net_payable** — post-tax bill discount;
+  **loyalty_customer_id, loyalty_points_redeemed, loyalty_redeem_amount, loyalty_points_earned** — POS
+  loyalty integration, see Loyalty Program section)
 - sale_items (cgst_amount, sgst_amount, igst_amount per line; **discount_type, discount_amount** — flat/percent line discount, alongside existing discount_pct)
 - purchases (id, org_id, supplier_id, invoice_no, purchase_no, **purchase_date**, **purchase_type**
   enum[credit/cash], **bill_discount_type**, **bill_discount_value**, **round_off**, total_amount, notes)
@@ -94,7 +96,11 @@ Supabase project ID: bzvbkscspzdschskbqtd
 - quotations (id, org_id, quote_no, customer_name, customer_phone, valid_until, status, total_amount)
 - quotation_items
 - **promotions** (id, org_id, name, code, type, value, **scope** enum[order/product/category/store], **target_id**, **max_uses**, min_order_amount, max_discount_amount, valid_from, valid_until, is_active, usage_count)
-- loyalty_customers, loyalty_transactions (type: add/redeem), loyalty_settings
+- loyalty_customers (org_id, **customer_id** FK → customers, nullable — links to POS `customers` row;
+  legacy rows may still be standalone via customer_name/customer_phone text fields; unique per
+  (org_id, customer_id) when set; **points_balance has a CHECK >= 0**), loyalty_transactions
+  (type: add/redeem, **sale_id** now actually gets set by POS sales), loyalty_settings
+  (points_per_rupee, rupees_per_point, min_redeem_points)
 - **employees** (id, org_id, full_name, phone, email, role, is_active, joined_date, notes)
 - **roles** (id, org_id, name, description, is_system, permissions jsonb)
 - shifts (opened_by, closed_by, opening_cash, closing_cash, total_sales, bill_count, status)
@@ -126,6 +132,14 @@ currency, date_format, timezone
   unified purchase+product-creation flow (see Purchases page section); fixed a live stock double-counting
   bug where `PurchasesPage.tsx`'s `savePurchaseItems` manually upserted `inventory` on top of what the
   `increment_stock_on_purchase` trigger already applied on every `purchase_items` insert
+- migration 014_loyalty_integration.sql (2026-08-05): loyalty_customers.customer_id FK added (was
+  previously a fully standalone table matched only by free-text name/phone — see Loyalty Program
+  section); sales.loyalty_customer_id/loyalty_points_redeemed/loyalty_redeem_amount/loyalty_points_earned
+  added; one-time backfill matches existing standalone loyalty_customers rows to customers by phone
+  within the same org
+- migration 015_loyalty_points_balance_check.sql (2026-08-05): CHECK (points_balance >= 0) on
+  loyalty_customers — defense-in-depth against the read-then-write update in createSale's loyalty
+  bookkeeping landing on a negative balance under a concurrent-sale race
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -317,6 +331,57 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - getSales() defaults to voided_at IS NULL; pass { voidedOnly: true } for the Bin view.
 - Edit/Delete actions in HistoryTab are gated to owner/manager via useAuth().role — cashiers can
   still View/Reprint.
+
+## Loyalty Program — POS integration (as of 2026-08-05)
+- Previously `/loyalty` was a fully isolated page: `loyalty_customers` had NO link to `customers`
+  (its own free-text `customer_name`/`customer_phone`), and POS billing had zero loyalty awareness —
+  cashiers had to finish a bill then separately go add/redeem points by hand. Now POS is the primary
+  earn/redeem flow; `/loyalty` remains as an admin/overview page (settings, manual adjustment,
+  transaction history) but is no longer required for normal day-to-day billing.
+- `loyalty_customers.customer_id` (FK → customers, nullable, unique per org when set) is the link.
+  **Auto-enrollment is lazy**: POSTab does NOT create a loyalty row just because a customer is
+  selected — `ensureLoyaltyCustomer` (packages/api/src/loyalty.ts) is only called right before
+  `createSale`, and only if `pointsToEarn > 0` for that sale. This avoids creating loyalty rows for
+  customers who never actually earn. On a unique-violation race (two first-ever sales for the same
+  new customer nearly simultaneously), `ensureLoyaltyCustomer` re-fetches the winner's row instead of
+  failing — the loser's sale still completes, just without a `loyalty_customer_id` (best-effort).
+- POSTab shows a `⭐ N pts` badge next to the selected customer's name (only if a loyalty row exists —
+  no "0 pts" noise for non-members), an "Earns N pts on this sale" line near Payable
+  (`Math.floor(net_payable * points_per_rupee)`), and — once `points_balance >= min_redeem_points` —
+  a "Redeem points" checkbox/amount row in the totals card that applies a checkout discount.
+- **Redemption is a separate field from order discount, not a reuse of it** — a merchant may want
+  both a manual bill discount AND loyalty redemption on the same sale. `packages/core/src/tax/gst.ts`'s
+  `applyLoyaltyRedemption(totals, redeemAmount)` mirrors `applyOrderDiscount` but is applied AFTER it
+  and stacks: `net_payable = grand_total - order_discount_amount - loyalty_redeem_amount`, clamped to
+  never go negative. `InvoiceTotals.loyalty_redeem_amount` is a required field — any code constructing
+  an `InvoiceTotals` object literal (there are a few: HistoryTab's bill-detail totals rebuild,
+  PurchaseFormPage's `emptyTotals()`) must include it or TypeScript will fail the build.
+- `createSale` (packages/api/src/sales.ts) does the earn/redeem bookkeeping AFTER `sales`/`sale_items`
+  insert succeeds, wrapped in try/catch (best-effort — a loyalty failure must never roll back or fail
+  the sale itself, matching the existing non-blocking pattern used elsewhere in this file). It updates
+  `points_balance`/`total_points_earned`/`total_points_redeemed` on `loyalty_customers` and inserts
+  `loyalty_transactions` rows with `sale_id` set — previously `sale_id` was defined on the table but
+  never actually populated by any code path, since `/loyalty`'s manual add/redeem UI never sets it.
+  **Redeem points are clamped to the customer's actual current `points_balance` read at write time**
+  (not the possibly-stale client-computed amount) before the balance update, and
+  `loyalty_customers.points_balance` has a DB-level `CHECK (points_balance >= 0)` (migration 015) as a
+  second line of defense — the balance update is a plain read-then-write, not an atomic RPC, so a
+  true concurrent-sale race for the same customer is still theoretically possible; if this ever
+  becomes a real-world issue, replace it with an `increment_loyalty_points` RPC mirroring the
+  `increment_inventory` pattern already used for stock.
+- **Any change of the selected customer must reset redemption state.** POSTab has a
+  `useEffect` keyed on `selectedCustomer?.id` that resets `redeemLoyalty`/`loyaltyRedeemValue`
+  whenever the customer changes — this covers ALL paths (search-select, quick-add, X-clear, held-bill
+  resume) in one place rather than needing every individual `setSelectedCustomer(...)` call site to
+  remember to also clear redemption. This was a real bug caught in QC: without it, checking "redeem"
+  for Customer A then picking Customer B directly (without clicking X first) silently carried A's
+  redeem amount into B's bill.
+- InvoicePrint.tsx renders a "Loyalty Redeemed" row (green) alongside "Bill Discount" when
+  `loyalty_redeem_amount > 0`; the bold "Payable" row's trigger condition is
+  `order_discount_amount > 0 || loyalty_redeem_amount > 0` (both must be checked, not just one).
+- Loyalty settings query key is `loyalty_settings` (underscore, matches `/loyalty`'s existing
+  LoyaltyPage key) — POSTab must use the same key or a rate change saved on `/loyalty` won't
+  invalidate POSTab's cached settings in another open tab.
 
 ## Sidebar nav order (as of 2026-07-25)
 Dashboard → Billing (POS) → Products → Inventory → Purchases → Suppliers → Customers →
