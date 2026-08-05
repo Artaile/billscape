@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Search,
+  X,
   Eye,
   Pencil,
   Trash2,
@@ -32,6 +33,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { InvoicePrint } from '@/components/billing/InvoicePrint'
+import { DateRangeFilter } from '@/components/ui/date-range-filter'
 import { toast } from '@/hooks/use-toast'
 import { formatDateTime, cn } from '@/lib/utils'
 
@@ -170,13 +172,28 @@ export function HistoryTab() {
             placeholder="Search invoice no, customer name or phone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9"
+            className="pl-9 pr-9 h-9"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
-        <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 w-auto" />
-        <span className="text-zinc-500 text-xs">to</span>
-        <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-9 w-auto" />
+        <DateRangeFilter
+          from={fromDate}
+          to={toDate}
+          onChange={(f, t) => {
+            setFromDate(f)
+            setToDate(t)
+          }}
+        />
       </div>
 
       {/* Table */}
@@ -381,6 +398,7 @@ function ViewSaleDialog({ saleId, onClose }: { saleId: string | null; onClose: (
           grand_total: sale.grand_total,
           is_interstate: isInterstate,
           order_discount_amount: sale.order_discount_amount ?? 0,
+          loyalty_redeem_amount: sale.loyalty_redeem_amount ?? 0,
           net_payable: sale.net_payable ?? sale.grand_total,
         }
       })()

@@ -1,6 +1,6 @@
 import type { TypedSupabaseClient } from './client'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
-import { applyOrderDiscount, computeGST, computeLineTax } from '@billscape/core'
+import { applyLoyaltyRedemption, applyOrderDiscount, computeGST, computeLineTax } from '@billscape/core'
 
 interface CreateSaleInput {
   organization_id: string
@@ -15,6 +15,10 @@ interface CreateSaleInput {
   created_by: string
   order_discount_type?: DiscountType
   order_discount_value?: number
+  loyalty_customer_id?: string
+  loyalty_points_redeemed?: number
+  loyalty_redeem_amount?: number
+  loyalty_points_earned?: number
 }
 
 function buildSaleItemRows(saleId: string, orgId: string, items: CartItem[], interstate: boolean) {
@@ -50,9 +54,12 @@ function buildSaleItemRows(saleId: string, orgId: string, items: CartItem[], int
 
 export async function createSale(client: TypedSupabaseClient, input: CreateSaleInput) {
   const baseTotals: InvoiceTotals = computeGST(input.gst_context, input.items)
-  const totals = input.order_discount_type
+  const discountedTotals = input.order_discount_type
     ? applyOrderDiscount(baseTotals, input.order_discount_type, input.order_discount_value ?? 0)
     : baseTotals
+  const totals = input.loyalty_redeem_amount
+    ? applyLoyaltyRedemption(discountedTotals, input.loyalty_redeem_amount)
+    : discountedTotals
   const interstate = totals.is_interstate
 
   // Generate invoice number (format: BS-YYYYMMDD-XXXX)
@@ -74,6 +81,10 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
       order_discount_type: input.order_discount_type ?? null,
       order_discount_value: input.order_discount_value ?? 0,
       order_discount_amount: totals.order_discount_amount,
+      loyalty_customer_id: input.loyalty_customer_id ?? null,
+      loyalty_points_redeemed: input.loyalty_points_redeemed ?? 0,
+      loyalty_redeem_amount: totals.loyalty_redeem_amount,
+      loyalty_points_earned: input.loyalty_points_earned ?? 0,
       net_payable: totals.net_payable,
       payment_mode: input.payment_mode,
       cash_amount: input.cash_amount ?? null,
@@ -95,6 +106,61 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
 
   if (itemsError) {
     return { data: null, error: itemsError }
+  }
+
+  // Loyalty bookkeeping is best-effort: stock + payment are already committed above,
+  // so a failure here should not roll back the sale.
+  if (input.loyalty_customer_id) {
+    try {
+      const { data: loyaltyRow } = await client
+        .from('loyalty_customers')
+        .select('points_balance, total_points_earned, total_points_redeemed')
+        .eq('id', input.loyalty_customer_id)
+        .single()
+
+      if (loyaltyRow) {
+        // Clamp redemption to the balance actually on record right now — protects against a
+        // stale/mismatched redeem amount (e.g. a UI race) ever driving the balance negative.
+        const pointsRedeemed = Math.min(input.loyalty_points_redeemed ?? 0, loyaltyRow.points_balance)
+        const pointsEarned = input.loyalty_points_earned ?? 0
+
+        await client
+          .from('loyalty_customers')
+          .update({
+            points_balance: loyaltyRow.points_balance - pointsRedeemed + pointsEarned,
+            total_points_earned: loyaltyRow.total_points_earned + pointsEarned,
+            total_points_redeemed: loyaltyRow.total_points_redeemed + pointsRedeemed,
+          })
+          .eq('id', input.loyalty_customer_id)
+
+        const transactionRows = []
+        if (pointsRedeemed > 0) {
+          transactionRows.push({
+            organization_id: input.organization_id,
+            loyalty_customer_id: input.loyalty_customer_id,
+            type: 'redeem',
+            points: pointsRedeemed,
+            sale_id: sale.id,
+            created_by: input.created_by,
+          })
+        }
+        if (pointsEarned > 0) {
+          transactionRows.push({
+            organization_id: input.organization_id,
+            loyalty_customer_id: input.loyalty_customer_id,
+            type: 'add',
+            points: pointsEarned,
+            sale_id: sale.id,
+            created_by: input.created_by,
+          })
+        }
+        if (transactionRows.length > 0) {
+          await client.from('loyalty_transactions').insert(transactionRows)
+        }
+      }
+    } catch (loyaltyError) {
+      console.error('Loyalty bookkeeping failed for sale', sale.id, loyaltyError)
+    }
   }
 
   return { data: { sale, totals }, error: null }

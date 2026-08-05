@@ -206,25 +206,31 @@ export function InvoicePrint({
                     </tr>
                   </>
                 )}
-                <tr className={totals.order_discount_amount > 0 ? '' : 'border-t-2 border-gray-800'}>
+                <tr className={(totals.order_discount_amount > 0 || totals.loyalty_redeem_amount > 0) ? '' : 'border-t-2 border-gray-800'}>
                   <td className="pt-1 font-bold text-sm text-gray-900">Grand Total</td>
                   <td className="pt-1 text-right font-bold text-sm text-gray-900">
                     {formatINR(totals.grand_total)}
                   </td>
                 </tr>
                 {totals.order_discount_amount > 0 && (
-                  <>
-                    <tr>
-                      <td className="py-0.5 text-gray-600">Bill Discount</td>
-                      <td className="py-0.5 text-right text-green-700">-{formatINR(totals.order_discount_amount)}</td>
-                    </tr>
-                    <tr className="border-t-2 border-gray-800">
-                      <td className="pt-1 font-bold text-sm text-gray-900">Payable</td>
-                      <td className="pt-1 text-right font-bold text-sm text-gray-900">
-                        {formatINR(totals.net_payable)}
-                      </td>
-                    </tr>
-                  </>
+                  <tr>
+                    <td className="py-0.5 text-gray-600">Bill Discount</td>
+                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.order_discount_amount)}</td>
+                  </tr>
+                )}
+                {totals.loyalty_redeem_amount > 0 && (
+                  <tr>
+                    <td className="py-0.5 text-gray-600">Loyalty Redeemed</td>
+                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.loyalty_redeem_amount)}</td>
+                  </tr>
+                )}
+                {(totals.order_discount_amount > 0 || totals.loyalty_redeem_amount > 0) && (
+                  <tr className="border-t-2 border-gray-800">
+                    <td className="pt-1 font-bold text-sm text-gray-900">Payable</td>
+                    <td className="pt-1 text-right font-bold text-sm text-gray-900">
+                      {formatINR(totals.net_payable)}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

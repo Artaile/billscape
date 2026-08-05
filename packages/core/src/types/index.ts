@@ -203,6 +203,7 @@ export interface InvoiceTotals {
   grand_total: number
   is_interstate: boolean
   order_discount_amount: number
+  loyalty_redeem_amount: number
   net_payable: number
 }
 

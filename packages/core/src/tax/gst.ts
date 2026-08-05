@@ -121,6 +121,7 @@ export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
     grand_total: grandTotal,
     is_interstate: interstate,
     order_discount_amount: 0,
+    loyalty_redeem_amount: 0,
     net_payable: grandTotal,
   }
 }
@@ -157,6 +158,24 @@ export function applyOrderDiscount(
   return {
     ...totals,
     order_discount_amount: orderDiscountAmount,
+    net_payable: netPayable,
+  }
+}
+
+// Loyalty points redemption, applied AFTER order discount on net_payable (a separate,
+// stackable payment-time adjustment — does not touch GST taxable value or order_discount_amount,
+// since the two are conceptually distinct: merchant discount vs. customer's own points).
+export function applyLoyaltyRedemption(
+  totals: InvoiceTotals,
+  redeemAmount: number,
+): InvoiceTotals {
+  const cap = toMoney(totals.grand_total - totals.order_discount_amount)
+  const loyaltyRedeemAmount = toMoney(Math.min(Math.max(redeemAmount, 0), cap))
+  const netPayable = toMoney(cap - loyaltyRedeemAmount)
+
+  return {
+    ...totals,
+    loyalty_redeem_amount: loyaltyRedeemAmount,
     net_payable: netPayable,
   }
 }

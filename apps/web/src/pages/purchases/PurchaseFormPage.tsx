@@ -867,6 +867,6 @@ function emptyTotals(interstate: boolean): InvoiceTotals {
   return {
     subtotal: 0, discount_total: 0, taxable_amount: 0, tax_breakup: [],
     cgst_total: 0, sgst_total: 0, igst_total: 0, tax_total: 0, grand_total: 0,
-    is_interstate: interstate, order_discount_amount: 0, net_payable: 0,
+    is_interstate: interstate, order_discount_amount: 0, loyalty_redeem_amount: 0, net_payable: 0,
   }
 }

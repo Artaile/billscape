@@ -27,13 +27,16 @@ import {
   ChevronUp,
   Split,
   ArrowDownToLine,
+  Star,
+  Gift,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
-import { computeGST, computeLineTax, applyOrderDiscount, formatINR } from '@billscape/core'
-import { createSale, getSales } from '@billscape/api'
+import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, formatINR } from '@billscape/core'
+import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
+import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -109,6 +112,18 @@ export function POSTab() {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false)
   const [showAddCustomer, setShowAddCustomer] = useState(false)
 
+  // Loyalty redemption (applied post order-discount, on net_payable)
+  const [redeemLoyalty, setRedeemLoyalty] = useState(false)
+  const [loyaltyRedeemValue, setLoyaltyRedeemValue] = useState('')
+
+  // Any change of customer (search-select, quick-add, or resuming a held bill for someone
+  // else) must drop a previous customer's redemption — otherwise a stale points amount can
+  // silently discount the wrong customer's bill.
+  useEffect(() => {
+    setRedeemLoyalty(false)
+    setLoyaltyRedeemValue('')
+  }, [selectedCustomer?.id])
+
   // Keep a ref to current cart so onSuccess can capture it after cart is cleared
   const cartRef = useRef<CartItem[]>([])
   cartRef.current = cart
@@ -155,6 +170,7 @@ export function POSTab() {
         grand_total: 0,
         is_interstate: false,
         order_discount_amount: 0,
+        loyalty_redeem_amount: 0,
         net_payable: 0,
       } as InvoiceTotals
     }
@@ -163,11 +179,19 @@ export function POSTab() {
 
   const resolvedOrderDiscountValue = parseFloat(orderDiscountValue) || 0
 
-  // Final totals with order-level discount applied
-  const totals = useMemo(() => {
+  // Totals with order-level discount applied (pre-loyalty)
+  const discountedTotals = useMemo(() => {
     if (resolvedOrderDiscountValue <= 0) return baseTotals
     return applyOrderDiscount(baseTotals, orderDiscountType, resolvedOrderDiscountValue)
   }, [baseTotals, orderDiscountType, resolvedOrderDiscountValue])
+
+  const resolvedLoyaltyRedeemValue = parseFloat(loyaltyRedeemValue) || 0
+
+  // Final totals with loyalty redemption applied on top of order discount
+  const totals = useMemo(() => {
+    if (!redeemLoyalty || resolvedLoyaltyRedeemValue <= 0) return discountedTotals
+    return applyLoyaltyRedemption(discountedTotals, resolvedLoyaltyRedeemValue)
+  }, [discountedTotals, redeemLoyalty, resolvedLoyaltyRedeemValue])
 
   // Line totals per item
   const lineTotals = useMemo(() => {
@@ -223,6 +247,37 @@ export function POSTab() {
       return (data ?? []) as CustomerOption[]
     },
   })
+
+  // Loyalty: settings (rate/redeem rules) and the selected customer's balance, if enrolled
+  const { data: loyaltySettings } = useQuery({
+    queryKey: ['loyalty_settings', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await getLoyaltySettings(supabase as Parameters<typeof getLoyaltySettings>[0], orgId!)
+      return data ?? { points_per_rupee: 1, rupees_per_point: 0.5, min_redeem_points: 100 }
+    },
+  })
+
+  const { data: loyaltyCustomer } = useQuery({
+    queryKey: ['loyalty-customer', orgId, selectedCustomer?.id],
+    enabled: !!orgId && !!selectedCustomer?.id,
+    queryFn: async () => {
+      const { data } = await getLoyaltyByCustomerId(supabase as Parameters<typeof getLoyaltyByCustomerId>[0], orgId!, selectedCustomer!.id)
+      return data
+    },
+  })
+
+  const pointsToEarn = useMemo(() => {
+    const rate = loyaltySettings?.points_per_rupee ?? 0
+    return Math.floor(totals.net_payable * rate)
+  }, [totals.net_payable, loyaltySettings])
+
+  const canRedeemLoyalty = !!loyaltyCustomer && loyaltyCustomer.points_balance >= (loyaltySettings?.min_redeem_points ?? 100)
+  const loyaltyRedeemCap = useMemo(() => {
+    if (!loyaltyCustomer || !loyaltySettings) return 0
+    const balanceValue = Math.round(loyaltyCustomer.points_balance * loyaltySettings.rupees_per_point * 100) / 100
+    return Math.min(balanceValue, discountedTotals.net_payable)
+  }, [loyaltyCustomer, loyaltySettings, discountedTotals.net_payable])
 
   // Last completed sale (quick reference strip)
   const [lastSale, setLastSale] = useState<{ invoiceNo: string; grandTotal: number } | null>(null)
@@ -399,6 +454,8 @@ export function POSTab() {
     setCustomerSearch('')
     setHoldName('')
     setShowHoldNameDialog(false)
+    setRedeemLoyalty(false)
+    setLoyaltyRedeemValue('')
     toast.success(`"${billName}" held`, 'Tap Held Bills to resume.')
   }
 
@@ -478,6 +535,21 @@ export function POSTab() {
         paymentFields = { payment_mode: paymentMode, ...cashMap[paymentMode] }
       }
 
+      // Auto-enroll the customer into loyalty the first time they actually earn points —
+      // no separate "add member" step for the cashier.
+      let loyaltyCustomerId = loyaltyCustomer?.id
+      if (!loyaltyCustomerId && selectedCustomer && pointsToEarn > 0) {
+        const { data: enrolled, error: enrollError } = await ensureLoyaltyCustomer(
+          supabase as Parameters<typeof ensureLoyaltyCustomer>[0],
+          orgId,
+          { id: selectedCustomer.id, name: selectedCustomer.name, phone: selectedCustomer.phone },
+        )
+        if (enrollError) {
+          console.error('Loyalty enrollment failed, sale will proceed without earning points', enrollError)
+        }
+        loyaltyCustomerId = enrolled?.id
+      }
+
       const result = await createSale(supabase as Parameters<typeof createSale>[0], {
         organization_id: orgId,
         customer_id: selectedCustomer?.id,
@@ -487,6 +559,12 @@ export function POSTab() {
         created_by: user.id,
         order_discount_type: resolvedOrderDiscountValue > 0 ? orderDiscountType : undefined,
         order_discount_value: resolvedOrderDiscountValue > 0 ? resolvedOrderDiscountValue : undefined,
+        loyalty_customer_id: loyaltyCustomerId,
+        loyalty_points_redeemed: redeemLoyalty && totals.loyalty_redeem_amount > 0 && loyaltyCustomer && loyaltySettings?.rupees_per_point
+          ? Math.min(loyaltyCustomer.points_balance, Math.round(totals.loyalty_redeem_amount / loyaltySettings.rupees_per_point))
+          : undefined,
+        loyalty_redeem_amount: redeemLoyalty && totals.loyalty_redeem_amount > 0 ? totals.loyalty_redeem_amount : undefined,
+        loyalty_points_earned: pointsToEarn > 0 ? pointsToEarn : undefined,
       })
 
       if (result.error || !result.data) {
@@ -522,8 +600,11 @@ export function POSTab() {
       setSplitPayment(false)
       setSplitAmounts({ cash: '', card: '', upi: '' })
       setOrderDiscountValue('')
+      setRedeemLoyalty(false)
+      setLoyaltyRedeemValue('')
       queryClient.invalidateQueries({ queryKey: ['billing-products', orgId] })
       queryClient.invalidateQueries({ queryKey: ['today-summary', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['loyalty-customer', orgId] })
       toast.success(`Sale complete! Invoice: ${d.sale.invoice_no}`)
       // Reset customer only after invoice is closed (keep for display in invoice)
     },
@@ -678,14 +759,21 @@ export function POSTab() {
               <div className="flex items-center gap-2">
                 <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <div>
-                  <p className="text-xs font-medium text-foreground">{selectedCustomer.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs font-medium text-foreground">{selectedCustomer.name}</p>
+                    {loyaltyCustomer && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-yellow-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-yellow-400">
+                        <Star className="h-2.5 w-2.5" />{loyaltyCustomer.points_balance.toLocaleString()} pts
+                      </span>
+                    )}
+                  </div>
                   {selectedCustomer.phone && (
                     <p className="text-[10px] text-muted-foreground">{selectedCustomer.phone}</p>
                   )}
                 </div>
               </div>
               <button
-                onClick={() => { setSelectedCustomer(null); setCustomerSearch('') }}
+                onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setRedeemLoyalty(false); setLoyaltyRedeemValue('') }}
                 className="p-0.5 rounded hover:bg-border text-muted-foreground"
               >
                 <X className="h-3 w-3" />
@@ -861,12 +949,58 @@ export function POSTab() {
                 </div>
               )}
 
+              {/* Loyalty points redemption */}
+              {canRedeemLoyalty && loyaltyCustomer && (
+                <div className="pt-0.5">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={redeemLoyalty}
+                      onChange={(e) => {
+                        const checked = e.target.checked
+                        setRedeemLoyalty(checked)
+                        if (checked) setLoyaltyRedeemValue(loyaltyRedeemCap.toFixed(2))
+                      }}
+                      className="h-3 w-3 rounded accent-yellow-500"
+                    />
+                    <Star className="h-3 w-3 text-yellow-400" />
+                    <span className="text-zinc-400 text-[11px]">
+                      Redeem points ({loyaltyCustomer.points_balance.toLocaleString()} available)
+                    </span>
+                    {redeemLoyalty && (
+                      <input
+                        type="number"
+                        min="0"
+                        max={loyaltyRedeemCap}
+                        step="0.01"
+                        value={loyaltyRedeemValue}
+                        onChange={(e) => setLoyaltyRedeemValue(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-auto h-5 w-16 rounded border border-zinc-700 bg-zinc-900 px-1 text-center text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                      />
+                    )}
+                  </label>
+                </div>
+              )}
+              {totals.loyalty_redeem_amount > 0 && (
+                <div className="flex justify-between text-yellow-400">
+                  <span>Loyalty Redeemed</span>
+                  <span className="tabular-nums">-{formatINR(totals.loyalty_redeem_amount)}</span>
+                </div>
+              )}
+
               <div className="flex justify-between items-center pt-1 border-t border-zinc-800">
                 <span className="text-sm font-bold text-white">Payable</span>
                 <span className="text-lg font-bold text-indigo-300 tabular-nums">
                   {formatINR(totals.net_payable)}
                 </span>
               </div>
+              {pointsToEarn > 0 && (
+                <div className="flex justify-between items-center text-[10px] text-zinc-500">
+                  <span className="inline-flex items-center gap-1"><Gift className="h-2.5 w-2.5" />Earns on this sale</span>
+                  <span>+{pointsToEarn.toLocaleString()} pts</span>
+                </div>
+              )}
             </div>
 
             {/* Payment section */}
