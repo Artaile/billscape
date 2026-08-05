@@ -24,6 +24,7 @@ import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ManageCategoriesDialog } from '@/components/products/ManageCategoriesDialog'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -42,6 +43,7 @@ export function ProductFormPage() {
   const [categoryId, setCategoryId] = useState<string>('')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
+  const [showManageCategories, setShowManageCategories] = useState(false)
   const barcodeRef = useRef<SVGSVGElement>(null)
 
   const [brand, setBrand] = useState('')
@@ -384,7 +386,16 @@ export function ProductFormPage() {
           </div>
 
           <div className="space-y-1.5">
-            <Label>Category</Label>
+            <div className="flex items-center justify-between">
+              <Label>Category</Label>
+              <button
+                type="button"
+                onClick={() => setShowManageCategories(true)}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                Manage categories
+              </button>
+            </div>
             {showNewCategory ? (
               <div className="flex gap-2">
                 <Input
@@ -837,6 +848,14 @@ export function ProductFormPage() {
           </Button>
         </div>
       </form>
+
+      <ManageCategoriesDialog
+        open={showManageCategories}
+        onOpenChange={(open) => {
+          setShowManageCategories(open)
+          if (!open) refetchCategories()
+        }}
+      />
     </div>
   )
 }

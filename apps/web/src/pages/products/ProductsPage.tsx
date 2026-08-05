@@ -4,11 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
   Search,
+  X,
   Pencil,
   Trash2,
   Package,
   Barcode,
-  Filter,
+  Tags,
   Printer,
   Upload,
   Download,
@@ -31,6 +32,7 @@ import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import type { Product } from '@billscape/core'
 import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
+import { ManageCategoriesDialog } from '@/components/products/ManageCategoriesDialog'
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = React.useState(value)
@@ -81,7 +83,7 @@ interface InventoryData {
 
 interface ProductWithInventory extends Product {
   inventory: InventoryData | null
-  categories: { name: string } | null
+  categories: { name: string; color: string | null } | null
 }
 
 export function ProductsPage() {
@@ -95,6 +97,7 @@ export function ProductsPage() {
   const [deleteTarget, setDeleteTarget] = useState<ProductWithInventory | null>(null)
   const [printTarget, setPrintTarget] = useState<ProductWithInventory | null>(null)
   const [importing, setImporting] = useState(false)
+  const [showManageCategories, setShowManageCategories] = useState(false)
 
   const debouncedSearch = useDebounce(search, 300)
 
@@ -104,7 +107,7 @@ export function ProductsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('categories')
-        .select('id, name')
+        .select('id, name, color')
         .eq('organization_id', orgId!)
         .order('name')
       return data ?? []
@@ -117,13 +120,13 @@ export function ProductsPage() {
     queryFn: async () => {
       let query = supabase
         .from('products')
-        .select('*, inventory(stock_qty, reorder_level), categories(name)')
+        .select('*, inventory(stock_qty, reorder_level), categories(name, color)')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
 
       if (debouncedSearch) {
-        query = query.ilike('name', `%${debouncedSearch}%`)
+        query = query.or(`name.ilike.%${debouncedSearch}%,barcode_value.ilike.%${debouncedSearch}%,sku.ilike.%${debouncedSearch}%`)
       }
       if (categoryFilter) {
         query = query.eq('category_id', categoryFilter)
@@ -269,32 +272,68 @@ export function ProductsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-3 mb-6 flex-wrap">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
+      {/* Search */}
+      <div className="mb-4">
+        <div className="relative max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
           <Input
-            placeholder="Search products..."
+            placeholder="Search name, SKU or scan barcode..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="pl-9 pr-9"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-zinc-500" />
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      </div>
+
+      {/* Category filter pills */}
+      <div className="flex items-center gap-2 mb-6 flex-wrap">
+        <button
+          onClick={() => setCategoryFilter('')}
+          className={cn(
+            'rounded-full px-3 py-1.5 text-xs font-medium border transition-colors',
+            categoryFilter === ''
+              ? 'bg-indigo-600 border-indigo-600 text-white'
+              : 'border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600',
+          )}
+        >
+          All Categories
+        </button>
+        {categories?.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setCategoryFilter(c.id)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium border transition-colors',
+              categoryFilter === c.id
+                ? 'text-white border-transparent'
+                : 'border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600',
+            )}
+            style={categoryFilter === c.id ? { backgroundColor: c.color ?? '#6366f1' } : undefined}
           >
-            <option value="" className="bg-zinc-900">All Categories</option>
-            {categories?.map((c) => (
-              <option key={c.id} value={c.id} className="bg-zinc-900">
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+            <span
+              className="h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: c.color ?? '#6366f1' }}
+            />
+            {c.name}
+          </button>
+        ))}
+        <button
+          onClick={() => setShowManageCategories(true)}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium border border-dashed border-zinc-700 text-zinc-500 hover:text-zinc-200 hover:border-zinc-500 transition-colors ml-auto"
+        >
+          <Tags className="h-3.5 w-3.5" />
+          Manage Categories
+        </button>
       </div>
 
       {/* Products grid */}
@@ -327,7 +366,13 @@ export function ProductsPage() {
                 <div className="flex-1 min-w-0">
                   <h3 className="font-medium text-zinc-100 text-sm truncate">{product.name}</h3>
                   {product.categories && (
-                    <p className="text-[11px] text-zinc-500 mt-0.5">{product.categories.name}</p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span
+                        className="h-1.5 w-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: product.categories.color ?? '#6366f1' }}
+                      />
+                      <p className="text-[11px] text-zinc-500">{product.categories.name}</p>
+                    </div>
                   )}
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-base font-bold text-white">{formatINR(product.price)}</span>
@@ -388,6 +433,9 @@ export function ProductsPage() {
           <EmptyState hasSearch={!!debouncedSearch || !!categoryFilter} />
         )}
       </div>
+
+      {/* Manage categories dialog */}
+      <ManageCategoriesDialog open={showManageCategories} onOpenChange={setShowManageCategories} />
 
       {/* Barcode label print dialog */}
       {printTarget && (
