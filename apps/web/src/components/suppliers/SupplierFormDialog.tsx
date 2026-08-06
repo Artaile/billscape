@@ -145,7 +145,7 @@ export function SupplierFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-indigo-400" />
@@ -154,58 +154,62 @@ export function SupplierFormDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="sup-name">Name *</Label>
-            <Input
-              id="sup-name"
-              placeholder="Supplier name"
-              value={form.name}
-              onChange={(e) => setField('name', e.target.value)}
-              autoFocus
-            />
-            {nameError && <p className="text-xs text-red-400">{nameError}</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="sup-name">Name *</Label>
+              <Input
+                id="sup-name"
+                placeholder="Supplier name"
+                value={form.name}
+                onChange={(e) => setField('name', e.target.value)}
+                autoFocus
+              />
+              {nameError && <p className="text-xs text-red-400">{nameError}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="sup-phone">Phone</Label>
+              <Input
+                id="sup-phone"
+                inputMode="numeric"
+                placeholder="98765 43210"
+                value={form.phone}
+                onChange={(e) => setField('phone', formatPhone(e.target.value))}
+                maxLength={11}
+              />
+              {phoneInvalid && <p className="text-[11px] text-amber-400">10-digit number required</p>}
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="sup-phone">Phone</Label>
-            <Input
-              id="sup-phone"
-              inputMode="numeric"
-              placeholder="98765 43210"
-              value={form.phone}
-              onChange={(e) => setField('phone', formatPhone(e.target.value))}
-              maxLength={11}
-            />
-            {phoneInvalid && <p className="text-[11px] text-amber-400">Enter 10-digit mobile number</p>}
-          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="sup-email">Email</Label>
+              <Input
+                id="sup-email"
+                type="email"
+                placeholder="supplier@example.com"
+                value={form.email}
+                onChange={(e) => setField('email', e.target.value)}
+              />
+            </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="sup-email">Email</Label>
-            <Input
-              id="sup-email"
-              type="email"
-              placeholder="supplier@example.com"
-              value={form.email}
-              onChange={(e) => setField('email', e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="sup-gstin">GSTIN</Label>
-            <Input
-              id="sup-gstin"
-              placeholder="33AABCU9603R1ZX"
-              value={form.gstin}
-              onChange={(e) => setField('gstin', e.target.value.toUpperCase())}
-              className="uppercase"
-            />
+            <div className="space-y-1.5">
+              <Label htmlFor="sup-gstin">GSTIN</Label>
+              <Input
+                id="sup-gstin"
+                placeholder="33AABCU9603R1ZX"
+                value={form.gstin}
+                onChange={(e) => setField('gstin', e.target.value.toUpperCase())}
+                className="uppercase"
+              />
+            </div>
           </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="sup-address">Address</Label>
             <textarea
               id="sup-address"
-              rows={3}
+              rows={2}
               placeholder="Street, City, Pincode"
               value={form.address}
               onChange={(e) => setField('address', e.target.value)}
@@ -213,36 +217,40 @@ export function SupplierFormDialog({
             />
           </div>
 
-          <div className="space-y-2 rounded-lg border border-zinc-800 p-3">
+          <div className="space-y-2.5 rounded-lg border border-zinc-800 p-3">
             <p className="text-xs font-medium text-zinc-400">Bank Details (for payments)</p>
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-bank-name">Bank Name</Label>
-              <Input
-                id="sup-bank-name"
-                placeholder="State Bank of India"
-                value={form.bankName}
-                onChange={(e) => setField('bankName', e.target.value)}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="sup-bank-name">Bank Name</Label>
+                <Input
+                  id="sup-bank-name"
+                  placeholder="State Bank of India"
+                  value={form.bankName}
+                  onChange={(e) => setField('bankName', e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="sup-bank-account">Account Number</Label>
+                <Input
+                  id="sup-bank-account"
+                  inputMode="numeric"
+                  placeholder="1234567890"
+                  value={form.bankAccount}
+                  onChange={(e) => setField('bankAccount', e.target.value.replace(/\D/g, ''))}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-bank-account">Account Number</Label>
-              <Input
-                id="sup-bank-account"
-                inputMode="numeric"
-                placeholder="1234567890"
-                value={form.bankAccount}
-                onChange={(e) => setField('bankAccount', e.target.value.replace(/\D/g, ''))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-bank-ifsc">IFSC Code</Label>
-              <Input
-                id="sup-bank-ifsc"
-                placeholder="SBIN0001234"
-                value={form.bankIfsc}
-                onChange={(e) => setField('bankIfsc', e.target.value.toUpperCase())}
-                className="uppercase"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="sup-bank-ifsc">IFSC Code</Label>
+                <Input
+                  id="sup-bank-ifsc"
+                  placeholder="SBIN0001234"
+                  value={form.bankIfsc}
+                  onChange={(e) => setField('bankIfsc', e.target.value.toUpperCase())}
+                  className="uppercase"
+                />
+              </div>
             </div>
           </div>
         </div>
