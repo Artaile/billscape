@@ -17,6 +17,7 @@ export interface SupplierOption {
   bank_name?: string | null
   bank_account?: string | null
   bank_ifsc?: string | null
+  upi_id?: string | null
 }
 
 interface SupplierFormState {
@@ -28,6 +29,7 @@ interface SupplierFormState {
   bankName: string
   bankAccount: string
   bankIfsc: string
+  upiId: string
 }
 
 function emptyForm(initialName?: string): SupplierFormState {
@@ -40,6 +42,7 @@ function emptyForm(initialName?: string): SupplierFormState {
     bankName: '',
     bankAccount: '',
     bankIfsc: '',
+    upiId: '',
   }
 }
 
@@ -70,6 +73,7 @@ export function SupplierFormDialog({
 }: SupplierFormDialogProps) {
   const [form, setForm] = useState<SupplierFormState>(emptyForm(initialName))
   const [nameError, setNameError] = useState('')
+  const [addressError, setAddressError] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -84,26 +88,35 @@ export function SupplierFormDialog({
         bankName: editTarget.bank_name ?? '',
         bankAccount: editTarget.bank_account ?? '',
         bankIfsc: editTarget.bank_ifsc ?? '',
+        upiId: editTarget.upi_id ?? '',
       })
     } else {
       setForm(emptyForm(initialName))
     }
     setNameError('')
+    setAddressError('')
   }, [open, editTarget, initialName])
 
   function setField(field: keyof SupplierFormState, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }))
     if (field === 'name' && value.trim()) setNameError('')
+    if (field === 'address' && value.trim()) setAddressError('')
   }
 
   const rawPhoneDigits = form.phone.replace(/\D/g, '')
   const phoneInvalid = rawPhoneDigits.length > 0 && rawPhoneDigits.length < 10
 
   async function handleSave() {
+    let hasError = false
     if (!form.name.trim()) {
       setNameError('Name is required')
-      return
+      hasError = true
     }
+    if (!form.address.trim()) {
+      setAddressError('Address is required')
+      hasError = true
+    }
+    if (hasError) return
     if (phoneInvalid) {
       toast.error('Invalid phone', 'Enter a 10-digit India mobile number')
       return
@@ -119,6 +132,7 @@ export function SupplierFormDialog({
       bank_name: form.bankName.trim() || null,
       bank_account: form.bankAccount.trim() || null,
       bank_ifsc: form.bankIfsc.trim() || null,
+      upi_id: form.upiId.trim() || null,
     }
 
     setSaving(true)
@@ -206,7 +220,7 @@ export function SupplierFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="sup-address">Address</Label>
+            <Label htmlFor="sup-address">Address *</Label>
             <textarea
               id="sup-address"
               rows={2}
@@ -215,6 +229,7 @@ export function SupplierFormDialog({
               onChange={(e) => setField('address', e.target.value)}
               className="flex w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
             />
+            {addressError && <p className="text-xs text-red-400">{addressError}</p>}
           </div>
 
           <div className="space-y-2.5 rounded-lg border border-zinc-800 p-3">
@@ -249,6 +264,15 @@ export function SupplierFormDialog({
                   value={form.bankIfsc}
                   onChange={(e) => setField('bankIfsc', e.target.value.toUpperCase())}
                   className="uppercase"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="sup-upi">UPI ID</Label>
+                <Input
+                  id="sup-upi"
+                  placeholder="supplier@upi (optional)"
+                  value={form.upiId}
+                  onChange={(e) => setField('upiId', e.target.value)}
                 />
               </div>
             </div>

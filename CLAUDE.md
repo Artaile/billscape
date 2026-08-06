@@ -142,6 +142,8 @@ currency, date_format, timezone
   bookkeeping landing on a negative balance under a concurrent-sale race
 - migration 016_supplier_bank_details.sql (2026-08-06): suppliers.bank_name/bank_account/bank_ifsc
   added — see Suppliers form section
+- migration 017_supplier_upi_id.sql (2026-08-06): suppliers.upi_id added (optional) — see
+  Suppliers form section
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -166,13 +168,20 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
   panel (name + phone only) that silently diverged from the full SuppliersPage dialog; now both
   entry points create/edit the exact same fields, so a supplier added mid-purchase isn't missing
   data compared to one added from `/suppliers`.
-- Fields: Name*, Phone, Email, GSTIN, Address, and a **Bank Details** subsection (Bank Name,
-  Account Number, IFSC Code — `suppliers.bank_name`/`bank_account`/`bank_ifsc`, migration
-  `016_supplier_bank_details.sql`) — same naming convention as `org_settings.branding`'s own
-  bank_name/bank_account/bank_ifsc (see OrgBranding fields above).
+- Fields: Name*, Phone, **Address*** (both required — Address was originally optional but
+  merchants kept skipping it, so it's now enforced in the form same as Name; the DB column
+  itself stays nullable so old rows and in-flight edits aren't blocked), Email, GSTIN, and a
+  **Bank Details** subsection (Bank Name, Account Number, IFSC Code, **UPI ID** — optional, since
+  not every supplier takes bank transfer — `suppliers.bank_name`/`bank_account`/`bank_ifsc`
+  from migration `016_supplier_bank_details.sql`, `upi_id` from migration `017_supplier_upi_id.sql`)
+  — bank field naming matches `org_settings.branding`'s own bank_name/bank_account/bank_ifsc
+  (see OrgBranding fields above).
 - `onSaved(supplier)` callback fires after insert/update — PurchaseFormPage uses it to
   auto-select the newly created supplier in the purchase's supplier dropdown, same behavior the
   old inline panel had.
+- **Layout**: 2-column grid (Name+Phone, Email+GSTIN, Bank Name+Account, IFSC+UPI) in a
+  `max-w-lg` dialog — the original one-field-per-row layout in a `max-w-sm` dialog made the
+  form tall enough that the Save/Cancel footer scrolled out of the viewport on a standard screen.
 
 ## Purchases page features (as of 2026-07-29)
 - **New Purchase / Edit Purchase are FULL PAGES** (`/purchases/new`, `/purchases/:id/edit`), not
