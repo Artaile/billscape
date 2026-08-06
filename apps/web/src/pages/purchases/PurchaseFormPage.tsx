@@ -12,6 +12,8 @@ import {
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
+import { useNavigationGuard, useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
+import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,7 +30,7 @@ interface ExistingProduct { id: string; name: string; sku: string | null; barcod
 interface VariantRow { size: string; color: string; price_delta: string; stock_qty: string }
 interface BatchRow { batch_no: string; expiry_date: string; qty: string }
 
-interface PurchaseRow {
+export interface PurchaseRow {
   product_id: string | null
   is_new_product: boolean
   product_name: string
@@ -93,9 +95,11 @@ export function PurchaseFormPage() {
   const isEdit = !!id
   const importedRows = (location.state as { importedRows?: ImportedPurchaseRow[]; importSupplierId?: string } | null)?.importedRows
   const importSupplierIdFromState = (location.state as { importSupplierId?: string } | null)?.importSupplierId
+  const draftId = (location.state as { draftId?: string } | null)?.draftId
   const { org, user } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
+  const { requestNavigation } = useNavigationGuard()
 
   const [supplierId, setSupplierId] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
@@ -262,6 +266,33 @@ export function PurchaseFormPage() {
     navigate(location.pathname, { replace: true, state: null })
   }, [importedRows, products, productCodeCounter, importSupplierIdFromState, navigate, location.pathname])
 
+  // Resumes a draft handed off from the Purchases page's "Drafts" list (see purchaseDrafts.ts) —
+  // consumed on load (removed from storage) same as resumeHeldBill's "resume = pop" semantics.
+  const draftConsumedRef = useRef(false)
+  useEffect(() => {
+    if (draftConsumedRef.current) return
+    if (!draftId) return
+    draftConsumedRef.current = true
+
+    const drafts = getPurchaseDrafts()
+    const draft = drafts.find((d) => d.id === draftId)
+    if (!draft) return
+
+    setSupplierId(draft.supplierId)
+    setInvoiceNo(draft.invoiceNo)
+    setPurchaseDate(draft.purchaseDate)
+    setPurchaseType(draft.purchaseType)
+    setNotes(draft.notes)
+    setRows(draft.rows)
+    setBillDiscountType(draft.billDiscountType)
+    setBillDiscountValue(draft.billDiscountValue)
+    setRoundOffEnabled(draft.roundOffEnabled)
+
+    savePurchaseDrafts(drafts.filter((d) => d.id !== draftId))
+    toast.success(`Resumed "${draft.name}"`)
+    navigate(location.pathname, { replace: true, state: null })
+  }, [draftId, navigate, location.pathname])
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setEntryDropdownOpen(false)
@@ -276,6 +307,55 @@ export function PurchaseFormPage() {
     customerStateCode: stateCodeFromGSTIN(selectedSupplier?.gstin),
   }
   const interstate = isInterState(gstContext)
+
+  // Unsaved-work guard: true whenever leaving now would silently lose data (a supplier or item
+  // entered but not yet saved as a real purchase). Read via refs inside callbacks so the guard/
+  // beforeunload handler always see current values without re-subscribing on every keystroke.
+  const hasUnsavedWork = () =>
+    rows.length > 0 || !!supplierId || invoiceNo.trim() !== '' || notes.trim() !== '' || parseNum(billDiscountValue) > 0
+
+  const draftSnapshotRef = useRef({ supplierId, invoiceNo, purchaseDate, purchaseType, notes, rows, billDiscountType, billDiscountValue, roundOffEnabled, selectedSupplierName: selectedSupplier?.name ?? null })
+  draftSnapshotRef.current = { supplierId, invoiceNo, purchaseDate, purchaseType, notes, rows, billDiscountType, billDiscountValue, roundOffEnabled, selectedSupplierName: selectedSupplier?.name ?? null }
+  const hasUnsavedWorkRef = useRef(hasUnsavedWork)
+  hasUnsavedWorkRef.current = hasUnsavedWork
+
+  function saveDraftFromCurrentState() {
+    const s = draftSnapshotRef.current
+    const draft: PurchaseDraft = {
+      id: Date.now().toString(),
+      name: s.selectedSupplierName ?? `Draft ${getPurchaseDrafts().length + 1}`,
+      supplierId: s.supplierId,
+      supplierName: s.selectedSupplierName,
+      invoiceNo: s.invoiceNo,
+      purchaseDate: s.purchaseDate,
+      purchaseType: s.purchaseType,
+      notes: s.notes,
+      rows: s.rows,
+      billDiscountType: s.billDiscountType,
+      billDiscountValue: s.billDiscountValue,
+      roundOffEnabled: s.roundOffEnabled,
+      savedAt: Date.now(),
+    }
+    savePurchaseDrafts([...getPurchaseDrafts(), draft])
+    toast.success(`"${draft.name}" saved as draft`, 'Find it under Drafts on the Purchases page.')
+  }
+
+  useRegisterNavigationGuard({
+    shouldBlock: () => hasUnsavedWorkRef.current(),
+    title: 'Leave this purchase?',
+    message: "You have unsaved changes to this purchase. Save it as a draft to resume later, or discard it.",
+    onSaveDraft: () => saveDraftFromCurrentState(),
+  })
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedWorkRef.current()) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [])
 
   const totals: InvoiceTotals = useMemo(() => {
     const cartLike = rows
@@ -492,7 +572,7 @@ export function PurchaseFormPage() {
     <div className="p-4 lg:p-6 max-w-[1800px] mx-auto">
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
+          <Button variant="ghost" size="icon" onClick={() => requestNavigation(() => navigate('/purchases'))}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
@@ -990,7 +1070,7 @@ export function PurchaseFormPage() {
                 </div>
               ) : (
                 <div className="flex gap-3">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => navigate('/purchases')}>Cancel</Button>
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => requestNavigation(() => navigate('/purchases'))}>Cancel</Button>
                   <Button type="button" className="flex-1" disabled={saveMutation.isPending || rows.length === 0} onClick={() => saveMutation.mutate()}>
                     {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
                   </Button>

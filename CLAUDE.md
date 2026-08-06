@@ -328,6 +328,45 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - UI: "Hold" button → named dialog → "Held Bills N" badge to resume
 - Multiple named holds supported; competitor had none
 
+## Purchase drafts + leave-page confirmation (as of 2026-08-06)
+- `PurchaseFormPage.tsx` previously had ZERO unsaved-work protection — the back arrow and
+  "Cancel" button both called `navigate('/purchases')` directly. Now both route through
+  `requestNavigation(() => navigate('/purchases'))` (`@/contexts/NavigationGuardContext`), and a
+  `beforeunload` listener covers tab-close/refresh — same two-layer pattern POSTab already used.
+- **`NavigationGuardContext.tsx` was generalized** (still the single shared context/dialog used by
+  both POS and Purchases — not forked) to support a `GuardConfig` object
+  (`{ shouldBlock, title?, message?, onSaveDraft? }`) in addition to the original bare-predicate
+  form. `useRegisterNavigationGuard` accepts either shape; POSTab's existing call site
+  (`useRegisterNavigationGuard(() => cartRef.current.length > 0)`) is unchanged and still renders
+  the original "Leave this bill?" / Stay / Leave & discard 2-button dialog (title/message default
+  to the POS copy, and the third "Save Draft" button only renders when `onSaveDraft` is provided).
+  Purchases registers `{ shouldBlock, title: 'Leave this purchase?', message: '...', onSaveDraft }`
+  → the dialog gains a middle "Save Draft" button (Stay / Save Draft / Discard).
+- **Draft storage** (`apps/web/src/lib/purchaseDrafts.ts`) mirrors POS's hold-bill pattern exactly:
+  `sessionStorage` key `billscape_purchase_drafts`, `PurchaseDraft { id, name, supplierId,
+  supplierName, invoiceNo, purchaseDate, purchaseType, notes, rows, billDiscountType,
+  billDiscountValue, roundOffEnabled, savedAt }`. **No DB row, no product-creation/stock side
+  effects** — this was a deliberate choice over a `purchases.status = 'draft'` DB column, since
+  `createPurchase` creates real products and fires the stock-increment trigger on insert, which is
+  unsafe for a half-filled/abandoned row.
+- `PurchaseFormPage.tsx`'s `PurchaseRow` interface is now exported (`export interface
+  PurchaseRow`) so `purchaseDrafts.ts` can type `rows` without duplicating its ~17 fields.
+- The in-progress "Add Item" entry row (`entry` state — a product typed but not yet clicked
+  "Add to List") is intentionally **not** captured in a draft, matching POS's own hold-bill
+  (which only persists the committed `cart`, not a not-yet-added line) — if a merchant is mid-way
+  through typing a new item when they save a draft, that partial row is lost, same tradeoff POS
+  already accepted.
+- Resuming works the same way CSV-import hand-off already did: `navigate('/purchases/new', {
+  state: { draftId } })` → a `useEffect` parallel to the existing CSV-import effect loads the
+  draft by id, populates every setter, **removes it from storage** (resume = pop, same as
+  `resumeHeldBill`), and clears router state. Unlike POS's hold-bill resume, there's no "current
+  cart must be empty first" block — landing on `/purchases/new` with a `draftId` is always a fresh
+  mount, so there's nothing to collide with.
+- `PurchasesPage.tsx` shows a "Drafts N" ghost button (amber, only rendered when
+  `drafts.length > 0` — same conditional-render convention as POS's "Held Bills N") next to
+  Import CSV/New Purchase, opening a list dialog with the same row shape as POS's Held Bills List
+  Dialog (name, item count, saved time, Resume + delete-icon buttons, no delete confirmation).
+
 ## POS discounts (line-level and bill-level)
 - Line-level (per cart item): toggle between % and ₹ flat via discount_type, applied BEFORE tax
   (reduces taxable_amount). CartItem.tsx renders the ₹/% segmented toggle next to the qty controls.

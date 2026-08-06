@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Eye, ShoppingBag, Trash2, Loader2, Pencil, Printer,
-  Upload, Download, FileSpreadsheet, AlertCircle,
+  Upload, Download, FileSpreadsheet, AlertCircle, FileClock, Play, X,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -11,6 +11,7 @@ import { formatINR } from '@billscape/core'
 import { getPurchaseWithItems } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -94,6 +95,16 @@ export function PurchasesPage() {
   const [showImport, setShowImport] = useState(false)
   const [importErrors, setImportErrors] = useState<string[]>([])
   const importFileRef = useRef<HTMLInputElement>(null)
+
+  // Draft purchases (client-side, sessionStorage — see purchaseDrafts.ts)
+  const [drafts, setDrafts] = useState<PurchaseDraft[]>(() => getPurchaseDrafts())
+  const [showDrafts, setShowDrafts] = useState(false)
+
+  function deleteDraft(id: string) {
+    const next = drafts.filter((d) => d.id !== id)
+    savePurchaseDrafts(next)
+    setDrafts(next)
+  }
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -180,6 +191,16 @@ export function PurchasesPage() {
           <p className="text-sm text-zinc-400 mt-0.5">{purchases?.length ?? 0} records</p>
         </div>
         <div className="flex gap-2">
+          {drafts.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => { setDrafts(getPurchaseDrafts()); setShowDrafts(true) }}
+              className="text-amber-400 relative">
+              <FileClock className="h-4 w-4" />
+              Drafts
+              <span className="ml-1 rounded-full bg-amber-500 text-white text-[9px] px-1.5 py-0.5 font-bold">
+                {drafts.length}
+              </span>
+            </Button>
+          )}
           <Button variant="outline" onClick={() => { setImportErrors([]); setShowImport(true) }}>
             <Upload className="h-4 w-4 mr-1" />Import CSV
           </Button>
@@ -247,6 +268,47 @@ export function PurchasesPage() {
           </Table>
         )}
       </div>
+
+      {/* ── Drafts List Dialog ── */}
+      <Dialog open={showDrafts} onOpenChange={setShowDrafts}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileClock className="h-4 w-4 text-amber-400" /> Draft Purchases ({drafts.length})
+            </DialogTitle>
+          </DialogHeader>
+          {drafts.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-6">No draft purchases</p>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {drafts.map((draft) => (
+                <div key={draft.id} className="flex items-center justify-between rounded-lg border border-border bg-card p-3 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{draft.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {draft.rows.length} item{draft.rows.length === 1 ? '' : 's'}
+                      {' · '}
+                      {new Date(draft.savedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                      {' '}
+                      {new Date(draft.savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <Button size="sm" className="h-7 text-xs"
+                      onClick={() => { setShowDrafts(false); navigate('/purchases/new', { state: { draftId: draft.id } }) }}>
+                      <Play className="h-3 w-3" /> Resume
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-400"
+                      onClick={() => deleteDraft(draft.id)}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Import CSV Dialog ── */}
       <Dialog open={showImport} onOpenChange={(open) => { if (!open) { setShowImport(false); setImportErrors([]) } }}>
