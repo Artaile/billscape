@@ -328,11 +328,19 @@ export function PurchaseFormPage() {
       selectExistingProduct(exactMatch)
       return
     }
-    setEntry((prev) => ({
-      ...prev, product_id: null, is_new_product: true, product_name: val,
-      sku: prev.skuManuallyEdited ? prev.sku : (val ? nextProductCode() : ''),
-      barcode_value: prev.barcodeManuallyEdited ? prev.barcode_value : (val ? generateBarcode() : ''),
-    }))
+    setEntry((prev) => {
+      // Leaving an existing-product selection (or its stale leftovers) behind — start from a
+      // clean new-product row rather than spreading prev, otherwise its SKU/barcode/pricing
+      // (tax_rate, unit_cost, mrp, price, special_price, update_existing_pricing, and the
+      // manually-edited flags that suppress SKU/barcode regeneration) linger and a "New" row
+      // can end up reusing an existing product's SKU/barcode on save.
+      const base = prev.is_new_product ? prev : emptyRow()
+      return {
+        ...base, product_id: null, is_new_product: true, product_name: val,
+        sku: base.skuManuallyEdited ? base.sku : (val ? nextProductCode() : ''),
+        barcode_value: base.barcodeManuallyEdited ? base.barcode_value : (val ? generateBarcode() : ''),
+      }
+    })
   }
 
   const codeCheckTimer = useRef<ReturnType<typeof setTimeout>>()
