@@ -20,6 +20,11 @@ export interface PurchaseLineInput {
   price: number
   special_price?: number
   update_existing_pricing?: boolean
+  // New-product-only metadata — ignored when is_new_product is false.
+  category_id?: string | null
+  hsn_code?: string
+  variants?: { size: string; color: string; price_delta: number; stock_qty: number }[]
+  batches?: { batch_no: string; expiry_date: string; qty: number }[]
 }
 
 export interface CreatePurchaseInput {
@@ -62,10 +67,44 @@ async function createProductForLine(
     barcode_value: line.barcode_value || null,
     track_stock: true,
     is_active: true,
+    category_id: line.category_id ?? null,
+    hsn_code: line.hsn_code || null,
+    has_variants: !!line.variants?.length,
+    has_batches: !!line.batches?.length,
   }
 
   const { data, error } = await client.from('products').insert(payload).select('id').single()
-  if (!error && data) return { id: data.id }
+  if (!error && data) {
+    // Best-effort: variants/batches entered during purchase item entry. Same filtering rules as
+    // ProductFormPage's own save mutation (empty rows dropped). A failure here should not fail
+    // the whole purchase — the product itself was already created successfully.
+    const validVariants = (line.variants ?? []).filter((v) => v.size || v.color)
+    if (validVariants.length > 0) {
+      await client.from('product_variants').insert(
+        validVariants.map((v) => ({
+          product_id: data.id,
+          organization_id: orgId,
+          size: v.size || null,
+          color: v.color || null,
+          price_delta: v.price_delta ?? 0,
+          stock_qty: v.stock_qty ?? 0,
+        })),
+      )
+    }
+    const validBatches = (line.batches ?? []).filter((b) => b.batch_no.trim())
+    if (validBatches.length > 0) {
+      await client.from('inventory_batches').insert(
+        validBatches.map((b) => ({
+          product_id: data.id,
+          organization_id: orgId,
+          batch_no: b.batch_no,
+          expiry_date: b.expiry_date || null,
+          qty: b.qty ?? 0,
+        })),
+      )
+    }
+    return { id: data.id }
+  }
 
   if (error?.code === UNIQUE_VIOLATION && attempt < 3) {
     const detail = (error as { details?: string }).details ?? ''

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt } from 'lucide-react'
+import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -25,6 +25,9 @@ const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
 interface ExistingProduct { id: string; name: string; sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null }
 
+interface VariantRow { size: string; color: string; price_delta: string; stock_qty: string }
+interface BatchRow { batch_no: string; expiry_date: string; qty: string }
+
 interface PurchaseRow {
   product_id: string | null
   is_new_product: boolean
@@ -41,6 +44,14 @@ interface PurchaseRow {
   skuManuallyEdited: boolean
   barcodeManuallyEdited: boolean
   codeError?: string
+  // New-product-only metadata — never sent for is_new_product: false rows.
+  category_id: string | null
+  hsn_code: string
+  has_variants: boolean
+  variants: VariantRow[]
+  has_batches: boolean
+  batches: BatchRow[]
+  showMoreDetails: boolean
 }
 
 // Shape handed off by the CSV Import flow (PurchasesPage.tsx) via navigate(..., { state }) —
@@ -57,12 +68,20 @@ function parseNum(s: string): number {
   return isNaN(n) ? 0 : n
 }
 
+// Mirrors ProductSchema.hsn_code in packages/core/src/validation/index.ts — 4, 6, or 8 digits.
+function hsnCodeError(value: string): string | undefined {
+  if (!value) return undefined
+  return /^\d{4}(\d{2}(\d{2})?)?$/.test(value) ? undefined : 'HSN code must be 4, 6, or 8 digits'
+}
+
 function emptyRow(): PurchaseRow {
   return {
     product_id: null, is_new_product: false, product_name: '',
     sku: '', barcode_value: '', tax_rate: 18, qty: '1', unit_cost: '0',
     mrp: '', price: '0', special_price: '',
     update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
+    category_id: null, hsn_code: '', has_variants: false, variants: [],
+    has_batches: false, batches: [], showMoreDetails: false,
   }
 }
 
@@ -158,6 +177,8 @@ export function PurchaseFormPage() {
             special_price: product?.special_price != null ? String(product.special_price) : '',
             update_existing_pricing: true,
             skuManuallyEdited: true, barcodeManuallyEdited: true,
+            category_id: null, hsn_code: '', has_variants: false, variants: [],
+            has_batches: false, batches: [], showMoreDetails: false,
           }
         }),
       )
@@ -170,6 +191,15 @@ export function PurchaseFormPage() {
     queryFn: async () => {
       const { data } = await supabase.from('suppliers').select('id, name, phone, gstin').eq('organization_id', orgId!).order('name')
       return (data ?? []) as Supplier[]
+    },
+  })
+
+  const { data: categories } = useQuery({
+    queryKey: ['categories', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase.from('categories').select('id, name').eq('organization_id', orgId!).order('name')
+      return (data ?? []) as { id: string; name: string }[]
     },
   })
 
@@ -209,6 +239,8 @@ export function PurchaseFormPage() {
           mrp: match.mrp != null ? String(match.mrp) : '', price: String(match.price),
           special_price: match.special_price != null ? String(match.special_price) : '',
           update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
+          category_id: null, hsn_code: '', has_variants: false, variants: [],
+          has_batches: false, batches: [], showMoreDetails: false,
         }
       }
       const sku = `PC${String(counter).padStart(4, '0')}`
@@ -219,6 +251,8 @@ export function PurchaseFormPage() {
         tax_rate: 18, qty: imp.qty, unit_cost: imp.unit_cost,
         mrp: '', price: imp.unit_cost, special_price: '',
         update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
+        category_id: null, hsn_code: '', has_variants: false, variants: [],
+        has_batches: false, batches: [], showMoreDetails: false,
       }
     })
     setRows(newRows)
@@ -279,6 +313,8 @@ export function PurchaseFormPage() {
       mrp: p.mrp != null ? String(p.mrp) : '', price: String(p.price),
       special_price: p.special_price != null ? String(p.special_price) : '',
       update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
+      category_id: null, hsn_code: '', has_variants: false, variants: [],
+      has_batches: false, batches: [], showMoreDetails: false,
     })
     setEntrySearch(p.name)
     setEntryDropdownOpen(false)
@@ -370,6 +406,14 @@ export function PurchaseFormPage() {
         price: parseNum(r.price),
         special_price: r.special_price ? parseNum(r.special_price) : undefined,
         update_existing_pricing: r.update_existing_pricing,
+        category_id: r.is_new_product ? r.category_id : undefined,
+        hsn_code: r.is_new_product ? (r.hsn_code.trim() || undefined) : undefined,
+        variants: r.is_new_product && r.has_variants
+          ? r.variants.map((v) => ({ size: v.size, color: v.color, price_delta: parseNum(v.price_delta), stock_qty: parseNum(v.stock_qty) }))
+          : undefined,
+        batches: r.is_new_product && r.has_batches
+          ? r.batches.map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date, qty: parseNum(b.qty) }))
+          : undefined,
       }))
 
       if (isEdit && id) {
@@ -469,8 +513,8 @@ export function PurchaseFormPage() {
             <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
               <Truck className="h-4 w-4 text-indigo-400" />Purchase Details
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
+            <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+              <div className="lg:w-[280px] shrink-0 space-y-1.5">
                 <Label>Supplier</Label>
                 <div className="flex gap-2">
                   <select
@@ -496,20 +540,17 @@ export function PurchaseFormPage() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Invoice No</Label>
-                  <Input placeholder="INV-001 (optional)" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Date</Label>
-                  <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
-                </div>
+              <div className="lg:w-[160px] shrink-0 space-y-1.5">
+                <Label>Invoice No</Label>
+                <Input placeholder="INV-001 (optional)" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
+              <div className="lg:w-[150px] shrink-0 space-y-1.5">
+                <Label>Date</Label>
+                <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+              </div>
+
+              <div className="lg:w-[170px] shrink-0 space-y-1.5">
                 <Label>Purchase Type</Label>
                 <div className="flex gap-2">
                   {(['credit', 'cash'] as const).map((t) => (
@@ -521,7 +562,8 @@ export function PurchaseFormPage() {
                   ))}
                 </div>
               </div>
-              <div className="space-y-1.5">
+
+              <div className="flex-1 min-w-[160px] space-y-1.5">
                 <Label>Notes</Label>
                 <Input placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
@@ -668,6 +710,149 @@ export function PurchaseFormPage() {
                     <input type="checkbox" checked={entry.update_existing_pricing} onChange={(e) => setEntry((p) => ({ ...p, update_existing_pricing: e.target.checked }))} />
                     Update this product's cost/price/GST to the values above
                   </label>
+                )}
+
+                {/* More details — new-product-only metadata (category, HSN, variants, batches).
+                    Existing products already carry this on their own record, nothing to add. */}
+                {entry.is_new_product && (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setEntry((p) => ({ ...p, showMoreDetails: !p.showMoreDetails }))}
+                      className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                    >
+                      {entry.showMoreDetails ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      More details
+                      <span className="text-zinc-600">(Category, HSN, Variants, Batches)</span>
+                    </button>
+
+                    {entry.showMoreDetails && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Category</Label>
+                            <select
+                              value={entry.category_id ?? ''}
+                              onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
+                              className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="">— No category —</option>
+                              {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">HSN Code</Label>
+                            <Input
+                              placeholder="e.g. 2501"
+                              value={entry.hsn_code}
+                              onChange={(e) => setEntry((p) => ({ ...p, hsn_code: e.target.value }))}
+                              className="h-9 text-xs"
+                            />
+                            {hsnCodeError(entry.hsn_code) && (
+                              <p className="text-[11px] text-amber-400">{hsnCodeError(entry.hsn_code)}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Variants */}
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 cursor-pointer w-fit">
+                            <div
+                              onClick={() => setEntry((p) => ({
+                                ...p, has_variants: !p.has_variants,
+                                variants: !p.has_variants && p.variants.length === 0
+                                  ? [{ size: '', color: '', price_delta: '', stock_qty: '' }]
+                                  : p.variants,
+                              }))}
+                              className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_variants ? 'bg-indigo-600' : 'bg-zinc-700')}
+                            >
+                              <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_variants ? 'translate-x-4' : 'translate-x-0')} />
+                            </div>
+                            <span className="text-xs text-zinc-400">Track Variants</span>
+                          </label>
+
+                          {entry.has_variants && (
+                            <div className="space-y-1.5 pl-1">
+                              <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
+                                <span>Size</span><span>Color</span><span>Price +/-</span><span>Stock</span><span></span>
+                              </div>
+                              {entry.variants.map((v, i) => (
+                                <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                                  <Input placeholder="S / M / L" value={v.size}
+                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, size: e.target.value } : x) }))}
+                                    className="h-8 text-xs" />
+                                  <Input placeholder="Red / Blue" value={v.color}
+                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, color: e.target.value } : x) }))}
+                                    className="h-8 text-xs" />
+                                  <Input type="text" inputMode="decimal" placeholder="0.00" value={v.price_delta}
+                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, price_delta: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
+                                    className="h-8 text-xs" />
+                                  <Input type="text" inputMode="numeric" placeholder="0" value={v.stock_qty}
+                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, stock_qty: e.target.value.replace(/[^0-9]/g, '') } : x) }))}
+                                    className="h-8 text-xs" />
+                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
+                                    onClick={() => setEntry((p) => ({ ...p, variants: p.variants.filter((_, j) => j !== i) }))}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button type="button" variant="outline" size="sm" className="text-xs"
+                                onClick={() => setEntry((p) => ({ ...p, variants: [...p.variants, { size: '', color: '', price_delta: '', stock_qty: '' }] }))}>
+                                <Plus className="h-3.5 w-3.5" /> Add Variant
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Batches */}
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 cursor-pointer w-fit">
+                            <div
+                              onClick={() => setEntry((p) => ({
+                                ...p, has_batches: !p.has_batches,
+                                batches: !p.has_batches && p.batches.length === 0
+                                  ? [{ batch_no: '', expiry_date: '', qty: '' }]
+                                  : p.batches,
+                              }))}
+                              className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_batches ? 'bg-indigo-600' : 'bg-zinc-700')}
+                            >
+                              <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_batches ? 'translate-x-4' : 'translate-x-0')} />
+                            </div>
+                            <span className="text-xs text-zinc-400">Track Batches</span>
+                          </label>
+
+                          {entry.has_batches && (
+                            <div className="space-y-1.5 pl-1">
+                              <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
+                                <span className="col-span-2">Batch No</span><span>Expiry Date</span><span>Qty</span><span></span>
+                              </div>
+                              {entry.batches.map((b, i) => (
+                                <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                                  <Input placeholder="BATCH-001" value={b.batch_no}
+                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
+                                    className="h-8 text-xs col-span-2" />
+                                  <Input type="date" value={b.expiry_date}
+                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
+                                    className="h-8 text-xs" />
+                                  <Input type="text" inputMode="numeric" placeholder="0" value={b.qty}
+                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9]/g, '') } : x) }))}
+                                    className="h-8 text-xs" />
+                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
+                                    onClick={() => setEntry((p) => ({ ...p, batches: p.batches.filter((_, j) => j !== i) }))}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              ))}
+                              <Button type="button" variant="outline" size="sm" className="text-xs"
+                                onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
+                                <Plus className="h-3.5 w-3.5" /> Add Batch
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 

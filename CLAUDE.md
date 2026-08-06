@@ -215,11 +215,33 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - Table columns: Purchase No | Date | Supplier | Invoice No | Items | Total Amount | Actions
 - Actions per row: View | Edit (→ full page) | Delete
 - Purchase No auto-generated on save: PUR-YYYYMMDD-XXXX (sequential per org per day)
-- `PurchaseFormPage.tsx` (`apps/web/src/pages/purchases/`): header (supplier select + "Add new
-  supplier" → shared `SupplierFormDialog`, see Suppliers section, invoice no, date, purchase type
-  Credit/Cash, notes) → an "Add Item" entry strip
+- `PurchaseFormPage.tsx` (`apps/web/src/pages/purchases/`): a single-row "Purchase Details" card
+  (Supplier `lg:w-[280px]` + "Add new supplier" → shared `SupplierFormDialog`, see Suppliers
+  section; Invoice No `lg:w-[160px]`; Date `lg:w-[150px]`; Purchase Type Credit/Cash toggle
+  `lg:w-[170px]`; Notes `flex-1`, stretches to fill remaining width — `flex flex-col
+  lg:flex-row`, stacks on narrower screens) → an "Add Item" entry strip
   (Product search-or-create, Code, Barcode, GST%, Purchase Rate, Qty, MRP, Retail Price, SP)
   → items table → footer totals (CGST/SGST or IGST, Bill Discount, Round Off, Total).
+- **"More details" collapsible (as of 2026-08-06)**: for `is_new_product` rows only (existing
+  products already carry this on their own record — the toggle doesn't render at all when an
+  existing product is selected, so purchase entry can never silently overwrite a real product's
+  category/HSN/variants/batches) — a `▾ More details (Category, HSN, Variants, Batches)` link
+  under Row 3 of the entry strip expands to: Category `<select>` (own `categories` query, same
+  styling as the Supplier select) + HSN Code (`Input`, validated inline with the same 4/6/8-digit
+  regex as `ProductSchema.hsn_code` in `packages/core/src/validation/index.ts` — this page has no
+  RHF, so the check is a plain `hsnCodeError()` helper, not schema-driven), then two "Enable"
+  sliding toggles (same visual pattern as `ProductFormPage.tsx`'s own Variants/Batches toggles)
+  each revealing a compact repeatable-row editor identical in shape to the Add Product page's
+  (Size/Color/Price±/Stock for variants; Batch No/Expiry/Qty for batches). Collapsed by default
+  and per-row (`PurchaseRow.showMoreDetails`) — expanding it for one row doesn't affect others.
+  Before this, a product created via purchase entry had `category_id`/`hsn_code` always null and
+  `has_variants`/`has_batches` always false regardless of what the merchant actually had, forcing
+  a second trip to `/products/:id/edit` to fill them in — the two entry points now produce
+  identical, complete product records. `PurchaseLineInput` (`packages/api/src/purchases.ts`)
+  carries these as optional fields; `createProductForLine` inserts the extra `products` columns
+  and, on success, inserts into `product_variants`/`inventory_batches` (same empty-row filtering
+  rules as `ProductFormPage.tsx`'s own save mutation — best-effort, a failure here does not fail
+  the purchase since the product row was already committed).
 - **Unified purchase entry + product creation** (fixes the old "double entry" problem): typing
   a product name that doesn't match an existing product auto-generates SKU (`generateSku()`)
   and barcode (`generateBarcode()`, both in `packages/core/src/codes.ts`), badges the row "New",
