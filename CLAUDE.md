@@ -42,7 +42,7 @@ Supabase project ID: bzvbkscspzdschskbqtd
 | /dashboard | DashboardPage | KPI cards, GST Overview, 7-day chart, low stock, top products, activity |
 | /billing | BillingPage | Tabs: POS + History (see Billing tab sections below) |
 | /products | ProductsPage | Import CSV / Export CSV, barcode label print |
-| /products/new | ProductFormPage | Brand field, variants, batch tracking |
+| /products/new | ProductFormPage | Brand field, variants, batch tracking; two-column layout with sticky live preview panel (see Product form section) |
 | /products/:id/edit | ProductFormPage | |
 | /inventory | InventoryPage | 4 tabs: Stock List, Ledger & History, Adjustments, Opening Stock |
 | /purchases | PurchasesPage | owner + manager only — New Purchase, Edit, Import CSV, purchase_no |
@@ -159,6 +159,31 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - only digits allowed — alphabet blocked via onChange replace(/\D/g, '')
 - validation: 10 digits required for India mobile; warn if fewer, block save if invalid
 - applies to: SuppliersPage, CustomersPage, PurchasesPage quick-add supplier
+
+## Product form (as of 2026-08-06)
+- `ProductFormPage.tsx` (`/products/new`, `/products/:id/edit`) redesigned to match
+  `PurchaseFormPage.tsx`'s visual pattern: `max-w-6xl mx-auto` shell,
+  `grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5` — left column is the same 8 sections as
+  before (Basic Info, Pricing & Tax, Inventory, Variants, Batches, Barcode, Image), each card
+  header now has a `text-indigo-400` icon (previously only 2 of 8 cards had any icon, and it was
+  muted zinc, not indigo) — no functional change to any field or the save mutation.
+- **Right column**: sticky (`lg:sticky lg:top-4`) live "Preview" card — image, product name
+  (falls back to italic "Untitled product" placeholder), retail price with MRP shown
+  strikethrough next to it when set and different, a live **margin %** stat
+  (`(price - cost_price) / price * 100`, green/red by sign), a GST rate pill, category/variant
+  count/batch count badges, and the Save/Cancel buttons live here (moved out of the bottom of
+  the left column, mirroring Purchase's summary-card-owns-the-primary-action pattern). All values
+  are `watch()`ed from the same RHF form — no extra state.
+- Category `<select>` styling normalized to Purchase's `border-zinc-700 bg-zinc-900
+  focus:ring-indigo-500` (was `border-input bg-background focus:ring-ring`, an older/different
+  token set — purely visual, same behavior).
+- **Bug fixed in passing**: `mrp`/`special_price` used `register(field, { valueAsNumber: true })`,
+  which turns an empty input into `NaN` — `ProductSchema`'s `z.number().min(0).optional()`
+  (`packages/core/src/validation/index.ts`) does not treat `NaN` as "absent", so leaving either
+  field blank silently blocked save with "Expected number, received nan" and no visible error
+  near the field (RHF focused the empty input but the message wasn't obviously tied to it). Fixed
+  by switching both to `setValueAs: (v) => (v === '' ? undefined : Number(v))`, which was already
+  necessary for the new preview panel's MRP-vs-price comparison to work correctly on an empty MRP.
 
 ## Suppliers form (as of 2026-08-06)
 - **Single shared dialog** for add/edit: `apps/web/src/components/suppliers/SupplierFormDialog.tsx`

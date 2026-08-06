@@ -14,16 +14,22 @@ import {
   Trash2,
   Layers,
   CalendarClock,
+  IndianRupee,
+  Boxes,
+  QrCode,
+  Image as ImageIcon,
+  Eye,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { ProductSchema, type ProductInput } from '@billscape/core'
+import { ProductSchema, type ProductInput, formatINR } from '@billscape/core'
 import { generateBarcode } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { ManageCategoriesDialog } from '@/components/products/ManageCategoriesDialog'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -83,6 +89,12 @@ export function ProductFormPage() {
 
   const trackStock = watch('track_stock')
   const barcodeValue = watch('barcode_value')
+  const watchedName = watch('name')
+  const watchedPrice = watch('price')
+  const watchedCostPrice = watch('cost_price')
+  const watchedMrp = watch('mrp')
+  const watchedTaxRate = watch('tax_rate')
+  const watchedSku = watch('sku')
 
   // Fetch existing product for edit
   const { data: existingProduct } = useQuery({
@@ -112,6 +124,8 @@ export function ProductFormPage() {
       return data ?? []
     },
   })
+
+  const selectedCategoryName = categories?.find((c) => c.id === categoryId)?.name
 
   const addCategoryMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -362,447 +376,504 @@ export function ProductFormPage() {
     saveMutation.mutate({ ...(values as any), initialStock })
   })
 
+  const marginPct =
+    watchedPrice > 0 && watchedCostPrice > 0
+      ? ((watchedPrice - watchedCostPrice) / watchedPrice) * 100
+      : null
+
+  const validVariantCount = variants.filter((v) => v.size || v.color).length
+  const validBatchCount = batches.filter((b) => b.batch_no.trim()).length
+
   return (
-    <div className="p-4 lg:p-6 max-w-2xl mx-auto">
+    <div className="p-4 lg:p-6 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <Button variant="ghost" size="icon" onClick={() => navigate('/products')}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-bold text-white">
-          {isEdit ? 'Edit Product' : 'Add Product'}
-        </h1>
+        <div>
+          <h1 className="text-xl font-bold text-white">
+            {isEdit ? 'Edit Product' : 'Add Product'}
+          </h1>
+          {isEdit && (watchedSku || existingProduct?.sku) && (
+            <p className="text-xs font-mono text-indigo-300 mt-0.5">
+              {watchedSku || existingProduct?.sku}
+            </p>
+          )}
+        </div>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-6">
-        {/* Basic Info */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-zinc-300">Basic Information</h2>
+      <form onSubmit={onSubmit} className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 items-start">
+        {/* Left column: form sections */}
+        <div className="space-y-5 min-w-0">
+          {/* Basic Info */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <Package className="h-4 w-4 text-indigo-400" />Basic Information
+            </h2>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="name">Product Name *</Label>
-            <Input id="name" placeholder="e.g. Tata Salt 1kg" {...register('name')} />
-            {errors.name && <p className="text-xs text-red-400">{errors.name.message}</p>}
+            <div className="space-y-1.5">
+              <Label htmlFor="name">Product Name *</Label>
+              <Input id="name" placeholder="e.g. Tata Salt 1kg" {...register('name')} />
+              {errors.name && <p className="text-xs text-red-400">{errors.name.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Category</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowManageCategories(true)}
+                  className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  Manage categories
+                </button>
+              </div>
+              {showNewCategory ? (
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Category name"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        if (newCategoryName.trim()) addCategoryMutation.mutate(newCategoryName.trim())
+                      }
+                      if (e.key === 'Escape') setShowNewCategory(false)
+                    }}
+                    autoFocus
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!newCategoryName.trim() || addCategoryMutation.isPending}
+                    onClick={() => newCategoryName.trim() && addCategoryMutation.mutate(newCategoryName.trim())}
+                  >
+                    {addCategoryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Add'}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setShowNewCategory(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <select
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    className="flex h-9 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">— No category —</option>
+                    {categories?.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setShowNewCategory(true)}
+                    title="Add new category"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="sku">SKU</Label>
+                <Input id="sku" placeholder="e.g. SALT-001" {...register('sku')} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="brand">Brand</Label>
+                <Input id="brand" placeholder="e.g. Samsung" value={brand} onChange={(e) => setBrand(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="hsn_code">HSN Code</Label>
+                <Input id="hsn_code" placeholder="e.g. 2501" {...register('hsn_code')} />
+                {errors.hsn_code && <p className="text-xs text-red-400">{errors.hsn_code.message}</p>}
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label>Category</Label>
-              <button
-                type="button"
-                onClick={() => setShowManageCategories(true)}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                Manage categories
-              </button>
-            </div>
-            {showNewCategory ? (
-              <div className="flex gap-2">
+          {/* Pricing */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <IndianRupee className="h-4 w-4 text-indigo-400" />Pricing & Tax
+            </h2>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="price">Retail Price (₹) *</Label>
                 <Input
-                  placeholder="Category name"
-                  value={newCategoryName}
-                  onChange={(e) => setNewCategoryName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      if (newCategoryName.trim()) addCategoryMutation.mutate(newCategoryName.trim())
-                    }
-                    if (e.key === 'Escape') setShowNewCategory(false)
-                  }}
-                  autoFocus
+                  id="price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...register('price', { valueAsNumber: true })}
                 />
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!newCategoryName.trim() || addCategoryMutation.isPending}
-                  onClick={() => newCategoryName.trim() && addCategoryMutation.mutate(newCategoryName.trim())}
-                >
-                  {addCategoryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Add'}
-                </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={() => setShowNewCategory(false)}>
-                  Cancel
-                </Button>
+                {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
               </div>
-            ) : (
-              <div className="flex gap-2">
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              <div className="space-y-1.5">
+                <Label htmlFor="cost_price">Cost Price (₹)</Label>
+                <Input
+                  id="cost_price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...register('cost_price', { valueAsNumber: true })}
+                />
+                {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="mrp">MRP (₹)</Label>
+                <Input
+                  id="mrp"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...register('mrp', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                />
+                {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="special_price">Special Price (₹)</Label>
+                <Input
+                  id="special_price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...register('special_price', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                />
+                {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>GST Rate *</Label>
+              <Controller
+                name="tax_rate"
+                control={control}
+                render={({ field }) => (
+                  <div className="flex gap-2 flex-wrap">
+                    {GST_RATES.map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => field.onChange(rate)}
+                        className={cn(
+                          'px-3 py-1.5 rounded-md text-sm font-medium border transition-all',
+                          field.value === rate
+                            ? 'bg-indigo-600 border-indigo-500 text-white'
+                            : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
+                        )}
+                      >
+                        {rate}%
+                      </button>
+                    ))}
+                  </div>
+                )}
+              />
+            </div>
+          </div>
+
+          {/* Stock */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <Boxes className="h-4 w-4 text-indigo-400" />Inventory
+              </h2>
+              <Controller
+                name="track_stock"
+                control={control}
+                render={({ field }) => (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <span className="text-xs text-zinc-400">Track Stock</span>
+                    <div
+                      onClick={() => field.onChange(!field.value)}
+                      className={cn(
+                        'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
+                        field.value ? 'bg-indigo-600' : 'bg-zinc-700',
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform',
+                          field.value ? 'translate-x-4' : 'translate-x-0',
+                        )}
+                      />
+                    </div>
+                  </label>
+                )}
+              />
+            </div>
+
+            {trackStock && !isEdit && (
+              <div className="space-y-1.5">
+                <Label htmlFor="initialStock">Opening Stock Qty</Label>
+                <Input
+                  id="initialStock"
+                  type="number"
+                  min="0"
+                  value={initialStock}
+                  onChange={(e) => setInitialStock(Number(e.target.value))}
+                  placeholder="0"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Product Variants */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <Layers className="h-4 w-4 text-indigo-400" />Product Variants
+              </h2>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-xs text-zinc-400">Enable</span>
+                <div
+                  onClick={() => {
+                    setHasVariants((v) => !v)
+                    if (!hasVariants && variants.length === 0) {
+                      setVariants([{ size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])
+                    }
+                  }}
+                  className={cn(
+                    'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
+                    hasVariants ? 'bg-indigo-600' : 'bg-zinc-700',
+                  )}
                 >
-                  <option value="">— No category —</option>
-                  {categories?.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                  <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasVariants ? 'translate-x-4' : 'translate-x-0')} />
+                </div>
+              </label>
+            </div>
+
+            {hasVariants && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
+                  <span>Size</span>
+                  <span>Color</span>
+                  <span>Price +/-</span>
+                  <span>Stock</span>
+                  <span></span>
+                </div>
+                {variants.map((v, i) => (
+                  <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                    <Input
+                      placeholder="S / M / L"
+                      value={v.size}
+                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, size: e.target.value } : x))}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      placeholder="Red / Blue"
+                      value={v.color}
+                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={v.price_delta}
+                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, price_delta: Number(e.target.value) } : x))}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={v.stock_qty}
+                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, stock_qty: Number(e.target.value) } : x))}
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-red-400 hover:text-red-300"
+                      onClick={() => setVariants((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
                 <Button
                   type="button"
                   variant="outline"
-                  size="icon"
-                  onClick={() => setShowNewCategory(true)}
-                  title="Add new category"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setVariants((prev) => [...prev, { size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])}
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-3.5 w-3.5" /> Add Variant
                 </Button>
               </div>
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="sku">SKU</Label>
-              <Input id="sku" placeholder="e.g. SALT-001" {...register('sku')} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="brand">Brand</Label>
-              <Input id="brand" placeholder="e.g. Samsung" value={brand} onChange={(e) => setBrand(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="hsn_code">HSN Code</Label>
-              <Input id="hsn_code" placeholder="e.g. 2501" {...register('hsn_code')} />
-              {errors.hsn_code && <p className="text-xs text-red-400">{errors.hsn_code.message}</p>}
-            </div>
-          </div>
-        </div>
-
-        {/* Pricing */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-zinc-300">Pricing & Tax</h2>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="price">Retail Price (₹) *</Label>
-              <Input
-                id="price"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                {...register('price', { valueAsNumber: true })}
-              />
-              {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cost_price">Cost Price (₹)</Label>
-              <Input
-                id="cost_price"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                {...register('cost_price', { valueAsNumber: true })}
-              />
-              {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="mrp">MRP (₹)</Label>
-              <Input
-                id="mrp"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                {...register('mrp', { valueAsNumber: true })}
-              />
-              {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="special_price">Special Price (₹)</Label>
-              <Input
-                id="special_price"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                {...register('special_price', { valueAsNumber: true })}
-              />
-              {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>GST Rate *</Label>
-            <Controller
-              name="tax_rate"
-              control={control}
-              render={({ field }) => (
-                <div className="flex gap-2 flex-wrap">
-                  {GST_RATES.map((rate) => (
-                    <button
-                      key={rate}
-                      type="button"
-                      onClick={() => field.onChange(rate)}
-                      className={cn(
-                        'px-3 py-1.5 rounded-md text-sm font-medium border transition-all',
-                        field.value === rate
-                          ? 'bg-indigo-600 border-indigo-500 text-white'
-                          : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
-                      )}
-                    >
-                      {rate}%
-                    </button>
-                  ))}
+          {/* Batch / Expiry Tracking */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <CalendarClock className="h-4 w-4 text-indigo-400" />Batch & Expiry Tracking
+              </h2>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-xs text-zinc-400">Enable</span>
+                <div
+                  onClick={() => {
+                    setHasBatches((v) => !v)
+                    if (!hasBatches && batches.length === 0) {
+                      setBatches([{ batch_no: '', expiry_date: '', qty: 0, cost_price: 0 }])
+                    }
+                  }}
+                  className={cn(
+                    'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
+                    hasBatches ? 'bg-indigo-600' : 'bg-zinc-700',
+                  )}
+                >
+                  <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasBatches ? 'translate-x-4' : 'translate-x-0')} />
                 </div>
-              )}
-            />
-          </div>
-        </div>
+              </label>
+            </div>
 
-        {/* Stock */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-zinc-300">Inventory</h2>
-            <Controller
-              name="track_stock"
-              control={control}
-              render={({ field }) => (
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <span className="text-xs text-zinc-400">Track Stock</span>
-                  <div
-                    onClick={() => field.onChange(!field.value)}
-                    className={cn(
-                      'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
-                      field.value ? 'bg-indigo-600' : 'bg-zinc-700',
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform',
-                        field.value ? 'translate-x-4' : 'translate-x-0',
-                      )}
+            {hasBatches && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
+                  <span className="col-span-2">Batch No</span>
+                  <span>Expiry Date</span>
+                  <span>Qty</span>
+                  <span></span>
+                </div>
+                {batches.map((b, i) => (
+                  <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                    <Input
+                      placeholder="BATCH-001"
+                      value={b.batch_no}
+                      onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x))}
+                      className="h-8 text-xs col-span-2"
                     />
+                    <Input
+                      type="date"
+                      value={b.expiry_date}
+                      onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x))}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={b.qty}
+                      onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))}
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-red-400 hover:text-red-300"
+                      onClick={() => setBatches((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
-                </label>
-              )}
-            />
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setBatches((prev) => [...prev, { batch_no: '', expiry_date: '', qty: 0, cost_price: 0 }])}
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add Batch
+                </Button>
+              </div>
+            )}
           </div>
 
-          {trackStock && !isEdit && (
-            <div className="space-y-1.5">
-              <Label htmlFor="initialStock">Opening Stock Qty</Label>
+          {/* Barcode */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <QrCode className="h-4 w-4 text-indigo-400" />Barcode
+            </h2>
+            <div className="flex gap-2 max-w-sm">
               <Input
-                id="initialStock"
-                type="number"
-                min="0"
-                value={initialStock}
-                onChange={(e) => setInitialStock(Number(e.target.value))}
-                placeholder="0"
+                placeholder="e.g. 8901234567890"
+                {...register('barcode_value')}
+                className="font-mono text-sm"
               />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handleAutoGenerateBarcode}
+                title="Auto-generate barcode"
+                className="shrink-0"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
             </div>
-          )}
-        </div>
 
-        {/* Product Variants */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Layers className="h-4 w-4 text-zinc-400" />
-              <h2 className="text-sm font-semibold text-zinc-300">Product Variants</h2>
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-xs text-zinc-400">Enable</span>
-              <div
-                onClick={() => {
-                  setHasVariants((v) => !v)
-                  if (!hasVariants && variants.length === 0) {
-                    setVariants([{ size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])
-                  }
-                }}
-                className={cn(
-                  'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
-                  hasVariants ? 'bg-indigo-600' : 'bg-zinc-700',
+            {barcodeValue && (
+              <div className="inline-flex flex-col items-center gap-2 p-3 rounded-lg bg-secondary border border-border">
+                <svg ref={barcodeRef} className="max-w-[200px]" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePrintLabel}
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Print Label (58×40mm)
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Image */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <ImageIcon className="h-4 w-4 text-indigo-400" />Product Image
+            </h2>
+            <div className="flex items-center gap-4">
+              <div className="h-20 w-20 shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 overflow-hidden">
+                {imagePreview ? (
+                  <img src={imagePreview} alt="Preview" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center">
+                    <Package className="h-8 w-8 text-zinc-600" />
+                  </div>
                 )}
-              >
-                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasVariants ? 'translate-x-4' : 'translate-x-0')} />
               </div>
-            </label>
-          </div>
-
-          {hasVariants && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
-                <span>Size</span>
-                <span>Color</span>
-                <span>Price +/-</span>
-                <span>Stock</span>
-                <span></span>
-              </div>
-              {variants.map((v, i) => (
-                <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                  <Input
-                    placeholder="S / M / L"
-                    value={v.size}
-                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, size: e.target.value } : x))}
-                    className="h-8 text-xs"
-                  />
-                  <Input
-                    placeholder="Red / Blue"
-                    value={v.color}
-                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
-                    className="h-8 text-xs"
-                  />
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={v.price_delta}
-                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, price_delta: Number(e.target.value) } : x))}
-                    className="h-8 text-xs"
-                  />
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={v.stock_qty}
-                    onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, stock_qty: Number(e.target.value) } : x))}
-                    className="h-8 text-xs"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-red-400 hover:text-red-300"
-                    onClick={() => setVariants((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+              <label className="cursor-pointer">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageChange}
+                />
+                <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors">
+                  <Upload className="h-4 w-4" />
+                  {imageFile ? 'Change image' : 'Upload image'}
                 </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={() => setVariants((prev) => [...prev, { size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])}
-              >
-                <Plus className="h-3.5 w-3.5" /> Add Variant
-              </Button>
+              </label>
             </div>
-          )}
-        </div>
-
-        {/* Batch / Expiry Tracking */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CalendarClock className="h-4 w-4 text-zinc-400" />
-              <h2 className="text-sm font-semibold text-zinc-300">Batch & Expiry Tracking</h2>
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-xs text-zinc-400">Enable</span>
-              <div
-                onClick={() => {
-                  setHasBatches((v) => !v)
-                  if (!hasBatches && batches.length === 0) {
-                    setBatches([{ batch_no: '', expiry_date: '', qty: 0, cost_price: 0 }])
-                  }
-                }}
-                className={cn(
-                  'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
-                  hasBatches ? 'bg-indigo-600' : 'bg-zinc-700',
-                )}
-              >
-                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasBatches ? 'translate-x-4' : 'translate-x-0')} />
-              </div>
-            </label>
           </div>
-
-          {hasBatches && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
-                <span className="col-span-2">Batch No</span>
-                <span>Expiry Date</span>
-                <span>Qty</span>
-                <span></span>
-              </div>
-              {batches.map((b, i) => (
-                <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                  <Input
-                    placeholder="BATCH-001"
-                    value={b.batch_no}
-                    onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x))}
-                    className="h-8 text-xs col-span-2"
-                  />
-                  <Input
-                    type="date"
-                    value={b.expiry_date}
-                    onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x))}
-                    className="h-8 text-xs"
-                  />
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={b.qty}
-                    onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))}
-                    className="h-8 text-xs"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-red-400 hover:text-red-300"
-                    onClick={() => setBatches((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={() => setBatches((prev) => [...prev, { batch_no: '', expiry_date: '', qty: 0, cost_price: 0 }])}
-              >
-                <Plus className="h-3.5 w-3.5" /> Add Batch
-              </Button>
-            </div>
-          )}
         </div>
 
-        {/* Barcode */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-300">Barcode</h2>
-          <div className="flex gap-2 max-w-sm">
-            <Input
-              placeholder="e.g. 8901234567890"
-              {...register('barcode_value')}
-              className="font-mono text-sm"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={handleAutoGenerateBarcode}
-              title="Auto-generate barcode"
-              className="shrink-0"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
+        {/* Right column: sticky live preview */}
+        <div className="space-y-5 lg:sticky lg:top-4">
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <Eye className="h-4 w-4 text-indigo-400" />Preview
+            </h2>
 
-          {barcodeValue && (
-            <div className="inline-flex flex-col items-center gap-2 p-3 rounded-lg bg-secondary border border-border">
-              <svg ref={barcodeRef} className="max-w-[200px]" />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handlePrintLabel}
-              >
-                <Printer className="h-3.5 w-3.5" />
-                Print Label (58×40mm)
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Image */}
-        <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-zinc-300">Product Image</h2>
-          <div className="flex items-center gap-4">
-            <div className="h-20 w-20 shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 overflow-hidden">
+            <div className="h-24 w-24 mx-auto rounded-lg border border-zinc-700 bg-zinc-800 overflow-hidden">
               {imagePreview ? (
                 <img src={imagePreview} alt="Preview" className="h-full w-full object-cover" />
               ) : (
@@ -811,41 +882,74 @@ export function ProductFormPage() {
                 </div>
               )}
             </div>
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageChange}
-              />
-              <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors">
-                <Upload className="h-4 w-4" />
-                {imageFile ? 'Change image' : 'Upload image'}
-              </div>
-            </label>
-          </div>
-        </div>
 
-        {/* Submit */}
-        <div className="flex gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="flex-1"
-            onClick={() => navigate('/products')}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" className="flex-1" disabled={isSubmitting || saveMutation.isPending}>
-            {isSubmitting || saveMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              isEdit ? 'Save Changes' : 'Add Product'
+            <div className="text-center">
+              <p className={cn('text-sm font-semibold', watchedName ? 'text-white' : 'text-zinc-600 italic')}>
+                {watchedName || 'Untitled product'}
+              </p>
+              {brand && <p className="text-xs text-zinc-500 mt-0.5">{brand}</p>}
+            </div>
+
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-lg font-bold text-indigo-300">{formatINR(watchedPrice || 0)}</span>
+              {watchedMrp != null && watchedMrp > 0 && watchedMrp !== watchedPrice && (
+                <span className="text-xs text-zinc-500 line-through">{formatINR(watchedMrp)}</span>
+              )}
+            </div>
+
+            {marginPct != null && (
+              <div className="flex justify-between items-center text-xs px-1">
+                <span className="text-zinc-500">Margin</span>
+                <span className={cn('font-semibold', marginPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                  {marginPct.toFixed(1)}%
+                </span>
+              </div>
             )}
-          </Button>
+
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-indigo-700 text-indigo-300 bg-indigo-950/30">
+                GST {watchedTaxRate}%
+              </span>
+              {selectedCategoryName && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-400 bg-zinc-800/60">
+                  {selectedCategoryName}
+                </span>
+              )}
+              {hasVariants && validVariantCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-400 bg-zinc-800/60">
+                  {validVariantCount} variant{validVariantCount > 1 ? 's' : ''}
+                </span>
+              )}
+              {hasBatches && validBatchCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-400 bg-zinc-800/60">
+                  {validBatchCount} batch{validBatchCount > 1 ? 'es' : ''}
+                </span>
+              )}
+            </div>
+
+            <Separator />
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={() => navigate('/products')}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isSubmitting || saveMutation.isPending}>
+                {isSubmitting || saveMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  isEdit ? 'Save Changes' : 'Add Product'
+                )}
+              </Button>
+            </div>
+          </div>
         </div>
       </form>
 
