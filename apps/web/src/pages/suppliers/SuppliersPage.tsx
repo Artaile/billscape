@@ -1,11 +1,9 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Truck, Phone, Mail, Building2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Phone, Mail } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Table,
   TableHeader,
@@ -24,38 +22,11 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
+import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 
-interface Supplier {
-  id: string
+interface Supplier extends SupplierOption {
   organization_id: string
-  name: string
-  phone: string | null
-  email: string | null
-  gstin: string | null
-  address: string | null
   created_at: string
-}
-
-interface SupplierFormState {
-  name: string
-  phone: string
-  email: string
-  gstin: string
-  address: string
-}
-
-const emptyForm = (): SupplierFormState => ({
-  name: '',
-  phone: '',
-  email: '',
-  gstin: '',
-  address: '',
-})
-
-function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 10)
-  if (digits.length <= 5) return digits
-  return `${digits.slice(0, 5)} ${digits.slice(5)}`
 }
 
 export function SuppliersPage() {
@@ -66,8 +37,6 @@ export function SuppliersPage() {
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<Supplier | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Supplier | null>(null)
-  const [formState, setFormState] = useState<SupplierFormState>(emptyForm())
-  const [nameError, setNameError] = useState('')
 
   const { data: suppliers, isLoading } = useQuery({
     queryKey: ['suppliers', orgId],
@@ -85,82 +54,12 @@ export function SuppliersPage() {
 
   function openAdd() {
     setEditTarget(null)
-    setFormState(emptyForm())
-    setNameError('')
     setShowForm(true)
   }
 
   function openEdit(supplier: Supplier) {
     setEditTarget(supplier)
-    setFormState({
-      name: supplier.name,
-      phone: supplier.phone ?? '',
-      email: supplier.email ?? '',
-      gstin: supplier.gstin ?? '',
-      address: supplier.address ?? '',
-    })
-    setNameError('')
     setShowForm(true)
-  }
-
-  function closeForm() {
-    setShowForm(false)
-    setEditTarget(null)
-    setFormState(emptyForm())
-    setNameError('')
-  }
-
-  function setField(field: keyof SupplierFormState, value: string) {
-    setFormState((prev) => ({ ...prev, [field]: value }))
-    if (field === 'name' && value.trim()) setNameError('')
-  }
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!formState.name.trim()) throw new Error('Name is required')
-      const rawDigits = formState.phone.replace(/\D/g, '')
-      if (rawDigits.length > 0 && rawDigits.length < 10) {
-        throw new Error('Phone number must be 10 digits (India mobile number)')
-      }
-
-      const payload = {
-        organization_id: orgId!,
-        name: formState.name.trim(),
-        phone: rawDigits || null,
-        email: formState.email.trim() || null,
-        gstin: formState.gstin.trim() || null,
-        address: formState.address.trim() || null,
-      }
-
-      if (editTarget) {
-        const { error } = await supabase
-          .from('suppliers')
-          .update(payload)
-          .eq('id', editTarget.id)
-          .eq('organization_id', orgId!)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('suppliers').insert(payload)
-        if (error) throw error
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
-      toast.success(editTarget ? 'Supplier updated' : 'Supplier added')
-      closeForm()
-    },
-    onError: (err: Error) => {
-      toast.error('Failed to save supplier', err.message)
-    },
-  })
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!formState.name.trim()) {
-      setNameError('Name is required')
-      return
-    }
-    saveMutation.mutate()
   }
 
   const deleteMutation = useMutation({
@@ -312,96 +211,13 @@ export function SuppliersPage() {
       </div>
 
       {/* Add / Edit Dialog */}
-      <Dialog open={showForm} onOpenChange={(open) => { if (!open) closeForm() }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>
-              <span className="flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-indigo-400" />
-                {editTarget ? 'Edit Supplier' : 'Add Supplier'}
-              </span>
-            </DialogTitle>
-          </DialogHeader>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-name">Name *</Label>
-              <Input
-                id="sup-name"
-                placeholder="Supplier name"
-                value={formState.name}
-                onChange={(e) => setField('name', e.target.value)}
-              />
-              {nameError && <p className="text-xs text-red-400">{nameError}</p>}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-phone">Phone</Label>
-              <Input
-                id="sup-phone"
-                inputMode="numeric"
-                placeholder="98765 43210"
-                value={formState.phone}
-                onChange={(e) => setField('phone', formatPhone(e.target.value))}
-                maxLength={11}
-              />
-              {formState.phone.replace(/\D/g, '').length > 0 &&
-                formState.phone.replace(/\D/g, '').length < 10 && (
-                <p className="text-[11px] text-amber-400">Enter 10-digit mobile number</p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-email">Email</Label>
-              <Input
-                id="sup-email"
-                type="email"
-                placeholder="supplier@example.com"
-                value={formState.email}
-                onChange={(e) => setField('email', e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-gstin">GSTIN</Label>
-              <Input
-                id="sup-gstin"
-                placeholder="33AABCU9603R1ZX"
-                value={formState.gstin}
-                onChange={(e) => setField('gstin', e.target.value.toUpperCase())}
-                className="uppercase"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="sup-address">Address</Label>
-              <textarea
-                id="sup-address"
-                rows={3}
-                placeholder="Street, City, Pincode"
-                value={formState.address}
-                onChange={(e) => setField('address', e.target.value)}
-                className="flex w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-              />
-            </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeForm}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={saveMutation.isPending}>
-                {saveMutation.isPending
-                  ? editTarget
-                    ? 'Saving...'
-                    : 'Adding...'
-                  : editTarget
-                  ? 'Save Changes'
-                  : 'Add Supplier'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <SupplierFormDialog
+        open={showForm}
+        onOpenChange={setShowForm}
+        orgId={orgId ?? ''}
+        editTarget={editTarget}
+        onSaved={() => queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })}
+      />
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>

@@ -140,6 +140,8 @@ currency, date_format, timezone
 - migration 015_loyalty_points_balance_check.sql (2026-08-05): CHECK (points_balance >= 0) on
   loyalty_customers — defense-in-depth against the read-then-write update in createSale's loyalty
   bookkeeping landing on a negative balance under a concurrent-sale race
+- migration 016_supplier_bank_details.sql (2026-08-06): suppliers.bank_name/bank_account/bank_ifsc
+  added — see Suppliers form section
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -156,6 +158,22 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - validation: 10 digits required for India mobile; warn if fewer, block save if invalid
 - applies to: SuppliersPage, CustomersPage, PurchasesPage quick-add supplier
 
+## Suppliers form (as of 2026-08-06)
+- **Single shared dialog** for add/edit: `apps/web/src/components/suppliers/SupplierFormDialog.tsx`
+  (`SupplierFormDialog`, exports `SupplierOption` type). Used both by `SuppliersPage.tsx` (full
+  page, add + edit) and `PurchaseFormPage.tsx`'s "Add new supplier" button (add-only — no
+  `editTarget` passed) — previously PurchaseFormPage had its own lightweight inline quick-add
+  panel (name + phone only) that silently diverged from the full SuppliersPage dialog; now both
+  entry points create/edit the exact same fields, so a supplier added mid-purchase isn't missing
+  data compared to one added from `/suppliers`.
+- Fields: Name*, Phone, Email, GSTIN, Address, and a **Bank Details** subsection (Bank Name,
+  Account Number, IFSC Code — `suppliers.bank_name`/`bank_account`/`bank_ifsc`, migration
+  `016_supplier_bank_details.sql`) — same naming convention as `org_settings.branding`'s own
+  bank_name/bank_account/bank_ifsc (see OrgBranding fields above).
+- `onSaved(supplier)` callback fires after insert/update — PurchaseFormPage uses it to
+  auto-select the newly created supplier in the purchase's supplier dropdown, same behavior the
+  old inline panel had.
+
 ## Purchases page features (as of 2026-07-29)
 - **New Purchase / Edit Purchase are FULL PAGES** (`/purchases/new`, `/purchases/:id/edit`), not
   dialogs — `PurchasesPage.tsx` keeps only the list table + View/Delete/Import CSV dialogs.
@@ -163,8 +181,9 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - Table columns: Purchase No | Date | Supplier | Invoice No | Items | Total Amount | Actions
 - Actions per row: View | Edit (→ full page) | Delete
 - Purchase No auto-generated on save: PUR-YYYYMMDD-XXXX (sequential per org per day)
-- `PurchaseFormPage.tsx` (`apps/web/src/pages/purchases/`): header (supplier select + inline
-  quick-add, invoice no, date, purchase type Credit/Cash, notes) → an "Add Item" entry strip
+- `PurchaseFormPage.tsx` (`apps/web/src/pages/purchases/`): header (supplier select + "Add new
+  supplier" → shared `SupplierFormDialog`, see Suppliers section, invoice no, date, purchase type
+  Credit/Cash, notes) → an "Add Item" entry strip
   (Product search-or-create, Code, Barcode, GST%, Purchase Rate, Qty, MRP, Retail Price, SP)
   → items table → footer totals (CGST/SGST or IGST, Bill Discount, Round Off, Total).
 - **Unified purchase entry + product creation** (fixes the old "double entry" problem): typing

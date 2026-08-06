@@ -11,6 +11,7 @@ import {
 } from '@billscape/core'
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -65,10 +66,6 @@ function emptyRow(): PurchaseRow {
   }
 }
 
-function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 10)
-  return digits.length <= 5 ? digits : `${digits.slice(0, 5)} ${digits.slice(5)}`
-}
 
 export function PurchaseFormPage() {
   const navigate = useNavigate()
@@ -87,9 +84,6 @@ export function PurchaseFormPage() {
   const [purchaseType, setPurchaseType] = useState<'credit' | 'cash'>('credit')
   const [notes, setNotes] = useState('')
   const [showAddSupplier, setShowAddSupplier] = useState(false)
-  const [newSupplierName, setNewSupplierName] = useState('')
-  const [newSupplierPhone, setNewSupplierPhone] = useState('')
-  const [savingSupplier, setSavingSupplier] = useState(false)
 
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
   const [entrySearch, setEntrySearch] = useState('')
@@ -358,22 +352,6 @@ export function PurchaseFormPage() {
     setEditingIndex(null)
   }
 
-  async function handleAddSupplier() {
-    if (!newSupplierName.trim()) return
-    const rawDigits = newSupplierPhone.replace(/\D/g, '')
-    if (rawDigits.length > 0 && rawDigits.length < 10) { toast.error('Invalid phone', 'Enter a 10-digit India mobile number'); return }
-    setSavingSupplier(true)
-    const { data, error } = await supabase.from('suppliers').insert({ organization_id: orgId!, name: newSupplierName.trim(), phone: rawDigits || null }).select('id').single()
-    setSavingSupplier(false)
-    if (error) { toast.error('Failed to add supplier'); return }
-    queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
-    setSupplierId(data.id)
-    setShowAddSupplier(false)
-    setNewSupplierName('')
-    setNewSupplierPhone('')
-    toast.success('Supplier added')
-  }
-
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!user || !orgId) throw new Error('Not logged in')
@@ -504,7 +482,7 @@ export function PurchaseFormPage() {
                     {suppliers?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                   <Button type="button" variant="outline" size="sm" className="h-9 px-3"
-                    onClick={() => setShowAddSupplier(!showAddSupplier)} title="Add new supplier">
+                    onClick={() => setShowAddSupplier(true)} title="Add new supplier">
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
@@ -515,36 +493,6 @@ export function PurchaseFormPage() {
                   )}>
                     {interstate ? 'Interstate (IGST)' : 'Intrastate (CGST+SGST)'}
                   </span>
-                )}
-
-                {showAddSupplier && (
-                  <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/60 p-3 space-y-2">
-                    <p className="text-xs font-medium text-zinc-400">Quick-add supplier</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Name *</Label>
-                        <Input placeholder="Supplier name" value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} className="h-8 text-sm" />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Phone</Label>
-                        <Input
-                          placeholder="98765 43210" inputMode="numeric" value={newSupplierPhone}
-                          onChange={(e) => setNewSupplierPhone(formatPhone(e.target.value))}
-                          className="h-8 text-sm" maxLength={11}
-                        />
-                        {newSupplierPhone.replace(/\D/g, '').length > 0 && newSupplierPhone.replace(/\D/g, '').length < 10 && (
-                          <p className="text-[11px] text-amber-400">10-digit number required</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 justify-end">
-                      <Button type="button" variant="ghost" size="sm" className="h-7 text-xs"
-                        onClick={() => { setShowAddSupplier(false); setNewSupplierName(''); setNewSupplierPhone('') }}>Cancel</Button>
-                      <Button type="button" size="sm" className="h-7 text-xs" disabled={!newSupplierName.trim() || savingSupplier} onClick={handleAddSupplier}>
-                        {savingSupplier ? 'Adding...' : 'Add'}
-                      </Button>
-                    </div>
-                  </div>
                 )}
               </div>
 
@@ -859,6 +807,16 @@ export function PurchaseFormPage() {
           </div>
         </div>
       )}
+
+      <SupplierFormDialog
+        open={showAddSupplier}
+        onOpenChange={setShowAddSupplier}
+        orgId={orgId ?? ''}
+        onSaved={(supplier: SupplierOption) => {
+          queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
+          setSupplierId(supplier.id)
+        }}
+      />
     </div>
   )
 }
