@@ -113,7 +113,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => loadOrgFromSession(data.session))
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        // Recovery session must not be treated as a normal sign-in (would fall
+        // through to /dashboard via RequireAuth/RequireOrg before the user sets
+        // a new password) — send them to the reset-password screen instead.
+        setState({ session, user: session?.user ?? null, role: null, org: null, loading: false, isSuperAdmin: false })
+        if (window.location.pathname !== '/reset-password') {
+          window.location.replace('/reset-password')
+        }
+        return
+      }
       loadOrgFromSession(session)
     })
 

@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import type { UserRole } from '@billscape/core'
 import { LoginPage } from '@/pages/auth/LoginPage'
+import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage'
 import { OnboardingPage } from '@/pages/auth/OnboardingPage'
 import { AppShell } from '@/components/layout/AppShell'
 import { PlatformShell } from '@/components/platform/PlatformShell'
@@ -100,6 +101,7 @@ export function AppRouter() {
 
       {/* ── Tenant App ── */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route
         path="/onboarding"
         element={
