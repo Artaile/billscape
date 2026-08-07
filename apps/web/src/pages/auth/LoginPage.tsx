@@ -35,7 +35,17 @@ const forgotSchema = z.object({
 type EmailValues = z.infer<typeof emailSchema>
 type ForgotValues = z.infer<typeof forgotSchema>
 
-type Mode = 'signin' | 'signup' | 'forgot' | 'verify-email' | 'forgot-sent'
+const setPasswordSchema = z.object({
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+    .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character'),
+})
+type SetPasswordValues = z.infer<typeof setPasswordSchema>
+
+type Mode = 'signin' | 'signup' | 'forgot' | 'verify-email' | 'forgot-sent' | 'set-password'
 
 function getPasswordStrength(pw: string) {
   const checks = {
@@ -74,12 +84,44 @@ export function LoginPage() {
     resolver: zodResolver(forgotSchema),
   })
 
+  const {
+    register: registerSetPassword,
+    handleSubmit: handleSetPasswordSubmit,
+    reset: resetSetPassword,
+    formState: { errors: setPasswordErrors },
+  } = useForm<SetPasswordValues>({
+    resolver: zodResolver(setPasswordSchema),
+  })
+
+  // Detect if redirect hash contains access token for invitation / password recovery or an error
+  React.useEffect(() => {
+    const hash = window.location.hash
+    const search = window.location.search
+    
+    if (hash.includes('error=')) {
+      const params = new URLSearchParams(hash.substring(1))
+      const desc = params.get('error_description')
+      if (desc) {
+        toast.error('Authentication Error', desc.replace(/\+/g, ' '))
+      }
+      window.history.replaceState(null, '', window.location.pathname)
+      return
+    }
+
+    if (hash.includes('type=invite') || hash.includes('type=recovery') || hash.includes('access_token=') || search.includes('type=invite') || search.includes('type=recovery')) {
+      setMode('set-password')
+    }
+  }, [])
+
+
+
   const switchMode = (m: Mode) => {
     setMode(m)
     setShowPassword(false)
     setPasswordValue('')
     reset()
     resetForgot()
+    resetSetPassword()
   }
 
   const onSubmit = async (values: EmailValues) => {
@@ -129,6 +171,25 @@ export function LoginPage() {
       }
       setVerifyEmail(values.email)
       setMode('forgot-sent')
+    } catch {
+      toast.error('Unexpected error', 'Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const onSetPasswordSubmit = async (values: SetPasswordValues) => {
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: values.password,
+      })
+      if (error) {
+        toast.error('Failed to set password', error.message)
+        return
+      }
+      toast.success('Password set successfully!')
+      navigate('/')
     } catch {
       toast.error('Unexpected error', 'Please try again.')
     } finally {
@@ -275,6 +336,88 @@ export function LoginPage() {
                 <ArrowLeft className="h-3 w-3" />
                 Back to Sign In
               </button>
+            </div>
+          )}
+
+          {/* Set Password Form */}
+          {mode === 'set-password' && (
+            <div className="space-y-4">
+              <div className="text-center mb-2">
+                <h2 className="text-base font-semibold text-white">Set Your Password</h2>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Please establish a secure password to access your dashboard.
+                </p>
+              </div>
+              <form onSubmit={handleSetPasswordSubmit(onSetPasswordSubmit)} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="set-password">New Password</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+                    <Input
+                      id="set-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="••••••••"
+                      className="pl-9 pr-10"
+                      autoComplete="new-password"
+                      {...registerSetPassword('password', {
+                        onChange: (e) => setPasswordValue(e.target.value),
+                      })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {setPasswordErrors.password && (
+                    <p className="text-xs text-red-400">{setPasswordErrors.password.message}</p>
+                  )}
+                  {passwordValue.length > 0 && (() => {
+                    const { checks, score } = getPasswordStrength(passwordValue)
+                    const strengthLabel = score <= 1 ? 'Weak' : score === 2 ? 'Fair' : score === 3 ? 'Good' : 'Strong'
+                    const strengthColor = score <= 1 ? 'bg-red-500' : score === 2 ? 'bg-yellow-500' : score === 3 ? 'bg-blue-500' : 'bg-emerald-500'
+                    const textColor = score <= 1 ? 'text-red-400' : score === 2 ? 'text-yellow-400' : score === 3 ? 'text-blue-400' : 'text-emerald-400'
+                    return (
+                      <div className="space-y-2 mt-1">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 flex gap-1">
+                            {[1, 2, 3, 4].map((i) => (
+                              <div key={i} className={cn('h-1 flex-1 rounded-full transition-all', i <= score ? strengthColor : 'bg-zinc-700')} />
+                            ))}
+                          </div>
+                          <span className={cn('text-xs font-medium', textColor)}>{strengthLabel}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            { key: 'length', label: '8+ characters' },
+                            { key: 'upper', label: 'Uppercase letter (A-Z)' },
+                            { key: 'lower', label: 'Lowercase letter (a-z)' },
+                            { key: 'special', label: 'Special character (!@#...)' },
+                          ].map(({ key, label }) => (
+                            <div key={key} className={cn('flex items-center gap-1.5 text-[11px]', checks[key as keyof typeof checks] ? 'text-emerald-400' : 'text-zinc-500')}>
+                              <div className={cn('h-1.5 w-1.5 rounded-full', checks[key as keyof typeof checks] ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                              {label}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+                <Button type="submit" className="w-full h-10 text-sm font-semibold" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving password...
+                    </>
+                  ) : (
+                    'Set Password & Continue'
+                  )}
+                </Button>
+              </form>
             </div>
           )}
 

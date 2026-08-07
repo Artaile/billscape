@@ -13,6 +13,7 @@ import {
   Store,
   Menu,
   X,
+  User,
   ShoppingBag,
   Truck,
   Receipt,
@@ -65,35 +66,34 @@ interface NavItem {
   icon: React.ElementType
   badge?: string
   group?: string
-  /** If defined, only users with one of these roles see this item. Undefined = all roles. */
-  allowedRoles?: Array<UserRole>
+  permission?: string
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS' },
-  { label: 'Products', href: '/products', icon: Package },
-  { label: 'Inventory', href: '/inventory', icon: Boxes },
-  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, allowedRoles: ['owner', 'manager'] },
-  { label: 'Suppliers', href: '/suppliers', icon: Truck, allowedRoles: ['owner', 'manager'] },
-  { label: 'Customers', href: '/customers', icon: Users },
-  { label: 'Returns', href: '/returns', icon: RotateCcw },
-  { label: 'Quotations', href: '/quotations', icon: FileText },
-  { label: 'Loyalty', href: '/loyalty', icon: Star },
-  { label: 'Employees', href: '/employees', icon: UserCog, allowedRoles: ['owner', 'manager'] },
-  { label: 'Roles', href: '/roles', icon: Shield, allowedRoles: ['owner'] },
-  { label: 'Expenses', href: '/expenses', icon: Receipt, allowedRoles: ['owner', 'manager'] },
-  { label: 'Promotions', href: '/promotions', icon: Tag, allowedRoles: ['owner', 'manager'] },
-  { label: 'Activity', href: '/activity', icon: Activity, allowedRoles: ['owner', 'manager'] },
-  { label: 'Shifts', href: '/shifts', icon: Clock, allowedRoles: ['owner', 'manager'] },
-  { label: 'Ledger', href: '/ledger', icon: BookOpen, allowedRoles: ['owner', 'manager'] },
-  { label: 'Reports', href: '/reports', icon: BarChart3, allowedRoles: ['owner', 'manager'] },
-  { label: 'Settings', href: '/settings', icon: Settings, allowedRoles: ['owner'] },
+  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'dashboard' },
+  { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS', permission: 'billing' },
+  { label: 'Products', href: '/products', icon: Package, permission: 'products' },
+  { label: 'Inventory', href: '/inventory', icon: Boxes, permission: 'inventory' },
+  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, permission: 'purchases' },
+  { label: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'suppliers' },
+  { label: 'Customers', href: '/customers', icon: Users, permission: 'customers' },
+  { label: 'Returns', href: '/returns', icon: RotateCcw, permission: 'returns' },
+  { label: 'Quotations', href: '/quotations', icon: FileText, permission: 'quotations' },
+  { label: 'Loyalty', href: '/loyalty', icon: Star, permission: 'loyalty' },
+  { label: 'Employees', href: '/employees', icon: UserCog, permission: 'employees' },
+  { label: 'Roles', href: '/roles', icon: Shield, permission: 'roles' },
+  { label: 'Expenses', href: '/expenses', icon: Receipt, permission: 'expenses' },
+  { label: 'Promotions', href: '/promotions', icon: Tag, permission: 'promotions' },
+  { label: 'Activity', href: '/activity', icon: Activity, permission: 'activity' },
+  { label: 'Shifts', href: '/shifts', icon: Clock, permission: 'shifts' },
+  { label: 'Ledger', href: '/ledger', icon: BookOpen, permission: 'ledger' },
+  { label: 'Reports', href: '/reports', icon: BarChart3, permission: 'reports' },
+  { label: 'Settings', href: '/settings', icon: Settings, permission: 'settings' },
 ]
 
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
-  const { user, org, role, signOut } = useAuth()
+  const { user, org, role, signOut, hasPermission } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -145,7 +145,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('employees')
-        .select('id, full_name, base_salary, salary_advance_balance')
+        .select('id, full_name, role, base_salary, salary_advance_balance')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
       if (error) throw error
@@ -428,7 +428,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       <nav className="flex-1 overflow-y-auto py-4 px-2">
         <ul className="space-y-0.5">
           {NAV_ITEMS.filter((item) =>
-            !item.allowedRoles || (role != null && item.allowedRoles.includes(role))
+            !item.permission || hasPermission(item.permission)
           ).map((item) => {
             const isActive =
               item.href === '/dashboard'
@@ -534,7 +534,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             >
               <Bell className="h-5 w-5" />
               {pendingCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center animate-pulse">
+                <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
                   {pendingCount}
                 </span>
               )}
@@ -644,6 +644,14 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
                     <p className="text-xs font-medium text-foreground truncate">{displayName}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{user?.email}</p>
                   </div>
+                  <Link
+                    to="/profile"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                  >
+                    <User className="h-4 w-4" />
+                    My Profile
+                  </Link>
                   <button
                     onClick={handleSignOut}
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"

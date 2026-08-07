@@ -35,11 +35,13 @@ interface AuthState {
   org: OrgInfo | null
   loading: boolean
   isSuperAdmin: boolean
+  customPermissions: Record<string, boolean> | null
 }
 
 interface AuthContextValue extends AuthState {
   signOut: () => Promise<void>
   refreshOrg: () => Promise<void>
+  hasPermission: (permissionKey: string) => boolean
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -52,11 +54,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     org: null,
     loading: true,
     isSuperAdmin: false,
+    customPermissions: null,
   })
 
   const loadOrgFromSession = async (session: Session | null) => {
     if (!session?.user) {
-      setState({ session: null, user: null, role: null, org: null, loading: false, isSuperAdmin: false })
+      setState({ session: null, user: null, role: null, org: null, loading: false, isSuperAdmin: false, customPermissions: null })
       return
     }
 
@@ -73,8 +76,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Get primary membership (non-super_admin first for tenant context)
       const { data: memberships } = await supabase
         .from('memberships')
-        .select('role, organization_id')
+        .select('role, organization_id, is_active, custom_role_id')
         .eq('user_id', session.user.id)
+        .eq('is_active', true)
         .order('created_at', { ascending: true })
 
       // Pick the first non-super_admin membership for tenant context
@@ -83,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const orgId = tenantMembership?.organization_id ?? null
 
       if (!orgId) {
-        setState({ session, user: session.user, role, org: null, loading: false, isSuperAdmin })
+        setState({ session, user: session.user, role, org: null, loading: false, isSuperAdmin, customPermissions: null })
         return
       }
 
@@ -104,9 +108,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       applyBrandColor(org.branding?.primary_color ?? '#6366f1')
 
-      setState({ session, user: session.user, role, org, loading: false, isSuperAdmin })
+      // Fetch custom role permissions if applicable
+      let customPermissions: Record<string, boolean> | null = null
+      if (tenantMembership?.custom_role_id) {
+        const { data: roleData } = await supabase
+          .from('roles')
+          .select('permissions')
+          .eq('id', tenantMembership.custom_role_id)
+          .single()
+        if (roleData) {
+          customPermissions = roleData.permissions as Record<string, boolean>
+        }
+      }
+
+      setState({ session, user: session.user, role, org, loading: false, isSuperAdmin, customPermissions })
     } catch {
-      setState({ session, user: session.user, role: null, org: null, loading: false, isSuperAdmin: false })
+      setState({ session, user: session.user, role: null, org: null, loading: false, isSuperAdmin: false, customPermissions: null })
     }
   }
 
@@ -129,15 +146,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await loadOrgFromSession(data.session)
   }
 
+  const hasPermission = (permissionKey: string): boolean => {
+    if (state.isSuperAdmin || state.role === 'owner') return true
+    if (!state.role) return false
+
+    // 1. If user has a custom role with explicit permissions, check that first
+    if (state.customPermissions && state.customPermissions[permissionKey] !== undefined) {
+      return state.customPermissions[permissionKey] === true
+    }
+
+    // 2. Fallback to system role defaults
+    if (state.role === 'manager') {
+      // Managers have access to all modules except system admin controls
+      return !['roles', 'settings'].includes(permissionKey)
+    }
+
+    if (state.role === 'cashier') {
+      // Cashiers only have access to POS billing and dashboard operations
+      return ['billing', 'dashboard', 'customers'].includes(permissionKey)
+    }
+
+    return false
+  }
+
   return (
-    <AuthContext.Provider value={{ ...state, signOut, refreshOrg }}>
+    <AuthContext.Provider value={{ ...state, signOut, refreshOrg, hasPermission }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
-  return ctx
+  const context = useContext(AuthContext)
+  if (!context) throw new Error('useAuth must be used within AuthProvider')
+  return context
 }

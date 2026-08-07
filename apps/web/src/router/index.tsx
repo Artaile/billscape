@@ -32,6 +32,7 @@ import { ShiftsPage } from '@/pages/shifts/ShiftsPage'
 import { LedgerPage } from '@/pages/ledger/LedgerPage'
 import { EmployeesPage } from '@/pages/employees/EmployeesPage'
 import { RolesPage } from '@/pages/roles/RolesPage'
+import { ProfilePage } from '@/pages/profile/ProfilePage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -55,10 +56,10 @@ function RequireOrg({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function RequireRole({ roles, children }: { roles: UserRole[]; children: React.ReactNode }) {
-  const { role, loading } = useAuth()
+function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
+  const { hasPermission, loading } = useAuth()
   if (loading) return <FullScreenLoader />
-  if (!role || !roles.includes(role)) return <Navigate to="/dashboard" replace />
+  if (!hasPermission(permission)) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -115,27 +116,28 @@ export function AppRouter() {
               <AppShell>
                 <Routes>
                   <Route index element={<Navigate to="/dashboard" replace />} />
-                  <Route path="dashboard" element={<DashboardPage />} />
-                  <Route path="billing" element={<BillingPage />} />
-                  <Route path="products" element={<ProductsPage />} />
-                  <Route path="products/new" element={<ProductFormPage />} />
-                  <Route path="products/:id/edit" element={<ProductFormPage />} />
-                  <Route path="inventory" element={<InventoryPage />} />
-                  <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
-                  <Route path="suppliers" element={<RequireRole roles={['owner', 'manager']}><SuppliersPage /></RequireRole>} />
-                  <Route path="customers" element={<CustomersPage />} />
-                  <Route path="expenses" element={<RequireRole roles={['owner', 'manager']}><ExpensesPage /></RequireRole>} />
-                  <Route path="promotions" element={<RequireRole roles={['owner', 'manager']}><PromotionsPage /></RequireRole>} />
-                  <Route path="returns" element={<ReturnsPage />} />
-                  <Route path="quotations" element={<QuotationsPage />} />
-                  <Route path="loyalty" element={<LoyaltyPage />} />
-                  <Route path="employees" element={<RequireRole roles={['owner', 'manager']}><EmployeesPage /></RequireRole>} />
-                  <Route path="roles" element={<RequireRole roles={['owner']}><RolesPage /></RequireRole>} />
-                  <Route path="activity" element={<RequireRole roles={['owner', 'manager']}><ActivityPage /></RequireRole>} />
-                  <Route path="reports" element={<RequireRole roles={['owner', 'manager']}><ReportsPage /></RequireRole>} />
-                  <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />
-                  <Route path="ledger" element={<RequireRole roles={['owner', 'manager']}><LedgerPage /></RequireRole>} />
-                  <Route path="settings" element={<RequireRole roles={['owner']}><SettingsPage /></RequireRole>} />
+                  <Route path="dashboard" element={<RequirePermission permission="dashboard"><DashboardPage /></RequirePermission>} />
+                  <Route path="billing" element={<RequirePermission permission="billing"><BillingPage /></RequirePermission>} />
+                  <Route path="products" element={<RequirePermission permission="products"><ProductsPage /></RequirePermission>} />
+                  <Route path="products/new" element={<RequirePermission permission="products"><ProductFormPage /></RequirePermission>} />
+                  <Route path="products/:id/edit" element={<RequirePermission permission="products"><ProductFormPage /></RequirePermission>} />
+                  <Route path="inventory" element={<RequirePermission permission="inventory"><InventoryPage /></RequirePermission>} />
+                  <Route path="purchases" element={<RequirePermission permission="purchases"><PurchasesPage /></RequirePermission>} />
+                  <Route path="suppliers" element={<RequirePermission permission="suppliers"><SuppliersPage /></RequirePermission>} />
+                  <Route path="customers" element={<RequirePermission permission="customers"><CustomersPage /></RequirePermission>} />
+                  <Route path="expenses" element={<RequirePermission permission="expenses"><ExpensesPage /></RequirePermission>} />
+                  <Route path="promotions" element={<RequirePermission permission="promotions"><PromotionsPage /></RequirePermission>} />
+                  <Route path="returns" element={<RequirePermission permission="returns"><ReturnsPage /></RequirePermission>} />
+                  <Route path="quotations" element={<RequirePermission permission="quotations"><QuotationsPage /></RequirePermission>} />
+                  <Route path="loyalty" element={<RequirePermission permission="loyalty"><LoyaltyPage /></RequirePermission>} />
+                  <Route path="employees" element={<RequirePermission permission="employees"><EmployeesPage /></RequirePermission>} />
+                  <Route path="roles" element={<RequirePermission permission="roles"><RolesPage /></RequirePermission>} />
+                  <Route path="activity" element={<RequirePermission permission="activity"><ActivityPage /></RequirePermission>} />
+                  <Route path="reports" element={<RequirePermission permission="reports"><ReportsPage /></RequirePermission>} />
+                  <Route path="shifts" element={<RequirePermission permission="shifts"><ShiftsPage /></RequirePermission>} />
+                  <Route path="ledger" element={<RequirePermission permission="ledger"><LedgerPage /></RequirePermission>} />
+                  <Route path="settings" element={<RequirePermission permission="settings"><SettingsPage /></RequirePermission>} />
+                  <Route path="profile" element={<ProfilePage />} />
                 </Routes>
               </AppShell>
             </RequireOrg>

@@ -143,13 +143,16 @@ export function DashboardPage() {
     queryKey: ['low-stock', orgId],
     enabled: !!orgId,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('inventory')
         .select('stock_qty, reorder_level, products(name)')
         .eq('organization_id', orgId!)
-        .filter('stock_qty', 'lte', 'reorder_level')
-        .limit(5)
-      return data ?? []
+      
+      if (error) throw error
+
+      return (data ?? [])
+        .filter((item: any) => item.stock_qty <= item.reorder_level)
+        .slice(0, 5)
     },
   })
 

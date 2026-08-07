@@ -75,7 +75,6 @@ const COLOR_PRESETS = [
   { name: 'Rose', value: '#f43f5e' },
 ]
 
-const ROLES: UserRole[] = ['owner', 'manager', 'cashier']
 
 const shopInfoSchema = z.object({
   name: z.string().min(1, 'Shop name required'),
@@ -88,16 +87,10 @@ const shopInfoSchema = z.object({
   address: z.string().optional(),
 })
 
-const inviteSchema = z.object({
-  email: z.string().email('Enter a valid email'),
-  role: z.enum(['owner', 'manager', 'cashier']),
-})
-
 type ShopInfoValues = z.infer<typeof shopInfoSchema>
-type InviteValues = z.infer<typeof inviteSchema>
 
 export function SettingsPage() {
-  const { org, refreshOrg } = useAuth()
+  const { org, refreshOrg, user } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -107,7 +100,6 @@ export function SettingsPage() {
   const [primaryColor, setPrimaryColor] = useState(org?.branding?.primary_color ?? '#6366f1')
   const [invoiceHeader, setInvoiceHeader] = useState(org?.branding?.invoice_header ?? '')
   const [invoiceFooter, setInvoiceFooter] = useState(org?.branding?.invoice_footer ?? '')
-  const [showInviteDialog, setShowInviteDialog] = useState(false)
 
   // Invoice tab extra fields
   const [bankName, setBankName] = useState(org?.branding?.bank_name ?? '')
@@ -231,23 +223,188 @@ export function SettingsPage() {
     },
   })
 
-  const inviteForm = useForm<InviteValues>({
-    resolver: zodResolver(inviteSchema),
-    defaultValues: { email: '', role: 'cashier' },
-  })
-
-  // Fetch members
-  const { data: members } = useQuery({
-    queryKey: ['members', orgId],
+  // Dashboard Users (memberships with profile & employee details)
+  const { data: dashboardUsers = [], isLoading: usersLoading, error: usersError } = useQuery({
+    queryKey: ['dashboard-users', orgId],
     enabled: !!orgId,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data: memData, error: memError } = await supabase
         .from('memberships')
-        .select('id, role, user_id, profiles(full_name, email, avatar_url)')
+        .select(`
+          id,
+          role,
+          is_active,
+          user_id,
+          employee_id,
+          custom_role_id,
+          employees(full_name, email, phone)
+        `)
         .eq('organization_id', orgId!)
-        .order('created_at')
+        .order('created_at', { ascending: true })
+      
+      if (memError) {
+        console.error('MEMBERSHIPS QUERY ERROR:', memError)
+        throw memError
+      }
+
+      const memberships = memData ?? []
+      if (memberships.length === 0) return []
+
+      const userIds = memberships.map(m => m.user_id).filter(Boolean)
+      const { data: profData, error: profError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, avatar_url, updated_at')
+        .in('id', userIds)
+
+      if (profError) {
+        console.error('PROFILES QUERY ERROR:', profError)
+      }
+
+      const profilesMap = new Map(profData?.map(p => [p.id, p]) ?? [])
+
+      return memberships.map(m => ({
+        ...m,
+        profiles: profilesMap.get(m.user_id) || null
+      }))
+    }
+  })
+
+  // Fetch active employees
+  const { data: activeEmployees = [] } = useQuery({
+    queryKey: ['active-employees-list', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('id, full_name, email, role')
+        .eq('organization_id', orgId!)
+        .eq('is_active', true)
+      if (error) throw error
       return data ?? []
+    }
+  })
+
+  // Filter employees who do not have dashboard access yet
+  const assignableEmployees = activeEmployees.filter((emp: any) => 
+    !dashboardUsers.some((u: any) => u.employee_id === emp.id)
+  )
+
+  // Dialog and form states
+  const [showAddUserDialog, setShowAddUserDialog] = useState(false)
+  const [inviteEmployeeId, setInviteEmployeeId] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState('cashier')
+  const [inviteCustomRoleId, setInviteCustomRoleId] = useState('')
+  const [inviteEmployeeName, setInviteEmployeeName] = useState('')
+
+  function handleSelectEmployee(empId: string) {
+    const emp = assignableEmployees.find((e: any) => e.id === empId)
+    if (emp) {
+      setInviteEmployeeId(emp.id)
+      setInviteEmail(emp.email ?? '')
+      setInviteRole(emp.role ?? 'cashier')
+      setInviteEmployeeName(emp.full_name)
+    } else {
+      setInviteEmployeeId('')
+      setInviteEmail('')
+      setInviteRole('cashier')
+      setInviteEmployeeName('')
+    }
+  }
+
+  // Fetch custom roles
+  const { data: roles = [] } = useQuery({
+    queryKey: ['roles', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('roles')
+        .select('*')
+        .eq('organization_id', orgId!)
+        .order('is_system', { ascending: false })
+      if (error) throw error
+      return data ?? []
+    }
+  })
+
+  const inviteUserMutation = useMutation({
+    mutationFn: async (payload: { employeeId: string; email: string; role: string; customRoleId?: string; employeeName?: string }) => {
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/invite-employee`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+           'Authorization': `Bearer ${token}`
+         },
+         body: JSON.stringify({
+           ...payload,
+           organizationId: orgId
+         })
+      })
+      
+      const resData = await response.json()
+      if (!response.ok) {
+        throw new Error(resData.error ?? 'Failed to send invitation')
+      }
+      return resData
     },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard-users', orgId] })
+      toast.success('Invitation email sent successfully!')
+      setShowAddUserDialog(false)
+    },
+    onError: (err: Error) => {
+      toast.error('Invitation failed', err.message)
+    }
+  })
+
+  function handleInviteUser() {
+    if (!inviteEmail.trim()) { toast.error('Email is required'); return }
+    inviteUserMutation.mutate({
+      employeeId: inviteEmployeeId,
+      email: inviteEmail.trim(),
+      role: inviteRole,
+      customRoleId: inviteCustomRoleId || undefined,
+      employeeName: inviteEmployeeName
+    })
+  }
+
+  const updateMembershipMutation = useMutation({
+    mutationFn: async ({ membershipId, updates }: { membershipId: string; updates: any }) => {
+      const { error } = await supabase
+        .from('memberships')
+        .update(updates)
+        .eq('id', membershipId)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard-users', orgId] })
+      toast.success('User updated successfully')
+    },
+    onError: (err: Error) => {
+      toast.error('Update failed', err.message)
+    }
+  })
+
+  const revokeAccessMutation = useMutation({
+    mutationFn: async ({ userId, membershipId }: { userId: string; membershipId: string }) => {
+      const { error } = await supabase
+        .from('memberships')
+        .delete()
+        .eq('id', membershipId)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard-users', orgId] })
+      toast.success('Dashboard access revoked')
+    },
+    onError: (err: Error) => {
+      toast.error('Revocation failed', err.message)
+    }
   })
 
   const saveShopMutation = useMutation({
@@ -391,17 +548,6 @@ export function SettingsPage() {
     },
   })
 
-  const inviteMutation = useMutation({
-    mutationFn: async (values: InviteValues) => {
-      // In a real app, send invite via edge function
-      // Here we just show a toast with instructions
-      toast({ title: 'Invite sent', description: `Invitation sent to ${values.email} as ${values.role}` })
-    },
-    onSuccess: () => {
-      inviteForm.reset()
-      setShowInviteDialog(false)
-    },
-  })
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -420,7 +566,7 @@ export function SettingsPage() {
     <div className="p-4 lg:p-6 max-w-3xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Manage your shop configuration</p>
+        <p className="text-sm text-muted-foreground mt-0.5">Manage your shop configurations</p>
       </div>
 
       <Tabs defaultValue="shop">
@@ -439,7 +585,7 @@ export function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="team">
             <Users className="h-3.5 w-3.5 mr-1.5" />
-            Team
+            Dashboard Users
           </TabsTrigger>
           <TabsTrigger value="billing">
             <CreditCard className="h-3.5 w-3.5 mr-1.5" />
@@ -685,69 +831,166 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* Team */}
+        {/* Dashboard Users */}
         <TabsContent value="team">
           <div className="rounded-lg border border-border bg-card p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-foreground">Team Members</h2>
-              <Button size="sm" onClick={() => setShowInviteDialog(true)}>
-                <Plus className="h-4 w-4" />
-                Invite Member
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Dashboard Users</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Manage login access, roles, and status for your shop staff. Only the Owner can modify users.
+                </p>
+              </div>
+              <Button size="sm" onClick={() => {
+                setInviteEmployeeId('')
+                setInviteEmail('')
+                setInviteRole('cashier')
+                setInviteCustomRoleId('')
+                setInviteEmployeeName('')
+                setShowAddUserDialog(true)
+              }}>
+                <Plus className="h-4 w-4 mr-1.5" />
+                Add Dashboard User
               </Button>
             </div>
 
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {members?.map((member) => {
-                  const profile = (member.profiles as unknown as { full_name: string; email: string }) ?? null
-                  return (
-                    <TableRow key={member.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-700 text-xs font-bold text-white">
-                            {(profile?.full_name ?? profile?.email ?? '?').charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-zinc-200">{profile?.full_name ?? 'Unknown'}</p>
-                            <p className="text-xs text-zinc-500">{profile?.email}</p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getRoleBadgeVariant(member.role as UserRole)} className="capitalize">
-                          {member.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <select
-                          defaultValue={member.role}
-                          onChange={(e) =>
-                            updateRoleMutation.mutate({
-                              memberId: member.id,
-                              role: e.target.value as UserRole,
-                            })
-                          }
-                          className="h-7 rounded border border-zinc-700 bg-zinc-800 px-2 text-xs text-zinc-200 focus:outline-none"
-                        >
-                          {ROLES.map((r) => (
-                            <option key={r} value={r} className="bg-zinc-900 capitalize">
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                      </TableCell>
+            {usersError ? (
+              <div className="text-center py-8 border border-dashed border-red-900 rounded-lg text-sm text-red-500">
+                Failed to load dashboard users: {usersError.message}
+              </div>
+            ) : usersLoading ? (
+              <div className="flex items-center justify-center h-20">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : dashboardUsers.length === 0 ? (
+              <div className="text-center py-8 border border-dashed border-border rounded-lg text-sm text-muted-foreground">
+                No dashboard users found.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee / User</TableHead>
+                      <TableHead>Dashboard Role</TableHead>
+                      <TableHead>Custom Role</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {dashboardUsers.map((member: any) => {
+                      const isOwnerUser = member.role === 'owner'
+                      const isCurrentUser = member.user_id === user?.id
+                      
+                      // Resolve employee name/email or profile name/email
+                      const empName = member.employees?.full_name ?? member.profiles?.full_name ?? 'Invited User'
+                      const empEmail = member.employees?.email ?? member.profiles?.email ?? 'No email'
+                      const customRoleName = roles.find((r: any) => r.id === member.custom_role_id)?.name ?? 'None'
+
+                      return (
+                        <TableRow key={member.id} className={cn(!member.is_active && 'opacity-65')}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-700 text-xs font-bold text-white">
+                                {empName.charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-zinc-200">
+                                  {empName} {isCurrentUser && <span className="text-[10px] text-indigo-400 font-semibold">(You)</span>}
+                                </p>
+                                <p className="text-xs text-zinc-500">{empEmail}</p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {isCurrentUser || isOwnerUser ? (
+                              <Badge variant={getRoleBadgeVariant(member.role)} className="capitalize">
+                                {member.role}
+                              </Badge>
+                            ) : (
+                              <select
+                                defaultValue={member.role}
+                                onChange={(e) =>
+                                  updateMembershipMutation.mutate({
+                                    membershipId: member.id,
+                                    updates: { role: e.target.value }
+                                  })
+                                }
+                                className="h-7 rounded border border-zinc-700 bg-zinc-800 px-2 text-xs text-zinc-200 focus:outline-none"
+                              >
+                                <option value="cashier">Cashier</option>
+                                <option value="manager">Manager</option>
+                                <option value="owner">Owner</option>
+                              </select>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {isCurrentUser || isOwnerUser ? (
+                              <span className="text-xs text-zinc-400">{customRoleName}</span>
+                            ) : (
+                              <select
+                                defaultValue={member.custom_role_id ?? ''}
+                                onChange={(e) =>
+                                  updateMembershipMutation.mutate({
+                                    membershipId: member.id,
+                                    updates: { custom_role_id: e.target.value || null }
+                                  })
+                                }
+                                className="h-7 rounded border border-zinc-700 bg-zinc-800 px-2 text-xs text-zinc-200 focus:outline-none"
+                              >
+                                <option value="">None</option>
+                                {roles.filter((r: any) => !r.is_system).map((r: any) => (
+                                  <option key={r.id} value={r.id}>
+                                    {r.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={member.is_active ? 'default' : 'secondary'} className="capitalize">
+                              {member.is_active ? 'Active' : 'Disabled'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {!isOwnerUser && !isCurrentUser && (
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs font-medium text-zinc-300 hover:text-white"
+                                  onClick={() =>
+                                    updateMembershipMutation.mutate({
+                                      membershipId: member.id,
+                                      updates: { is_active: !member.is_active }
+                                    })
+                                  }
+                                >
+                                  {member.is_active ? 'Disable' : 'Enable'}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs font-medium text-red-400 hover:text-red-450"
+                                  onClick={() => {
+                                    if (confirm(`Revoke dashboard access for "${empName}"? This will delete their membership.`)) {
+                                      revokeAccessMutation.mutate({ userId: member.user_id, membershipId: member.id })
+                                    }
+                                  }}
+                                >
+                                  Revoke
+                                </Button>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </div>
         </TabsContent>
 
@@ -993,49 +1236,82 @@ export function SettingsPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Invite member dialog */}
-      <Dialog open={showInviteDialog} onOpenChange={setShowInviteDialog}>
-        <DialogContent className="max-w-sm">
+      {/* Add Dashboard User Dialog */}
+      <Dialog open={showAddUserDialog} onOpenChange={setShowAddUserDialog}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Invite Team Member</DialogTitle>
+            <DialogTitle>Add Dashboard User</DialogTitle>
           </DialogHeader>
-          <form
-            onSubmit={inviteForm.handleSubmit((v) => inviteMutation.mutate(v))}
-            className="space-y-4"
-          >
+          <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="invite-email">Email Address</Label>
+              <Label htmlFor="invite-emp">Select Employee *</Label>
+              <select
+                id="invite-emp"
+                value={inviteEmployeeId}
+                onChange={(e) => handleSelectEmployee(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="" className="bg-zinc-900">-- Select Employee --</option>
+                {assignableEmployees.map((e: any) => (
+                  <option key={e.id} value={e.id} className="bg-zinc-900">
+                    {e.full_name} ({e.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="invite-email">Login Email Address *</Label>
               <Input
                 id="invite-email"
                 type="email"
-                placeholder="colleague@example.com"
-                {...inviteForm.register('email')}
+                placeholder="employee@example.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
               />
-              {inviteForm.formState.errors.email && (
-                <p className="text-xs text-red-400">{inviteForm.formState.errors.email.message}</p>
-              )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="invite-role">Role</Label>
-              <select
-                id="invite-role"
-                className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                {...inviteForm.register('role')}
-              >
-                <option value="cashier" className="bg-zinc-900">Cashier — can bill only</option>
-                <option value="manager" className="bg-zinc-900">Manager — can manage products</option>
-                <option value="owner" className="bg-zinc-900">Owner — full access</option>
-              </select>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-role">Dashboard Role *</Label>
+                <select
+                  id="invite-role"
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="cashier" className="bg-zinc-900">Cashier</option>
+                  <option value="manager" className="bg-zinc-900">Manager</option>
+                  <option value="owner" className="bg-zinc-900">Owner</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-custom-role">Custom Role (Optional)</Label>
+                <select
+                  id="invite-custom-role"
+                  value={inviteCustomRoleId}
+                  onChange={(e) => setInviteCustomRoleId(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="" className="bg-zinc-900">-- None (Use System Role) --</option>
+                  {roles.filter((r: any) => !r.is_system).map((r: any) => (
+                    <option key={r.id} value={r.id} className="bg-zinc-900">
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowInviteDialog(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={inviteMutation.isPending}>
-                Send Invite
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddUserDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleInviteUser} disabled={inviteUserMutation.isPending || !inviteEmployeeId}>
+              {inviteUserMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Inviting...</> : 'Invite User'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
