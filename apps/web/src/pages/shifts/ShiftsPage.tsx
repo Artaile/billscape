@@ -161,12 +161,16 @@ export function ShiftsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('sales')
-        .select('grand_total')
+        .select('grand_total, payment_mode, cash_amount')
         .eq('organization_id', orgId!)
-        .eq('payment_mode', 'cash')
+        .in('payment_mode', ['cash', 'split'])
         .gte('created_at', activeShift!.opened_at)
       if (error) throw error
-      return (data ?? []).reduce((sum: number, row: { grand_total: number }) => sum + (row.grand_total ?? 0), 0)
+      return (data ?? []).reduce(
+        (sum: number, row: { grand_total: number; payment_mode: string; cash_amount: number | null }) =>
+          sum + (row.payment_mode === 'split' ? (row.cash_amount ?? 0) : (row.grand_total ?? 0)),
+        0,
+      )
     },
   })
 

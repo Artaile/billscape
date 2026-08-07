@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useNavigationGuard } from '@/contexts/NavigationGuardContext'
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -93,6 +94,8 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { requestNavigation } = useNavigationGuard()
   const { user, org, role, signOut, hasPermission } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -108,7 +111,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [salaryPayoutOpen, setSalaryPayoutOpen] = useState(false)
   const [confirmExpenseTemplate, setConfirmExpenseTemplate] = useState<any>(null)
-  
+
   // Salary inputs mapping: employeeId -> PayoutValues
   const [salaryInputs, setSalaryInputs] = useState<Record<string, {
     baseSalary: number
@@ -169,18 +172,18 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   })
 
   // Compute pending state
-  const unpaidEmployees = activeEmployees.filter(emp => 
+  const unpaidEmployees = activeEmployees.filter(emp =>
     !salaryPayments.some((sp: any) => sp.employee_id === emp.id)
   )
 
-  const pendingStandard = templates.filter((t: any) => 
+  const pendingStandard = templates.filter((t: any) =>
     t.category !== 'salary' && t.last_billed_month !== currentMonth
   )
 
   const hasSalaryTemplate = templates.some((t: any) => t.category === 'salary')
   const isSalaryPending = hasSalaryTemplate && unpaidEmployees.length > 0
 
-  const completedStandard = templates.filter((t: any) => 
+  const completedStandard = templates.filter((t: any) =>
     t.category !== 'salary' && t.last_billed_month === currentMonth
   )
   const isSalaryCompleted = hasSalaryTemplate && unpaidEmployees.length === 0 && activeEmployees.length > 0
@@ -280,7 +283,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const runPayrollMutation = useMutation({
     mutationFn: async () => {
       if (!user || !orgId) return
-      
+
       const payloadPromises = unpaidEmployees.map(async emp => {
         const input = salaryInputs[emp.id]
         if (!input) return
@@ -401,9 +404,11 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     .toUpperCase()
     .slice(0, 2)
 
-  const handleSignOut = async () => {
-    await signOut()
-    setUserMenuOpen(false)
+  const handleSignOut = () => {
+    requestNavigation(async () => {
+      await signOut()
+      setUserMenuOpen(false)
+    })
   }
 
   const SidebarContent = () => (
@@ -439,7 +444,17 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
               <li key={item.href}>
                 <Link
                   to={item.href}
-                  onClick={() => setSidebarOpen(false)}
+                  onClick={(e) => {
+                    if (location.pathname.startsWith(item.href)) {
+                      setSidebarOpen(false)
+                      return
+                    }
+                    e.preventDefault()
+                    requestNavigation(() => {
+                      setSidebarOpen(false)
+                      navigate(item.href)
+                    })
+                  }}
                   className={cn(
                     'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
                     isActive
@@ -677,7 +692,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
           <DialogHeader>
             <DialogTitle>Monthly Payroll Payout — {new Date().toLocaleString('en-IN', { month: 'long', year: 'numeric' })}</DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-2">
             {unpaidEmployees.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No employees pending payment for this month.</p>

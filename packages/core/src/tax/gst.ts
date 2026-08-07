@@ -1,5 +1,5 @@
 import { toMoney } from '../money'
-import type { CartItem, GSTRate, InvoiceTotals, TaxBreakupLine } from '../types'
+import type { CartItem, DiscountType, GSTRate, InvoiceTotals, TaxBreakupLine } from '../types'
 
 export interface GSTContext {
   shopStateCode: string
@@ -11,12 +11,26 @@ export function isInterState(ctx: GSTContext): boolean {
   return ctx.shopStateCode.toUpperCase() !== ctx.customerStateCode.toUpperCase()
 }
 
+function resolveLineDiscount(
+  baseAmount: number,
+  discountPct: number,
+  discountType?: DiscountType,
+  discountAmount?: number,
+): number {
+  if (discountType === 'flat') {
+    return toMoney(Math.min(Math.max(discountAmount ?? 0, 0), baseAmount))
+  }
+  return toMoney(baseAmount * (discountPct / 100))
+}
+
 export function computeLineTax(
   price: number,
   qty: number,
   discountPct: number,
   taxRate: GSTRate,
   interstate: boolean,
+  discountType?: DiscountType,
+  discountAmount?: number,
 ): {
   taxableAmount: number
   cgst: number
@@ -25,7 +39,7 @@ export function computeLineTax(
   lineTotal: number
 } {
   const baseAmount = toMoney(price * qty)
-  const discountAmt = toMoney(baseAmount * (discountPct / 100))
+  const discountAmt = resolveLineDiscount(baseAmount, discountPct, discountType, discountAmount)
   const taxableAmount = toMoney(baseAmount - discountAmt)
 
   let cgst = 0
@@ -57,8 +71,16 @@ export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
 
   for (const item of items) {
     const baseAmount = toMoney(item.unit_price * item.qty)
-    const discountAmt = toMoney(baseAmount * (item.discount_pct / 100))
-    const line = computeLineTax(item.unit_price, item.qty, item.discount_pct, item.tax_rate, interstate)
+    const discountAmt = resolveLineDiscount(baseAmount, item.discount_pct, item.discount_type, item.discount_amount)
+    const line = computeLineTax(
+      item.unit_price,
+      item.qty,
+      item.discount_pct,
+      item.tax_rate,
+      interstate,
+      item.discount_type,
+      item.discount_amount,
+    )
 
     subtotal = toMoney(subtotal + baseAmount)
     discountTotal = toMoney(discountTotal + discountAmt)
@@ -98,5 +120,62 @@ export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
     tax_total: taxTotal,
     grand_total: grandTotal,
     is_interstate: interstate,
+    order_discount_amount: 0,
+    loyalty_redeem_amount: 0,
+    net_payable: grandTotal,
+  }
+}
+
+// Purchase lines have no per-line discount (bill-level discount only, via applyOrderDiscount),
+// so they're mapped to CartItem with discount_pct: 0 and reuse computeGST unchanged.
+export function computePurchaseTotals(
+  ctx: GSTContext,
+  items: { unit_cost: number; qty: number; tax_rate: GSTRate }[],
+): InvoiceTotals {
+  const cartItems: CartItem[] = items.map((it, i) => ({
+    product_id: String(i),
+    product_name: '',
+    tax_rate: it.tax_rate,
+    unit_price: it.unit_cost,
+    qty: it.qty,
+    discount_pct: 0,
+  }))
+  return computeGST(ctx, cartItems)
+}
+
+// Order-level discount, applied AFTER tax on the grand total (payment-time adjustment,
+// does not affect the GST taxable value or breakup).
+export function applyOrderDiscount(
+  totals: InvoiceTotals,
+  discountType: DiscountType,
+  discountValue: number,
+): InvoiceTotals {
+  const value = Math.max(discountValue, 0)
+  const rawAmount = discountType === 'flat' ? value : toMoney(totals.grand_total * (value / 100))
+  const orderDiscountAmount = toMoney(Math.min(rawAmount, totals.grand_total))
+  const netPayable = toMoney(totals.grand_total - orderDiscountAmount)
+
+  return {
+    ...totals,
+    order_discount_amount: orderDiscountAmount,
+    net_payable: netPayable,
+  }
+}
+
+// Loyalty points redemption, applied AFTER order discount on net_payable (a separate,
+// stackable payment-time adjustment — does not touch GST taxable value or order_discount_amount,
+// since the two are conceptually distinct: merchant discount vs. customer's own points).
+export function applyLoyaltyRedemption(
+  totals: InvoiceTotals,
+  redeemAmount: number,
+): InvoiceTotals {
+  const cap = toMoney(totals.grand_total - totals.order_discount_amount)
+  const loyaltyRedeemAmount = toMoney(Math.min(Math.max(redeemAmount, 0), cap))
+  const netPayable = toMoney(cap - loyaltyRedeemAmount)
+
+  return {
+    ...totals,
+    loyalty_redeem_amount: loyaltyRedeemAmount,
+    net_payable: netPayable,
   }
 }

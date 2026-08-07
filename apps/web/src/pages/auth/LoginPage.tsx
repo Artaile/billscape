@@ -128,7 +128,7 @@ export function LoginPage() {
     setLoading(true)
     try {
       if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email: values.email,
           password: values.password,
         })
@@ -137,6 +137,15 @@ export function LoginPage() {
             ? 'Too many signups. Please wait a few minutes and try again.'
             : error.message
           toast.error('Sign up failed', msg)
+          return
+        }
+        if (data.user && data.user.identities?.length === 0) {
+          toast.error(
+            'Account already exists',
+            'This email is already registered but not verified yet. Use "Resend verification email" below, or sign in if you already verified it.'
+          )
+          setVerifyEmail(values.email)
+          setMode('verify-email')
           return
         }
         setVerifyEmail(values.email)
@@ -152,6 +161,29 @@ export function LoginPage() {
         }
         navigate('/')
       }
+    } catch {
+      toast.error('Unexpected error', 'Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const onResendVerification = async () => {
+    if (!verifyEmail) return
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: verifyEmail,
+      })
+      if (error) {
+        const msg = error.message.toLowerCase().includes('rate limit')
+          ? 'Too many requests. Please wait a few minutes before resending.'
+          : error.message
+        toast.error('Could not resend email', msg)
+        return
+      }
+      toast.success('Verification email resent', `Check ${verifyEmail} again, including spam.`)
     } catch {
       toast.error('Unexpected error', 'Please try again.')
     } finally {
@@ -252,6 +284,15 @@ export function LoginPage() {
                   <li>• Wait a minute and try again</li>
                 </ul>
               </div>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onResendVerification}
+                disabled={loading}
+                className="w-full"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Resend verification email'}
+              </Button>
               <button
                 type="button"
                 onClick={() => switchMode('signup')}

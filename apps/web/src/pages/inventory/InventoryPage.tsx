@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen } from 'lucide-react'
+import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -45,7 +45,8 @@ interface InventoryRow {
   products: {
     id: string
     name: string
-    categories: { name: string } | null
+    category_id: string | null
+    categories: { name: string; color: string | null } | null
   } | null
 }
 
@@ -56,6 +57,7 @@ export function InventoryPage() {
 
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<StockFilter>('all')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [adjustTarget, setAdjustTarget] = useState<InventoryRow | null>(null)
   const [adjustQty, setAdjustQty] = useState(0)
   const [adjustType, setAdjustType] = useState<'+' | '-'>('+')
@@ -87,10 +89,23 @@ export function InventoryPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('inventory')
-        .select('product_id, stock_qty, reorder_level, products(id, name, categories(name))')
+        .select('product_id, stock_qty, reorder_level, products(id, name, category_id, categories(name, color))')
         .eq('organization_id', orgId!)
         .order('stock_qty', { ascending: true })
       return (data ?? []) as unknown as InventoryRow[]
+    },
+  })
+
+  const { data: categories } = useQuery({
+    queryKey: ['categories', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('categories')
+        .select('id, name, color')
+        .eq('organization_id', orgId!)
+        .order('name')
+      return data ?? []
     },
   })
 
@@ -137,7 +152,9 @@ export function InventoryPage() {
     if (filter === 'low') matchesFilter = item.stock_qty > 0 && item.stock_qty <= item.reorder_level
     if (filter === 'out') matchesFilter = item.stock_qty === 0
 
-    return matchesSearch && matchesFilter
+    const matchesCategory = !categoryFilter || item.products?.category_id === categoryFilter
+
+    return matchesSearch && matchesFilter && matchesCategory
   })
 
   const getStatusBadge = (item: InventoryRow) => {
@@ -162,30 +179,36 @@ export function InventoryPage() {
   })
 
   // Opening stock form state
-  const [openingProduct, setOpeningProduct] = useState('')
+  const [openingSearch, setOpeningSearch] = useState('')
+  const [openingProductId, setOpeningProductId] = useState('')
+  const [showOpeningDropdown, setShowOpeningDropdown] = useState(false)
   const [openingQty, setOpeningQty] = useState(0)
   const [openingNote, setOpeningNote] = useState('')
+
+  const selectedOpeningProduct = inventory?.find((i) => i.product_id === openingProductId)?.products
+
+  const openingProductOptions = React.useMemo(() => {
+    if (!inventory || !openingSearch.trim()) return []
+    const q = openingSearch.trim().toLowerCase()
+    return inventory
+      .filter((i) => i.products?.name.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [inventory, openingSearch])
 
   const openingMutation = useMutation({
     mutationFn: async () => {
       if (!orgId || !user) throw new Error('Not logged in')
-      const { data: product } = await supabase
-        .from('products')
-        .select('id, name')
-        .eq('organization_id', orgId)
-        .ilike('name', openingProduct.trim())
-        .maybeSingle()
-      if (!product) throw new Error('Product not found — check spelling')
+      if (!openingProductId) throw new Error('Select a product first')
       if (openingQty <= 0) throw new Error('Quantity must be greater than 0')
 
       const { error: invErr } = await supabase
         .from('inventory')
-        .upsert({ organization_id: orgId, product_id: product.id, stock_qty: openingQty }, { onConflict: 'product_id' })
+        .upsert({ organization_id: orgId, product_id: openingProductId, stock_qty: openingQty }, { onConflict: 'product_id' })
       if (invErr) throw invErr
 
       await supabase.from('stock_movements').insert({
         organization_id: orgId,
-        product_id: product.id,
+        product_id: openingProductId,
         qty_change: openingQty,
         reason: 'opening',
         note: openingNote.trim() || 'Opening stock entry',
@@ -196,7 +219,7 @@ export function InventoryPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
       queryClient.invalidateQueries({ queryKey: ['stock_movements', orgId] })
       toast.success('Opening stock set')
-      setOpeningProduct(''); setOpeningQty(0); setOpeningNote('')
+      setOpeningSearch(''); setOpeningProductId(''); setOpeningQty(0); setOpeningNote('')
     },
     onError: (err: Error) => toast.error('Failed', err.message),
   })
@@ -287,6 +310,19 @@ export function InventoryPage() {
                 </button>
               ))}
             </div>
+            <div className="flex items-center gap-2">
+              <Tag className="h-4 w-4 text-muted-foreground" />
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">All Categories</option>
+                {categories?.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
@@ -311,7 +347,17 @@ export function InventoryPage() {
                   filteredInventory.map((item) => (
                     <TableRow key={item.product_id}>
                       <TableCell className="font-medium text-foreground">{item.products?.name ?? 'Unknown'}</TableCell>
-                      <TableCell className="text-muted-foreground text-sm">{item.products?.categories?.name ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {item.products?.categories ? (
+                          <span className="flex items-center gap-1.5">
+                            <span
+                              className="h-1.5 w-1.5 rounded-full shrink-0"
+                              style={{ backgroundColor: item.products.categories.color ?? '#6366f1' }}
+                            />
+                            {item.products.categories.name}
+                          </span>
+                        ) : '—'}
+                      </TableCell>
                       <TableCell className="text-right">
                         <span className={cn('font-semibold tabular-nums',
                           item.stock_qty === 0 ? 'text-red-400' : item.stock_qty <= item.reorder_level ? 'text-yellow-400' : 'text-foreground')}>
@@ -425,10 +471,69 @@ export function InventoryPage() {
             <p className="text-xs text-muted-foreground">
               Enter the initial stock quantity for a product. This sets the stock level and records a movement with reason "opening".
             </p>
-            <div className="space-y-1.5">
-              <Label>Product Name *</Label>
-              <Input placeholder="Type exact product name" value={openingProduct}
-                onChange={(e) => setOpeningProduct(e.target.value)} />
+            <div className="space-y-1.5 relative">
+              <Label>Product *</Label>
+              {selectedOpeningProduct ? (
+                <div className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
+                  <div>
+                    <p className="text-sm text-zinc-100">{selectedOpeningProduct.name}</p>
+                    <p className="flex items-center gap-1.5 text-[11px] text-zinc-500 mt-0.5">
+                      {selectedOpeningProduct.categories ? (
+                        <>
+                          <span
+                            className="h-1.5 w-1.5 rounded-full shrink-0"
+                            style={{ backgroundColor: selectedOpeningProduct.categories.color ?? '#6366f1' }}
+                          />
+                          {selectedOpeningProduct.categories.name}
+                        </>
+                      ) : (
+                        <span className="italic">No category set</span>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setOpeningProductId(''); setOpeningSearch('') }}
+                    className="text-xs text-indigo-400 hover:text-indigo-300"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <Input
+                    placeholder="Search product by name..."
+                    value={openingSearch}
+                    onChange={(e) => { setOpeningSearch(e.target.value); setShowOpeningDropdown(true) }}
+                    onFocus={() => setShowOpeningDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowOpeningDropdown(false), 150)}
+                  />
+                  {showOpeningDropdown && openingSearch.trim() && (
+                    <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto">
+                      {openingProductOptions.length > 0 ? (
+                        openingProductOptions.map((item) => (
+                          <button
+                            key={item.product_id}
+                            type="button"
+                            onMouseDown={() => {
+                              setOpeningProductId(item.product_id)
+                              setShowOpeningDropdown(false)
+                            }}
+                            className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-secondary transition-colors"
+                          >
+                            <span className="text-sm text-foreground">{item.products?.name}</span>
+                            {item.products?.categories && (
+                              <span className="text-[11px] text-muted-foreground">{item.products.categories.name}</span>
+                            )}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">No matching products</p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Opening Quantity *</Label>
@@ -441,11 +546,14 @@ export function InventoryPage() {
                 onChange={(e) => setOpeningNote(e.target.value)} />
             </div>
             <Button className="w-full" onClick={() => openingMutation.mutate()}
-              disabled={openingMutation.isPending || !openingProduct.trim() || openingQty <= 0}>
+              disabled={openingMutation.isPending || !openingProductId || openingQty <= 0}>
               {openingMutation.isPending
                 ? <><History className="h-4 w-4 animate-spin mr-1" />Setting...</>
                 : 'Set Opening Stock'}
             </Button>
+            <p className="text-[11px] text-zinc-600">
+              Category is set on the product itself — edit it from the Products page if it's wrong.
+            </p>
           </div>
         </TabsContent>
       </Tabs>

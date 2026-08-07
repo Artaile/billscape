@@ -88,6 +88,17 @@ export async function deleteProduct(
     .eq('id', productId)
 }
 
+// Sequential per-org product code, e.g. PC0001, PC0002... — mirrors generatePurchaseNo's
+// COUNT-based approach in purchases.ts for consistency (same race-condition tradeoff,
+// acceptable since purchases already use this pattern in production).
+export async function generateProductCode(client: TypedSupabaseClient, orgId: string) {
+  const { count } = await client
+    .from('products')
+    .select('id', { count: 'exact', head: true })
+    .eq('organization_id', orgId)
+  return `PC${String((count ?? 0) + 1).padStart(4, '0')}`
+}
+
 export async function searchProducts(
   client: TypedSupabaseClient,
   orgId: string,

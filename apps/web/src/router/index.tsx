@@ -21,6 +21,7 @@ import { CustomersPage } from '@/pages/customers/CustomersPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { PurchasesPage } from '@/pages/purchases/PurchasesPage'
+import { PurchaseFormPage } from '@/pages/purchases/PurchaseFormPage'
 import { SuppliersPage } from '@/pages/suppliers/SuppliersPage'
 import { ExpensesPage } from '@/pages/expenses/ExpensesPage'
 import { PromotionsPage } from '@/pages/promotions/PromotionsPage'
@@ -56,6 +57,12 @@ function RequireOrg({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function RequireRole({ roles, children }: { roles: UserRole[]; children: React.ReactNode }) {
+  const { role, loading } = useAuth()
+  if (loading) return <FullScreenLoader />
+  if (!role || !roles.includes(role)) return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
 function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
   const { hasPermission, loading } = useAuth()
   if (loading) return <FullScreenLoader />
@@ -123,6 +130,8 @@ export function AppRouter() {
                   <Route path="products/:id/edit" element={<RequirePermission permission="products"><ProductFormPage /></RequirePermission>} />
                   <Route path="inventory" element={<RequirePermission permission="inventory"><InventoryPage /></RequirePermission>} />
                   <Route path="purchases" element={<RequirePermission permission="purchases"><PurchasesPage /></RequirePermission>} />
+                  <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
+                  <Route path="purchases/:id/edit" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
                   <Route path="suppliers" element={<RequirePermission permission="suppliers"><SuppliersPage /></RequirePermission>} />
                   <Route path="customers" element={<RequirePermission permission="customers"><CustomersPage /></RequirePermission>} />
                   <Route path="expenses" element={<RequirePermission permission="expenses"><ExpensesPage /></RequirePermission>} />

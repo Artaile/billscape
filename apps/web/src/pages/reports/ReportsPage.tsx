@@ -47,7 +47,7 @@ export function ReportsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('sales')
-        .select('id, grand_total, discount_total, tax_total, payment_mode, created_at')
+        .select('id, grand_total, discount_total, tax_total, payment_mode, cash_amount, card_amount, upi_amount, created_at')
         .eq('organization_id', orgId!)
         .gte('created_at', fromISO)
         .lte('created_at', toISO)
@@ -111,9 +111,15 @@ export function ReportsPage() {
     const total = salesData.reduce((s, r) => s + r.grand_total, 0)
     const discount = salesData.reduce((s, r) => s + (r.discount_total ?? 0), 0)
     const tax = salesData.reduce((s, r) => s + (r.tax_total ?? 0), 0)
-    const paymentSplit = { cash: 0, card: 0, upi: 0, split: 0 }
+    const paymentSplit = { cash: 0, card: 0, upi: 0 }
     for (const r of salesData) {
-      paymentSplit[r.payment_mode as keyof typeof paymentSplit] = (paymentSplit[r.payment_mode as keyof typeof paymentSplit] ?? 0) + r.grand_total
+      if (r.payment_mode === 'split') {
+        paymentSplit.cash += r.cash_amount ?? 0
+        paymentSplit.card += r.card_amount ?? 0
+        paymentSplit.upi += r.upi_amount ?? 0
+      } else if (r.payment_mode in paymentSplit) {
+        paymentSplit[r.payment_mode as keyof typeof paymentSplit] += r.grand_total
+      }
     }
     return {
       total,

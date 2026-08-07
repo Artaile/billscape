@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { computeGST, isInterState } from '../tax/gst'
-import type { CartItem } from '../types'
+import { applyOrderDiscount, computeGST, isInterState } from '../tax/gst'
+import type { CartItem, DiscountType } from '../types'
 
 const makeItem = (
   price: number,
   qty: number,
   taxRate: 0 | 5 | 12 | 18 | 28,
   discountPct = 0,
+  discountType?: DiscountType,
+  discountAmount?: number,
 ): CartItem => ({
   product_id: 'prod-1',
   product_name: 'Test Product',
@@ -14,6 +16,8 @@ const makeItem = (
   unit_price: price,
   qty,
   discount_pct: discountPct,
+  discount_type: discountType,
+  discount_amount: discountAmount,
 })
 
 describe('isInterState', () => {
@@ -78,6 +82,52 @@ describe('computeGST — discount', () => {
     expect(result.cgst_total).toBe(81)
     expect(result.sgst_total).toBe(81)
     expect(result.grand_total).toBe(1062)
+  })
+})
+
+describe('computeGST — flat line discount', () => {
+  const ctx = { shopStateCode: 'TN' }
+
+  it('flat ₹100 off a ₹1000 line, before tax', () => {
+    const result = computeGST(ctx, [makeItem(1000, 1, 18, 0, 'flat', 100)])
+    expect(result.discount_total).toBe(100)
+    expect(result.taxable_amount).toBe(900)
+    expect(result.grand_total).toBe(1062)
+  })
+
+  it('flat discount clamps to base amount (cannot go negative)', () => {
+    const result = computeGST(ctx, [makeItem(100, 1, 18, 0, 'flat', 500)])
+    expect(result.discount_total).toBe(100)
+    expect(result.taxable_amount).toBe(0)
+    expect(result.grand_total).toBe(0)
+  })
+})
+
+describe('applyOrderDiscount — post-tax, on grand_total', () => {
+  const ctx = { shopStateCode: 'TN' }
+
+  it('flat ₹50 off grand total, does not change GST breakup', () => {
+    const totals = computeGST(ctx, [makeItem(1000, 1, 18)])
+    const result = applyOrderDiscount(totals, 'flat', 50)
+    expect(result.cgst_total).toBe(90)
+    expect(result.sgst_total).toBe(90)
+    expect(result.grand_total).toBe(1180)
+    expect(result.order_discount_amount).toBe(50)
+    expect(result.net_payable).toBe(1130)
+  })
+
+  it('10% off grand total', () => {
+    const totals = computeGST(ctx, [makeItem(1000, 1, 18)])
+    const result = applyOrderDiscount(totals, 'percent', 10)
+    expect(result.order_discount_amount).toBe(118)
+    expect(result.net_payable).toBe(1062)
+  })
+
+  it('clamps discount so net_payable never goes below 0', () => {
+    const totals = computeGST(ctx, [makeItem(100, 1, 0)])
+    const result = applyOrderDiscount(totals, 'flat', 500)
+    expect(result.order_discount_amount).toBe(100)
+    expect(result.net_payable).toBe(0)
   })
 })
 

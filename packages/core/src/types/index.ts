@@ -93,6 +93,8 @@ export interface Product {
   tax_rate: GSTRate
   price: number
   cost_price: number
+  mrp?: number
+  special_price?: number
   barcode_value?: string
   image_url?: string
   track_stock: boolean
@@ -166,6 +168,8 @@ export interface Supplier {
 }
 
 // ─── Cart / Billing ───────────────────────────────────────────────────────────
+export type DiscountType = 'flat' | 'percent'
+
 export interface CartItem {
   product_id: string
   product_name: string
@@ -174,6 +178,8 @@ export interface CartItem {
   unit_price: number
   qty: number
   discount_pct: number
+  discount_type?: DiscountType
+  discount_amount?: number
   barcode_value?: string
 }
 
@@ -196,6 +202,9 @@ export interface InvoiceTotals {
   tax_total: number
   grand_total: number
   is_interstate: boolean
+  order_discount_amount: number
+  loyalty_redeem_amount: number
+  net_payable: number
 }
 
 // ─── Sales ────────────────────────────────────────────────────────────────────
@@ -208,12 +217,20 @@ export interface Sale {
   discount_total: number
   tax_total: number
   grand_total: number
+  order_discount_type?: DiscountType
+  order_discount_value?: number
+  order_discount_amount?: number
+  net_payable?: number
   payment_mode: PaymentMode
   cash_amount?: number
   card_amount?: number
   upi_amount?: number
   created_by: string
   created_at: string
+  voided_at?: string
+  voided_by?: string
+  void_reason?: string
+  purge_after?: string
 }
 
 export interface SaleItem {
@@ -225,6 +242,8 @@ export interface SaleItem {
   qty: number
   unit_price: number
   discount_pct: number
+  discount_type?: DiscountType
+  discount_amount?: number
   tax_rate: GSTRate
   cgst_amount: number
   sgst_amount: number
@@ -233,11 +252,19 @@ export interface SaleItem {
 }
 
 // ─── Purchases / Expenses ─────────────────────────────────────────────────────
+export type PurchaseType = 'credit' | 'cash'
+
 export interface Purchase {
   id: string
   organization_id: string
   supplier_id?: string
-  invoice_ref?: string
+  invoice_no?: string
+  purchase_no?: string
+  purchase_date?: string
+  purchase_type: PurchaseType
+  bill_discount_type?: DiscountType
+  bill_discount_value?: number
+  round_off: number
   total_amount: number
   notes?: string
   created_by: string
@@ -247,9 +274,15 @@ export interface Purchase {
 export interface PurchaseItem {
   id: string
   purchase_id: string
-  product_id: string
+  product_id: string | null
+  product_name: string
+  tax_rate: GSTRate
   qty: number
   unit_cost: number
+  taxable_amount: number
+  cgst_amount: number
+  sgst_amount: number
+  igst_amount: number
   line_total: number
 }
 

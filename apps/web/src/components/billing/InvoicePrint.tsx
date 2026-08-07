@@ -18,6 +18,7 @@ interface InvoicePrintProps {
   items: CartItem[]
   totals: InvoiceTotals
   paymentMode: string
+  paymentDetail?: string
 }
 
 export function InvoicePrint({
@@ -33,6 +34,7 @@ export function InvoicePrint({
   items,
   totals,
   paymentMode,
+  paymentDetail,
 }: InvoicePrintProps) {
   const handlePrint = () => {
     window.print()
@@ -204,12 +206,32 @@ export function InvoicePrint({
                     </tr>
                   </>
                 )}
-                <tr className="border-t-2 border-gray-800">
+                <tr className={(totals.order_discount_amount > 0 || totals.loyalty_redeem_amount > 0) ? '' : 'border-t-2 border-gray-800'}>
                   <td className="pt-1 font-bold text-sm text-gray-900">Grand Total</td>
                   <td className="pt-1 text-right font-bold text-sm text-gray-900">
                     {formatINR(totals.grand_total)}
                   </td>
                 </tr>
+                {totals.order_discount_amount > 0 && (
+                  <tr>
+                    <td className="py-0.5 text-gray-600">Bill Discount</td>
+                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.order_discount_amount)}</td>
+                  </tr>
+                )}
+                {totals.loyalty_redeem_amount > 0 && (
+                  <tr>
+                    <td className="py-0.5 text-gray-600">Loyalty Redeemed</td>
+                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.loyalty_redeem_amount)}</td>
+                  </tr>
+                )}
+                {(totals.order_discount_amount > 0 || totals.loyalty_redeem_amount > 0) && (
+                  <tr className="border-t-2 border-gray-800">
+                    <td className="pt-1 font-bold text-sm text-gray-900">Payable</td>
+                    <td className="pt-1 text-right font-bold text-sm text-gray-900">
+                      {formatINR(totals.net_payable)}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -218,13 +240,16 @@ export function InvoicePrint({
         {/* Amount in words */}
         <div className="border border-gray-300 rounded p-2 mb-3 bg-gray-50">
           <span className="font-semibold">Amount in Words: </span>
-          <span className="italic">{amountInWords(totals.grand_total)}</span>
+          <span className="italic">{amountInWords(totals.net_payable)}</span>
         </div>
 
         {/* Footer */}
         <div className="flex justify-between items-end border-t border-gray-300 pt-3">
           <div>
-            <p className="text-gray-600">Payment Mode: <strong className="capitalize">{paymentMode}</strong></p>
+            <p className="text-gray-600">
+              Payment Mode: <strong className="capitalize">{paymentMode}</strong>
+              {paymentDetail && <span className="text-gray-500"> ({paymentDetail})</span>}
+            </p>
             <p className="text-gray-400 text-[10px] mt-1">
               This is a computer generated invoice and does not require a signature.
             </p>
