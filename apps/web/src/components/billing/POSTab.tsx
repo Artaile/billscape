@@ -33,9 +33,9 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
-import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, formatINR } from '@billscape/core'
+import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
 import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
-import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
+import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -217,7 +217,7 @@ export function POSTab() {
     queryFn: async () => {
       let query = supabase
         .from('products')
-        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, inventory(stock_qty)')
+        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -306,11 +306,17 @@ export function POSTab() {
   }, [focusScanInput])
 
   // Add item to cart by product data
-  // Supabase returns inventory as object (singular FK) or array depending on schema
+  // Supabase returns single-row FK joins (inventory, unit, secondary_unit) as an object or a
+  // 1-element array depending on how the relation was declared — normalize both shapes here.
   const getStock = (inv: unknown): number => {
     if (!inv) return 0
     if (Array.isArray(inv)) return (inv[0] as { stock_qty: number })?.stock_qty ?? 0
     return (inv as { stock_qty: number })?.stock_qty ?? 0
+  }
+
+  const getUnit = (u: unknown): Unit | undefined => {
+    if (!u) return undefined
+    return (Array.isArray(u) ? u[0] : u) as Unit | undefined
   }
 
   const addToCart = useCallback((product: {
@@ -322,8 +328,13 @@ export function POSTab() {
     barcode_value?: string | null
     inventory?: unknown
     track_stock: boolean
+    unit?: unknown
+    secondary_unit?: unknown
+    conversion_factor?: number | null
   }) => {
     const stock = getStock(product.inventory)
+    const unit = getUnit(product.unit)
+    const secondaryUnit = getUnit(product.secondary_unit)
     if (product.track_stock && stock <= 0) {
       toast.error(`Out of stock: ${product.name}`)
       return
@@ -336,8 +347,11 @@ export function POSTab() {
           toast.error(`Out of stock: ${product.name}`)
           return prev
         }
+        // Existing-line increment respects the unit's step (1 for count-based, 0.1 for
+        // decimal-allowed units like Kg) — first add below always starts at a full 1 unit.
+        const step = qtyStepForUnit(existing.unit?.allow_decimal ?? false)
         return prev.map((c) =>
-          c.product_id === product.id ? { ...c, qty: c.qty + 1 } : c,
+          c.product_id === product.id ? { ...c, qty: c.qty + step } : c,
         )
       }
       const newItem: CartItem = {
@@ -351,6 +365,9 @@ export function POSTab() {
         discount_type: 'percent',
         discount_amount: 0,
         barcode_value: product.barcode_value ?? undefined,
+        unit,
+        secondary_unit: secondaryUnit,
+        conversion_factor: product.conversion_factor ?? undefined,
       }
       return [...prev, newItem]
     })
@@ -411,6 +428,25 @@ export function POSTab() {
     }
     setCart((prev) =>
       prev.map((c) => (c.product_id === productId ? { ...c, qty } : c)),
+    )
+  }, [])
+
+  // Switches which unit a cart line is being rung up in (base vs secondary, e.g. Piece vs Box).
+  // Purely a display/entry convenience — sale_items.qty is always persisted in the product's
+  // base unit (see createSale's item-building below), so this never touches what's stored.
+  const updateSellingUnit = useCallback((productId: string, unitId: string) => {
+    setCart((prev) =>
+      prev.map((c) => {
+        if (c.product_id !== productId) return c
+        // Switching units resets the line to "1 of the new unit" rather than carrying over
+        // a converted fractional qty (e.g. 1 Piece becoming 0.083 Box) — matches the same
+        // "first add always starts at 1" convention used when a product first enters the cart.
+        const isSecondary = unitId === c.secondary_unit?.id
+        const nextQty = isSecondary
+          ? toBaseQty(1, { unitId: c.unit?.id ?? '', secondaryUnitId: c.secondary_unit?.id, conversionFactor: c.conversion_factor })
+          : 1
+        return { ...c, selling_unit_id: unitId, qty: nextQty }
+      }),
     )
   }, [])
 
@@ -843,6 +879,7 @@ export function POSTab() {
                 onQtyChange={updateQty}
                 onDiscountChange={updateDiscount}
                 onRemove={removeFromCart}
+                onSellingUnitChange={updateSellingUnit}
               />
             ))
           )}

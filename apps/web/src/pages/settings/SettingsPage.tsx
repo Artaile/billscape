@@ -17,11 +17,16 @@ import {
   Globe,
   Download,
   Trash2,
+  Lock,
+  Eye,
+  EyeOff,
+  Ruler,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
+import { UnitsSettingsPanel } from '@/components/settings/UnitsSettingsPanel'
 import type { UserRole } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -91,11 +96,39 @@ const inviteSchema = z.object({
   role: z.enum(['owner', 'manager', 'cashier']),
 })
 
+const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Current password is required'),
+    newPassword: z
+      .string()
+      .min(8, 'Password must be at least 8 characters')
+      .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+      .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+      .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character'),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  })
+
+function getPasswordStrength(pw: string) {
+  const checks = {
+    length: pw.length >= 8,
+    upper: /[A-Z]/.test(pw),
+    lower: /[a-z]/.test(pw),
+    special: /[^A-Za-z0-9]/.test(pw),
+  }
+  const score = Object.values(checks).filter(Boolean).length
+  return { checks, score }
+}
+
 type ShopInfoValues = z.infer<typeof shopInfoSchema>
 type InviteValues = z.infer<typeof inviteSchema>
+type ChangePasswordValues = z.infer<typeof changePasswordSchema>
 
 export function SettingsPage() {
-  const { org, refreshOrg } = useAuth()
+  const { org, user, refreshOrg } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -120,6 +153,17 @@ export function SettingsPage() {
   const [timezone, setTimezone] = useState(org?.branding?.timezone ?? 'Asia/Kolkata')
 
   const [exportLoading, setExportLoading] = useState(false)
+
+  // Change password
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [newPasswordValue, setNewPasswordValue] = useState('')
+
+  const changePasswordForm = useForm<ChangePasswordValues>({
+    resolver: zodResolver(changePasswordSchema),
+    defaultValues: { currentPassword: '', newPassword: '', confirmPassword: '' },
+  })
 
   const shopForm = useForm<ShopInfoValues>({
     resolver: zodResolver(shopInfoSchema),
@@ -276,6 +320,26 @@ export function SettingsPage() {
     }
   }
 
+  const changePasswordMutation = useMutation({
+    mutationFn: async (values: ChangePasswordValues) => {
+      if (!user?.email) throw new Error('No signed-in user email found')
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: values.currentPassword,
+      })
+      if (verifyError) throw new Error('Current password is incorrect')
+
+      const { error } = await supabase.auth.updateUser({ password: values.newPassword })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      toast.success('Password changed successfully')
+      changePasswordForm.reset()
+      setNewPasswordValue('')
+    },
+    onError: (err: Error) => toast.error('Could not change password', err.message),
+  })
+
   const updateRoleMutation = useMutation({
     mutationFn: async ({ memberId, role }: { memberId: string; role: UserRole }) => {
       const { error } = await supabase
@@ -348,6 +412,10 @@ export function SettingsPage() {
           <TabsTrigger value="invoice">
             <FileText className="h-3.5 w-3.5 mr-1.5" />
             Invoice
+          </TabsTrigger>
+          <TabsTrigger value="units">
+            <Ruler className="h-3.5 w-3.5 mr-1.5" />
+            Units
           </TabsTrigger>
           <TabsTrigger value="regional">
             <Globe className="h-3.5 w-3.5 mr-1.5" />
@@ -582,7 +650,137 @@ export function SettingsPage() {
         </TabsContent>
 
         {/* Team */}
-        <TabsContent value="team">
+        <TabsContent value="team" className="space-y-6">
+          <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+            <h2 className="text-base font-semibold text-foreground">Change Password</h2>
+            <form
+              onSubmit={changePasswordForm.handleSubmit((v) => changePasswordMutation.mutate(v))}
+              className="space-y-4 max-w-sm"
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="current-password">Current Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+                  <Input
+                    id="current-password"
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    className="pl-9 pr-10"
+                    autoComplete="current-password"
+                    {...changePasswordForm.register('currentPassword')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {changePasswordForm.formState.errors.currentPassword && (
+                  <p className="text-xs text-red-400">{changePasswordForm.formState.errors.currentPassword.message}</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="new-password">New Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+                  <Input
+                    id="new-password"
+                    type={showNewPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    className="pl-9 pr-10"
+                    autoComplete="new-password"
+                    {...changePasswordForm.register('newPassword', {
+                      onChange: (e) => setNewPasswordValue(e.target.value),
+                    })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {changePasswordForm.formState.errors.newPassword && (
+                  <p className="text-xs text-red-400">{changePasswordForm.formState.errors.newPassword.message}</p>
+                )}
+                {newPasswordValue.length > 0 && (() => {
+                  const { checks, score } = getPasswordStrength(newPasswordValue)
+                  const strengthLabel = score <= 1 ? 'Weak' : score === 2 ? 'Fair' : score === 3 ? 'Good' : 'Strong'
+                  const strengthColor = score <= 1 ? 'bg-red-500' : score === 2 ? 'bg-yellow-500' : score === 3 ? 'bg-blue-500' : 'bg-emerald-500'
+                  const textColor = score <= 1 ? 'text-red-400' : score === 2 ? 'text-yellow-400' : score === 3 ? 'text-blue-400' : 'text-emerald-400'
+                  return (
+                    <div className="space-y-2 mt-1">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 flex gap-1">
+                          {[1, 2, 3, 4].map((i) => (
+                            <div key={i} className={cn('h-1 flex-1 rounded-full transition-all', i <= score ? strengthColor : 'bg-zinc-700')} />
+                          ))}
+                        </div>
+                        <span className={cn('text-xs font-medium', textColor)}>{strengthLabel}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1">
+                        {[
+                          { key: 'length', label: '8+ characters' },
+                          { key: 'upper', label: 'Uppercase letter (A-Z)' },
+                          { key: 'lower', label: 'Lowercase letter (a-z)' },
+                          { key: 'special', label: 'Special character (!@#...)' },
+                        ].map(({ key, label }) => (
+                          <div key={key} className={cn('flex items-center gap-1.5 text-[11px]', checks[key as keyof typeof checks] ? 'text-emerald-400' : 'text-zinc-500')}>
+                            <div className={cn('h-1.5 w-1.5 rounded-full', checks[key as keyof typeof checks] ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                            {label}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="confirm-password">Confirm New Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+                  <Input
+                    id="confirm-password"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    className="pl-9 pr-10"
+                    autoComplete="new-password"
+                    {...changePasswordForm.register('confirmPassword')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {changePasswordForm.formState.errors.confirmPassword && (
+                  <p className="text-xs text-red-400">{changePasswordForm.formState.errors.confirmPassword.message}</p>
+                )}
+              </div>
+
+              <Button type="submit" disabled={changePasswordMutation.isPending}>
+                {changePasswordMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Update Password'
+                )}
+              </Button>
+            </form>
+          </div>
+
           <div className="rounded-lg border border-border bg-card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-foreground">Team Members</h2>
@@ -734,6 +932,11 @@ export function SettingsPage() {
               {saveInvoiceSettingsMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Invoice Settings'}
             </Button>
           </div>
+        </TabsContent>
+
+        {/* Units */}
+        <TabsContent value="units">
+          <UnitsSettingsPanel />
         </TabsContent>
 
         {/* Regional Settings */}

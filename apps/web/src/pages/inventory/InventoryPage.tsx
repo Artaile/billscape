@@ -47,6 +47,7 @@ interface InventoryRow {
     name: string
     category_id: string | null
     categories: { name: string; color: string | null } | null
+    unit: { symbol: string } | null
   } | null
 }
 
@@ -89,7 +90,7 @@ export function InventoryPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('inventory')
-        .select('product_id, stock_qty, reorder_level, products(id, name, category_id, categories(name, color))')
+        .select('product_id, stock_qty, reorder_level, products(id, name, category_id, categories(name, color), unit:unit_id(symbol))')
         .eq('organization_id', orgId!)
         .order('stock_qty', { ascending: true })
       return (data ?? []) as unknown as InventoryRow[]
@@ -361,7 +362,7 @@ export function InventoryPage() {
                       <TableCell className="text-right">
                         <span className={cn('font-semibold tabular-nums',
                           item.stock_qty === 0 ? 'text-red-400' : item.stock_qty <= item.reorder_level ? 'text-yellow-400' : 'text-foreground')}>
-                          {item.stock_qty}
+                          {item.stock_qty}{item.products?.unit?.symbol ? ` ${item.products.unit.symbol}` : ''}
                         </span>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">{item.reorder_level}</TableCell>
@@ -537,8 +538,8 @@ export function InventoryPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Opening Quantity *</Label>
-              <Input type="number" min={1} value={openingQty}
-                onChange={(e) => setOpeningQty(Math.max(0, parseInt(e.target.value) || 0))} />
+              <Input type="number" step="0.001" min={0} value={openingQty}
+                onChange={(e) => setOpeningQty(Math.max(0, parseFloat(e.target.value) || 0))} />
             </div>
             <div className="space-y-1.5">
               <Label>Note (optional)</Label>
@@ -610,9 +611,10 @@ export function InventoryPage() {
                 <Input
                   id="adj-qty"
                   type="number"
+                  step="0.001"
                   min="0"
                   value={adjustQty}
-                  onChange={(e) => setAdjustQty(Math.max(0, parseInt(e.target.value) || 0))}
+                  onChange={(e) => setAdjustQty(Math.max(0, parseFloat(e.target.value) || 0))}
                 />
               </div>
 

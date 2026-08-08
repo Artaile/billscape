@@ -83,6 +83,17 @@ export interface Category {
   color?: string
 }
 
+// ─── Units of measure ─────────────────────────────────────────────────────────
+// Per-organization, shop-owner-editable (Settings → Units) — NOT a fixed global list.
+export interface Unit {
+  id: string
+  organization_id: string
+  name: string
+  symbol: string
+  allow_decimal: boolean
+  created_at: string
+}
+
 export interface Product {
   id: string
   organization_id: string
@@ -100,6 +111,13 @@ export interface Product {
   track_stock: boolean
   is_active: boolean
   created_at: string
+  // Base (stocking) unit — always set. Secondary unit + conversion_factor are the
+  // optional "sell in Box" pair; when set, 1 secondary_unit = conversion_factor unit.
+  unit_id: string
+  secondary_unit_id?: string
+  conversion_factor?: number
+  unit?: Unit
+  secondary_unit?: Unit
 }
 
 export interface ProductVariant {
@@ -176,11 +194,21 @@ export interface CartItem {
   hsn_code?: string
   tax_rate: GSTRate
   unit_price: number
+  // May be fractional (e.g. 0.5 for a decimal-allowed unit like Kg). Always expressed
+  // in the product's BASE unit — selling_unit_id records what the merchant saw/typed,
+  // for receipt display only, and never changes what's persisted downstream.
   qty: number
   discount_pct: number
   discount_type?: DiscountType
   discount_amount?: number
   barcode_value?: string
+  selling_unit_id?: string
+  // Denormalized unit info stashed at add-to-cart time so CartItem rendering doesn't need a
+  // live re-join. unit is the product's base unit; secondary_unit/conversion_factor mirror
+  // the product's optional "sell in Box" pair (see Product.secondary_unit_id).
+  unit?: Unit
+  secondary_unit?: Unit
+  conversion_factor?: number
 }
 
 export interface TaxBreakupLine {

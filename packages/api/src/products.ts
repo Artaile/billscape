@@ -12,7 +12,7 @@ export async function getProducts(
 ) {
   let query = client
     .from('products')
-    .select('*, categories(name, color), inventory(stock_qty, reorder_level)')
+    .select('*, categories(name, color), inventory(stock_qty, reorder_level), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal)')
     .eq('organization_id', orgId)
     .order('name')
 
@@ -33,7 +33,7 @@ export async function getProductByBarcode(
 ) {
   return client
     .from('products')
-    .select('*, inventory(stock_qty, reorder_level)')
+    .select('*, inventory(stock_qty, reorder_level), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal)')
     .eq('organization_id', orgId)
     .eq('barcode_value', barcodeValue)
     .eq('is_active', true)
@@ -47,7 +47,7 @@ export async function getProductById(
 ) {
   return client
     .from('products')
-    .select('*, categories(name, color), inventory(stock_qty, reorder_level)')
+    .select('*, categories(name, color), inventory(stock_qty, reorder_level), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal)')
     .eq('organization_id', orgId)
     .eq('id', productId)
     .single()
@@ -106,7 +106,7 @@ export async function searchProducts(
 ) {
   return client
     .from('products')
-    .select('*, inventory(stock_qty)')
+    .select('*, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal)')
     .eq('organization_id', orgId)
     .eq('is_active', true)
     .or(`name.ilike.%${query}%,sku.ilike.%${query}%,barcode_value.ilike.%${query}%`)

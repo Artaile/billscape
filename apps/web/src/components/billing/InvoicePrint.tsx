@@ -116,12 +116,15 @@ export function InvoicePrint({
               const base = item.unit_price * item.qty
               const discAmt = base * (item.discount_pct / 100)
               const lineTotal = base - discAmt
+              const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
+              const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
+              const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
               return (
                 <tr key={item.product_id} className={i % 2 === 0 ? '' : 'bg-gray-50'}>
                   <td className="border border-gray-300 px-2 py-1">{i + 1}</td>
                   <td className="border border-gray-300 px-2 py-1 font-medium">{item.product_name}</td>
                   <td className="border border-gray-300 px-2 py-1 text-gray-600">{item.hsn_code ?? '-'}</td>
-                  <td className="border border-gray-300 px-2 py-1 text-right">{item.qty}</td>
+                  <td className="border border-gray-300 px-2 py-1 text-right">{displayQty}{displayUnitSymbol ? ` ${displayUnitSymbol}` : ''}</td>
                   <td className="border border-gray-300 px-2 py-1 text-right">{formatINR(item.unit_price)}</td>
                   <td className="border border-gray-300 px-2 py-1 text-right">{item.discount_pct}%</td>
                   <td className="border border-gray-300 px-2 py-1 text-right">{item.tax_rate}%</td>

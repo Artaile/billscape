@@ -25,6 +25,10 @@ export interface PurchaseLineInput {
   hsn_code?: string
   variants?: { size: string; color: string; price_delta: number; stock_qty: number }[]
   batches?: { batch_no: string; expiry_date: string; qty: number }[]
+  // Required for new-product lines (DB requires products.unit_id); unused for existing products.
+  unit_id?: string
+  secondary_unit_id?: string
+  conversion_factor?: number
 }
 
 export interface CreatePurchaseInput {
@@ -55,6 +59,10 @@ async function createProductForLine(
   line: PurchaseLineInput,
   attempt = 0,
 ): Promise<{ id: string } | { error: { code?: string; message: string }; collidingField: 'sku' | 'barcode_value' | null }> {
+  if (!line.unit_id) {
+    return { error: { message: 'Unit is required for a new product' }, collidingField: null }
+  }
+
   const payload: ProductInsert = {
     organization_id: orgId,
     name: line.product_name,
@@ -71,6 +79,9 @@ async function createProductForLine(
     hsn_code: line.hsn_code || null,
     has_variants: !!line.variants?.length,
     has_batches: !!line.batches?.length,
+    unit_id: line.unit_id!,
+    secondary_unit_id: line.secondary_unit_id ?? null,
+    conversion_factor: line.conversion_factor ?? null,
   }
 
   const { data, error } = await client.from('products').insert(payload).select('id').single()
@@ -384,7 +395,7 @@ export async function getPurchaseWithItems(client: TypedSupabaseClient, orgId: s
 
   const { data: items, error: itemsError } = await client
     .from('purchase_items')
-    .select('*, products(sku, barcode_value, price, mrp, special_price)')
+    .select('*, products(sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor)')
     .eq('purchase_id', purchaseId)
     .eq('organization_id', orgId)
   if (itemsError) return { data: null, error: itemsError }

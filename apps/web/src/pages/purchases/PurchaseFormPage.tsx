@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
-  generateBarcode, stateCodeFromGSTIN,
+  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
@@ -25,7 +25,8 @@ import { cn } from '@/lib/utils'
 const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 
 interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
-interface ExistingProduct { id: string; name: string; sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null }
+interface ExistingProduct { id: string; name: string; sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null }
+interface UnitOption { id: string; name: string; symbol: string; allow_decimal: boolean }
 
 interface VariantRow { size: string; color: string; price_delta: string; stock_qty: string }
 interface BatchRow { batch_no: string; expiry_date: string; qty: string }
@@ -54,6 +55,13 @@ export interface PurchaseRow {
   has_batches: boolean
   batches: BatchRow[]
   showMoreDetails: boolean
+  // Unit of measure. unit_id is the product's base (stocking) unit — required for new products,
+  // read-only/inherited for existing products. entry_unit_id is which unit THIS purchase line was
+  // entered in (base or secondary) — qty is converted to base-unit qty via toBaseQty() on save.
+  unit_id: string
+  secondary_unit_id: string | null
+  conversion_factor: number | null
+  entry_unit_id: string
 }
 
 // Shape handed off by the CSV Import flow (PurchasesPage.tsx) via navigate(..., { state }) —
@@ -70,6 +78,15 @@ function parseNum(s: string): number {
   return isNaN(n) ? 0 : n
 }
 
+// r.qty is entered in r.entry_unit_id (base or secondary unit) — unit_cost/price are always
+// BASE-unit values, so any money math against a row's qty must use the base-unit-equivalent
+// qty, not the raw entered value, or a "2 Box" line would price as if it were "2 Piece".
+function rowBaseQty(r: PurchaseRow): number {
+  const entered = parseNum(r.qty)
+  if (r.entry_unit_id !== r.secondary_unit_id) return entered
+  return toBaseQty(entered, { unitId: r.unit_id, secondaryUnitId: r.secondary_unit_id, conversionFactor: r.conversion_factor })
+}
+
 // Mirrors ProductSchema.hsn_code in packages/core/src/validation/index.ts — 4, 6, or 8 digits.
 function hsnCodeError(value: string): string | undefined {
   if (!value) return undefined
@@ -84,6 +101,7 @@ function emptyRow(): PurchaseRow {
     update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
     category_id: null, hsn_code: '', has_variants: false, variants: [],
     has_batches: false, batches: [], showMoreDetails: false,
+    unit_id: '', secondary_unit_id: null, conversion_factor: null, entry_unit_id: '',
   }
 }
 
@@ -166,7 +184,7 @@ export function PurchaseFormPage() {
       setNotes(purchase.notes ?? '')
       setRows(
         items.map((it) => {
-          const product = (it as unknown as { products?: { sku?: string; barcode_value?: string; price?: number; mrp?: number; special_price?: number } }).products
+          const product = (it as unknown as { products?: { sku?: string; barcode_value?: string; price?: number; mrp?: number; special_price?: number; unit_id?: string; secondary_unit_id?: string | null; conversion_factor?: number | null } }).products
           return {
             product_id: it.product_id,
             is_new_product: false,
@@ -174,6 +192,9 @@ export function PurchaseFormPage() {
             sku: product?.sku ?? '',
             barcode_value: product?.barcode_value ?? '',
             tax_rate: (it.tax_rate ?? 0) as GSTRate,
+            // purchase_items.qty is always stored in the product's BASE unit — editing always
+            // shows/edits in base units too (the entry unit used at original save time isn't
+            // persisted), so entry_unit_id defaults to the base unit here.
             qty: String(it.qty),
             unit_cost: String(it.unit_cost),
             mrp: product?.mrp != null ? String(product.mrp) : '',
@@ -183,6 +204,10 @@ export function PurchaseFormPage() {
             skuManuallyEdited: true, barcodeManuallyEdited: true,
             category_id: null, hsn_code: '', has_variants: false, variants: [],
             has_batches: false, batches: [], showMoreDetails: false,
+            unit_id: product?.unit_id ?? '',
+            secondary_unit_id: product?.secondary_unit_id ?? null,
+            conversion_factor: product?.conversion_factor ?? null,
+            entry_unit_id: product?.unit_id ?? '',
           }
         }),
       )
@@ -213,13 +238,26 @@ export function PurchaseFormPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('products')
-        .select('id, name, sku, barcode_value, tax_rate, price, cost_price, mrp, special_price')
+        .select('id, name, sku, barcode_value, tax_rate, price, cost_price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
       return (data ?? []) as ExistingProduct[]
     },
   })
+
+  const { data: units } = useQuery({
+    queryKey: ['units', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase.from('units').select('id, name, symbol, allow_decimal').eq('organization_id', orgId!).order('name')
+      return (data ?? []) as UnitOption[]
+    },
+  })
+
+  function unitOf(unitId: string | null | undefined): UnitOption | undefined {
+    return units?.find((u) => u.id === unitId)
+  }
 
   // Prefills the grid from a CSV Import CSV hand-off (see PurchasesPage.tsx) — runs once
   // products has loaded so each row can be matched by exact name to an existing product
@@ -245,10 +283,13 @@ export function PurchaseFormPage() {
           update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
           category_id: null, hsn_code: '', has_variants: false, variants: [],
           has_batches: false, batches: [], showMoreDetails: false,
+          unit_id: match.unit_id, secondary_unit_id: match.secondary_unit_id,
+          conversion_factor: match.conversion_factor, entry_unit_id: match.unit_id,
         }
       }
       const sku = `PC${String(counter).padStart(4, '0')}`
       counter += 1
+      const defaultUnitId = units?.find((u) => u.name === 'Piece')?.id ?? units?.[0]?.id ?? ''
       return {
         product_id: null, is_new_product: true, product_name: imp.product_name.trim(),
         sku, barcode_value: generateBarcode(),
@@ -257,6 +298,7 @@ export function PurchaseFormPage() {
         update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
         category_id: null, hsn_code: '', has_variants: false, variants: [],
         has_batches: false, batches: [], showMoreDetails: false,
+        unit_id: defaultUnitId, secondary_unit_id: null, conversion_factor: null, entry_unit_id: defaultUnitId,
       }
     })
     setRows(newRows)
@@ -359,10 +401,10 @@ export function PurchaseFormPage() {
 
   const totals: InvoiceTotals = useMemo(() => {
     const cartLike = rows
-      .filter((r) => parseNum(r.qty) > 0)
+      .filter((r) => rowBaseQty(r) > 0)
       .map((r, i) => ({
         product_id: String(i), product_name: r.product_name, tax_rate: r.tax_rate,
-        unit_price: parseNum(r.unit_cost), qty: parseNum(r.qty), discount_pct: 0,
+        unit_price: parseNum(r.unit_cost), qty: rowBaseQty(r), discount_pct: 0,
       }))
     const base = cartLike.length
       ? computeGST(gstContext, cartLike)
@@ -395,6 +437,8 @@ export function PurchaseFormPage() {
       update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
       category_id: null, hsn_code: '', has_variants: false, variants: [],
       has_batches: false, batches: [], showMoreDetails: false,
+      unit_id: p.unit_id, secondary_unit_id: p.secondary_unit_id,
+      conversion_factor: p.conversion_factor, entry_unit_id: p.unit_id,
     })
     setEntrySearch(p.name)
     setEntryDropdownOpen(false)
@@ -415,10 +459,12 @@ export function PurchaseFormPage() {
       // manually-edited flags that suppress SKU/barcode regeneration) linger and a "New" row
       // can end up reusing an existing product's SKU/barcode on save.
       const base = prev.is_new_product ? prev : emptyRow()
+      const defaultUnitId = base.unit_id || units?.find((u) => u.name === 'Piece')?.id || units?.[0]?.id || ''
       return {
         ...base, product_id: null, is_new_product: true, product_name: val,
         sku: base.skuManuallyEdited ? base.sku : (val ? nextProductCode() : ''),
         barcode_value: base.barcodeManuallyEdited ? base.barcode_value : (val ? generateBarcode() : ''),
+        unit_id: defaultUnitId, entry_unit_id: defaultUnitId,
       }
     })
   }
@@ -436,12 +482,23 @@ export function PurchaseFormPage() {
   function canAddEntry(): boolean {
     if (!entry.product_name.trim() || parseNum(entry.qty) <= 0) return false
     if (entry.is_new_product && (!entry.sku.trim() || !entry.barcode_value.trim())) return false
+    if (entry.is_new_product && !entry.unit_id) return false
+    if (entry.has_variants && entry.variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) return false
+    if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) return false
     return true
   }
 
   function addEntryToGrid() {
     if (!canAddEntry()) {
-      toast.error('Incomplete row', entry.is_new_product ? 'Product code and barcode are required for a new product' : 'Enter product name and qty')
+      let msg = entry.is_new_product ? 'Product code and barcode are required for a new product' : 'Enter product name and qty'
+      if (entry.is_new_product && !entry.unit_id) {
+        msg = 'Select a unit for the new product'
+      } else if (entry.has_variants && entry.variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) {
+        msg = 'Each variant row needs a Size or Color — remove empty rows'
+      } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) {
+        msg = 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in'
+      }
+      toast.error('Incomplete row', msg)
       return
     }
     if (entry.is_new_product && !entry.skuManuallyEdited && entry.sku === nextProductCode()) {
@@ -481,28 +538,39 @@ export function PurchaseFormPage() {
       if (!user || !orgId) throw new Error('Not logged in')
       if (rows.length === 0) throw new Error('Add at least one item')
 
-      const items: PurchaseLineInput[] = rows.map((r) => ({
-        product_id: r.product_id,
-        is_new_product: r.is_new_product,
-        product_name: r.product_name.trim(),
-        sku: r.sku.trim() || undefined,
-        barcode_value: r.barcode_value.trim() || undefined,
-        tax_rate: r.tax_rate,
-        qty: parseNum(r.qty),
-        unit_cost: parseNum(r.unit_cost),
-        mrp: r.mrp ? parseNum(r.mrp) : undefined,
-        price: parseNum(r.price),
-        special_price: r.special_price ? parseNum(r.special_price) : undefined,
-        update_existing_pricing: r.update_existing_pricing,
-        category_id: r.is_new_product ? r.category_id : undefined,
-        hsn_code: r.is_new_product ? (r.hsn_code.trim() || undefined) : undefined,
-        variants: r.is_new_product && r.has_variants
-          ? r.variants.map((v) => ({ size: v.size, color: v.color, price_delta: parseNum(v.price_delta), stock_qty: parseNum(v.stock_qty) }))
-          : undefined,
-        batches: r.is_new_product && r.has_batches
-          ? r.batches.map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date, qty: parseNum(b.qty) }))
-          : undefined,
-      }))
+      const items: PurchaseLineInput[] = rows.map((r) => {
+        // r.qty is entered in r.entry_unit_id (base or secondary) — purchase_items.qty and
+        // inventory.stock_qty are always in the product's BASE unit, so convert here, once,
+        // at the save boundary. When entry_unit_id is the base unit this is a no-op.
+        const conv = { unitId: r.unit_id, secondaryUnitId: r.secondary_unit_id, conversionFactor: r.conversion_factor }
+        const enteredQty = parseNum(r.qty)
+        const baseQty = r.entry_unit_id === r.secondary_unit_id ? toBaseQty(enteredQty, conv) : enteredQty
+        return {
+          product_id: r.product_id,
+          is_new_product: r.is_new_product,
+          product_name: r.product_name.trim(),
+          sku: r.sku.trim() || undefined,
+          barcode_value: r.barcode_value.trim() || undefined,
+          tax_rate: r.tax_rate,
+          qty: baseQty,
+          unit_cost: parseNum(r.unit_cost),
+          mrp: r.mrp ? parseNum(r.mrp) : undefined,
+          price: parseNum(r.price),
+          special_price: r.special_price ? parseNum(r.special_price) : undefined,
+          update_existing_pricing: r.update_existing_pricing,
+          category_id: r.is_new_product ? r.category_id : undefined,
+          hsn_code: r.is_new_product ? (r.hsn_code.trim() || undefined) : undefined,
+          unit_id: r.is_new_product ? r.unit_id : undefined,
+          secondary_unit_id: r.is_new_product ? (r.secondary_unit_id ?? undefined) : undefined,
+          conversion_factor: r.is_new_product ? (r.conversion_factor ?? undefined) : undefined,
+          variants: r.is_new_product && r.has_variants
+            ? r.variants.filter((v) => v.size.trim() || v.color.trim()).map((v) => ({ size: v.size, color: v.color, price_delta: parseNum(v.price_delta), stock_qty: parseNum(v.stock_qty) }))
+            : undefined,
+          batches: r.is_new_product && r.has_batches
+            ? r.batches.filter((b) => b.batch_no.trim() && b.expiry_date).map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date, qty: parseNum(b.qty) }))
+            : undefined,
+        }
+      })
 
       if (isEdit && id) {
         const result = await updatePurchase(supabase, id, {
@@ -675,7 +743,7 @@ export function PurchaseFormPage() {
                 </div>
                 {/* Row 1: Product name (full width) */}
                 <div className="space-y-1 relative" ref={dropdownRef}>
-                  <Label className="text-xs">Product</Label>
+                  <Label className="text-xs">Product *</Label>
                   <Input
                     ref={productNameRef}
                     placeholder="Search or type new product"
@@ -707,7 +775,7 @@ export function PurchaseFormPage() {
                 {/* Row 2: Code, Barcode, GST%, Rate, Qty */}
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                   <div className="space-y-1">
-                    <Label className="text-xs">Product Code</Label>
+                    <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
                     <div className="flex gap-1">
                       <Input
                         value={entry.sku}
@@ -724,7 +792,7 @@ export function PurchaseFormPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <Label className="text-xs">Barcode</Label>
+                    <Label className="text-xs">Barcode{entry.is_new_product && ' *'}</Label>
                     <div className="flex gap-1">
                       <Input
                         value={entry.barcode_value}
@@ -758,11 +826,39 @@ export function PurchaseFormPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <Label className="text-xs">Qty</Label>
-                    <Input type="text" inputMode="numeric" value={entry.qty} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9]/g, '') || '0' }))} className="h-9 text-sm text-center" />
+                    <Label className="text-xs">Qty *</Label>
+                    <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm text-center" />
                   </div>
                 </div>
+
+                {hasSecondaryUnit({ unitId: entry.unit_id, secondaryUnitId: entry.secondary_unit_id, conversionFactor: entry.conversion_factor }) && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs text-zinc-500">Qty in:</Label>
+                    <div className="flex gap-1">
+                      {[entry.unit_id, entry.secondary_unit_id!].map((uid) => (
+                        <button
+                          key={uid}
+                          type="button"
+                          onClick={() => setEntry((p) => ({ ...p, entry_unit_id: uid }))}
+                          className={cn(
+                            'px-2 py-1 rounded-md text-xs font-medium border transition-all',
+                            entry.entry_unit_id === uid
+                              ? 'bg-indigo-600 border-indigo-500 text-white'
+                              : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
+                          )}
+                        >
+                          {unitOf(uid)?.symbol}
+                        </button>
+                      ))}
+                    </div>
+                    {entry.entry_unit_id === entry.secondary_unit_id && (
+                      <span className="text-[11px] text-zinc-600">
+                        = {toBaseQty(parseNum(entry.qty), { unitId: entry.unit_id, secondaryUnitId: entry.secondary_unit_id, conversionFactor: entry.conversion_factor })} {unitOf(entry.unit_id)?.symbol}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <Separator />
 
@@ -811,12 +907,12 @@ export function PurchaseFormPage() {
                     >
                       {entry.showMoreDetails ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       More details
-                      <span className="text-zinc-600">(Category, HSN, Variants, Batches)</span>
+                      <span className="text-zinc-600">(Category, HSN, Unit, Variants, Batches)</span>
                     </button>
 
                     {entry.showMoreDetails && (
                       <div className="mt-3 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-3 gap-2">
                           <div className="space-y-1">
                             <Label className="text-xs">Category</Label>
                             <select
@@ -826,6 +922,17 @@ export function PurchaseFormPage() {
                             >
                               <option value="">— No category —</option>
                               {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Unit *</Label>
+                            <select
+                              value={entry.unit_id}
+                              onChange={(e) => setEntry((p) => ({ ...p, unit_id: e.target.value, entry_unit_id: e.target.value }))}
+                              className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              {!entry.unit_id && <option value="">— Select unit —</option>}
+                              {units?.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>)}
                             </select>
                           </div>
                           <div className="space-y-1">
@@ -864,26 +971,30 @@ export function PurchaseFormPage() {
                               <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
                                 <span>Size</span><span>Color</span><span>Price +/-</span><span>Stock</span><span></span>
                               </div>
-                              {entry.variants.map((v, i) => (
+                              {entry.variants.map((v, i) => {
+                                const vTouched = v.size.trim() || v.color.trim() || v.price_delta || v.stock_qty
+                                const vMissing = vTouched && !v.size.trim() && !v.color.trim()
+                                return (
                                 <div key={i} className="grid grid-cols-5 gap-2 items-center">
                                   <Input placeholder="S / M / L" value={v.size}
                                     onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, size: e.target.value } : x) }))}
-                                    className="h-8 text-xs" />
+                                    className={cn('h-8 text-xs', vMissing && 'border-red-500')} />
                                   <Input placeholder="Red / Blue" value={v.color}
                                     onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, color: e.target.value } : x) }))}
-                                    className="h-8 text-xs" />
+                                    className={cn('h-8 text-xs', vMissing && 'border-red-500')} />
                                   <Input type="text" inputMode="decimal" placeholder="0.00" value={v.price_delta}
                                     onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, price_delta: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
                                     className="h-8 text-xs" />
-                                  <Input type="text" inputMode="numeric" placeholder="0" value={v.stock_qty}
-                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, stock_qty: e.target.value.replace(/[^0-9]/g, '') } : x) }))}
+                                  <Input type="text" inputMode="decimal" placeholder="0" value={v.stock_qty}
+                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, stock_qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
                                     className="h-8 text-xs" />
                                   <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
                                     onClick={() => setEntry((p) => ({ ...p, variants: p.variants.filter((_, j) => j !== i) }))}>
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </Button>
                                 </div>
-                              ))}
+                                )
+                              })}
                               <Button type="button" variant="outline" size="sm" className="text-xs"
                                 onClick={() => setEntry((p) => ({ ...p, variants: [...p.variants, { size: '', color: '', price_delta: '', stock_qty: '' }] }))}>
                                 <Plus className="h-3.5 w-3.5" /> Add Variant
@@ -912,25 +1023,30 @@ export function PurchaseFormPage() {
                           {entry.has_batches && (
                             <div className="space-y-1.5 pl-1">
                               <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
-                                <span className="col-span-2">Batch No</span><span>Expiry Date</span><span>Qty</span><span></span>
+                                <span className="col-span-2">Batch No *</span><span>Expiry Date *</span><span>Qty</span><span></span>
                               </div>
-                              {entry.batches.map((b, i) => (
+                              {entry.batches.map((b, i) => {
+                                const bTouched = b.batch_no.trim() || b.expiry_date || b.qty
+                                const bMissingBatchNo = bTouched && !b.batch_no.trim()
+                                const bMissingExpiry = bTouched && !b.expiry_date
+                                return (
                                 <div key={i} className="grid grid-cols-5 gap-2 items-center">
                                   <Input placeholder="BATCH-001" value={b.batch_no}
                                     onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
-                                    className="h-8 text-xs col-span-2" />
+                                    className={cn('h-8 text-xs col-span-2', bMissingBatchNo && 'border-red-500')} />
                                   <Input type="date" value={b.expiry_date}
                                     onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
-                                    className="h-8 text-xs" />
-                                  <Input type="text" inputMode="numeric" placeholder="0" value={b.qty}
-                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9]/g, '') } : x) }))}
+                                    className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
+                                  <Input type="text" inputMode="decimal" placeholder="0" value={b.qty}
+                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
                                     className="h-8 text-xs" />
                                   <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
                                     onClick={() => setEntry((p) => ({ ...p, batches: p.batches.filter((_, j) => j !== i) }))}>
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </Button>
                                 </div>
-                              ))}
+                                )
+                              })}
                               <Button type="button" variant="outline" size="sm" className="text-xs"
                                 onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
                                 <Plus className="h-3.5 w-3.5" /> Add Batch
@@ -984,12 +1100,14 @@ export function PurchaseFormPage() {
                         </TableCell>
                         <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.unit_cost))}</TableCell>
                         <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.tax_rate}%</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{parseNum(r.qty)}</TableCell>
+                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">
+                          {parseNum(r.qty)}{unitOf(r.entry_unit_id) ? ` ${unitOf(r.entry_unit_id)?.symbol}` : ''}
+                        </TableCell>
                         <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.barcode_value}</TableCell>
                         <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
                         <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.price))}</TableCell>
                         <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
-                        <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(r.unit_cost) * parseNum(r.qty)))}</TableCell>
+                        <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(r.unit_cost) * rowBaseQty(r)))}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">

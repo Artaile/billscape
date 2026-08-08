@@ -19,11 +19,13 @@ import {
   QrCode,
   Image as ImageIcon,
   Eye,
+  Ruler,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { ProductSchema, type ProductInput, formatINR } from '@billscape/core'
+import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { Button } from '@/components/ui/button'
@@ -84,6 +86,9 @@ export function ProductFormPage() {
       special_price: undefined,
       barcode_value: '',
       track_stock: true,
+      unit_id: '',
+      secondary_unit_id: undefined,
+      conversion_factor: undefined,
     },
   })
 
@@ -95,6 +100,21 @@ export function ProductFormPage() {
   const watchedMrp = watch('mrp')
   const watchedTaxRate = watch('tax_rate')
   const watchedSku = watch('sku')
+  const watchedUnitId = watch('unit_id')
+  const watchedSecondaryUnitId = watch('secondary_unit_id')
+  const watchedConversionFactor = watch('conversion_factor')
+
+  const [hasSecondaryUnit, setHasSecondaryUnit] = useState(false)
+
+  const { data: units } = useQuery({
+    queryKey: ['units', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await getUnits(supabase, orgId!)
+      if (error) throw error
+      return data ?? []
+    },
+  })
 
   // Fetch existing product for edit
   const { data: existingProduct } = useQuery({
@@ -126,6 +146,7 @@ export function ProductFormPage() {
   })
 
   const selectedCategoryName = categories?.find((c) => c.id === categoryId)?.name
+  const selectedUnitSymbol = units?.find((u) => u.id === watchedUnitId)?.symbol
 
   const addCategoryMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -190,14 +211,27 @@ export function ProductFormPage() {
         special_price: existingProduct.special_price ?? undefined,
         barcode_value: existingProduct.barcode_value ?? '',
         track_stock: existingProduct.track_stock,
+        unit_id: (existingProduct as any).unit_id ?? '',
+        secondary_unit_id: (existingProduct as any).secondary_unit_id ?? undefined,
+        conversion_factor: (existingProduct as any).conversion_factor ?? undefined,
       })
       if (existingProduct.image_url) setImagePreview(existingProduct.image_url)
       if (existingProduct.category_id) setCategoryId(existingProduct.category_id)
       if ((existingProduct as any).has_variants) setHasVariants(true)
       if ((existingProduct as any).has_batches) setHasBatches(true)
       if ((existingProduct as any).brand) setBrand((existingProduct as any).brand)
+      if ((existingProduct as any).secondary_unit_id) setHasSecondaryUnit(true)
     }
   }, [existingProduct, reset])
+
+  // Default a new product's unit to the org's "Piece" row once units load — only for the
+  // create flow (isEdit's unit_id comes from existingProduct above, don't stomp it).
+  useEffect(() => {
+    if (!isEdit && units && units.length > 0 && !watchedUnitId) {
+      const piece = units.find((u) => u.name === 'Piece')
+      setValue('unit_id', piece?.id ?? units[0].id)
+    }
+  }, [isEdit, units, watchedUnitId, setValue])
 
   useEffect(() => {
     if (existingVariants && existingVariants.length > 0) {
@@ -292,6 +326,9 @@ export function ProductFormPage() {
         has_variants: hasVariants,
         has_batches: hasBatches,
         brand: brand.trim() || null,
+        unit_id: values.unit_id,
+        secondary_unit_id: hasSecondaryUnit ? values.secondary_unit_id || null : null,
+        conversion_factor: hasSecondaryUnit ? values.conversion_factor ?? null : null,
       }
 
       let productId = id
@@ -372,6 +409,19 @@ export function ProductFormPage() {
   const [initialStock, setInitialStock] = useState(0)
 
   const onSubmit = handleSubmit((values) => {
+    if (hasVariants) {
+      if (variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) {
+        toast.error('Incomplete variant', 'Each variant row needs a Size or Color — remove empty rows before saving.')
+        return
+      }
+    }
+    if (hasBatches) {
+      const incompleteBatch = batches.find((b) => !b.batch_no.trim() || !b.expiry_date)
+      if (incompleteBatch) {
+        toast.error('Incomplete batch', 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in before saving.')
+        return
+      }
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     saveMutation.mutate({ ...(values as any), initialStock })
   })
@@ -616,10 +666,13 @@ export function ProductFormPage() {
 
             {trackStock && !isEdit && (
               <div className="space-y-1.5">
-                <Label htmlFor="initialStock">Opening Stock Qty</Label>
+                <Label htmlFor="initialStock">
+                  Opening Stock{selectedUnitSymbol ? ` (${selectedUnitSymbol})` : ' Qty'}
+                </Label>
                 <Input
                   id="initialStock"
                   type="number"
+                  step="0.001"
                   min="0"
                   value={initialStock}
                   onChange={(e) => setInitialStock(Number(e.target.value))}
@@ -627,6 +680,84 @@ export function ProductFormPage() {
                 />
               </div>
             )}
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Unit *</Label>
+                <button
+                  type="button"
+                  onClick={() => navigate('/settings')}
+                  className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  Manage units
+                </button>
+              </div>
+              <select
+                {...register('unit_id')}
+                className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {!watchedUnitId && <option value="">— Select unit —</option>}
+                {units?.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
+                ))}
+              </select>
+              {errors.unit_id && <p className="text-xs text-red-400">{errors.unit_id.message}</p>}
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer w-fit">
+                <div
+                  onClick={() => {
+                    setHasSecondaryUnit((v) => !v)
+                    if (hasSecondaryUnit) {
+                      setValue('secondary_unit_id', undefined)
+                      setValue('conversion_factor', undefined)
+                    }
+                  }}
+                  className={cn(
+                    'relative h-5 w-9 rounded-full transition-colors cursor-pointer',
+                    hasSecondaryUnit ? 'bg-indigo-600' : 'bg-zinc-700',
+                  )}
+                >
+                  <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', hasSecondaryUnit ? 'translate-x-4' : 'translate-x-0')} />
+                </div>
+                <span className="text-xs text-zinc-400">Sell in a different unit too</span>
+              </label>
+
+              {hasSecondaryUnit && (
+                <div className="grid grid-cols-2 gap-3 pl-1">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Secondary Unit</Label>
+                    <select
+                      {...register('secondary_unit_id')}
+                      className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">— Select unit —</option>
+                      {units?.filter((u) => u.id !== watchedUnitId).map((u) => (
+                        <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
+                      ))}
+                    </select>
+                    {errors.secondary_unit_id && <p className="text-xs text-red-400">{errors.secondary_unit_id.message}</p>}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Conversion Factor</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      min="0"
+                      placeholder="e.g. 12"
+                      {...register('conversion_factor', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                    />
+                    {errors.conversion_factor && <p className="text-xs text-red-400">{errors.conversion_factor.message}</p>}
+                  </div>
+                  {watchedSecondaryUnitId && watchedConversionFactor ? (
+                    <p className="col-span-2 text-xs text-zinc-500">
+                      1 {units?.find((u) => u.id === watchedSecondaryUnitId)?.symbol} = {watchedConversionFactor} {selectedUnitSymbol}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Product Variants */}
@@ -745,24 +876,28 @@ export function ProductFormPage() {
             {hasBatches && (
               <div className="space-y-2">
                 <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
-                  <span className="col-span-2">Batch No</span>
-                  <span>Expiry Date</span>
+                  <span className="col-span-2">Batch No *</span>
+                  <span>Expiry Date *</span>
                   <span>Qty</span>
                   <span></span>
                 </div>
-                {batches.map((b, i) => (
+                {batches.map((b, i) => {
+                  const touched = b.batch_no.trim() || b.expiry_date || b.qty
+                  const missingBatchNo = touched && !b.batch_no.trim()
+                  const missingExpiry = touched && !b.expiry_date
+                  return (
                   <div key={i} className="grid grid-cols-5 gap-2 items-center">
                     <Input
                       placeholder="BATCH-001"
                       value={b.batch_no}
                       onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x))}
-                      className="h-8 text-xs col-span-2"
+                      className={cn('h-8 text-xs col-span-2', missingBatchNo && 'border-red-500')}
                     />
                     <Input
                       type="date"
                       value={b.expiry_date}
                       onChange={(e) => setBatches((prev) => prev.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x))}
-                      className="h-8 text-xs"
+                      className={cn('h-8 text-xs', missingExpiry && 'border-red-500')}
                     />
                     <Input
                       type="number"
@@ -782,7 +917,8 @@ export function ProductFormPage() {
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                ))}
+                  )
+                })}
                 <Button
                   type="button"
                   variant="outline"
@@ -910,6 +1046,14 @@ export function ProductFormPage() {
               <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-indigo-700 text-indigo-300 bg-indigo-950/30">
                 GST {watchedTaxRate}%
               </span>
+              {selectedUnitSymbol && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-400 bg-zinc-800/60 flex items-center gap-1">
+                  <Ruler className="h-2.5 w-2.5" />
+                  {hasSecondaryUnit && watchedSecondaryUnitId && watchedConversionFactor
+                    ? `${units?.find((u) => u.id === watchedSecondaryUnitId)?.symbol} · ${watchedConversionFactor} ${selectedUnitSymbol}`
+                    : selectedUnitSymbol}
+                </span>
+              )}
               {selectedCategoryName && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-400 bg-zinc-800/60">
                   {selectedCategoryName}

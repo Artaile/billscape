@@ -1,7 +1,7 @@
 import React, { useRef } from 'react'
 import { Minus, Plus, Trash2 } from 'lucide-react'
 import type { CartItem as CartItemType, DiscountType } from '@billscape/core'
-import { formatINR } from '@billscape/core'
+import { formatINR, qtyStepForUnit, hasSecondaryUnit, toBaseQty, fromBaseQty, toSecondaryUnitPrice } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -11,6 +11,7 @@ interface CartItemProps {
   onQtyChange: (productId: string, qty: number) => void
   onDiscountChange: (productId: string, discountType: DiscountType, value: number) => void
   onRemove: (productId: string) => void
+  onSellingUnitChange: (productId: string, unitId: string) => void
 }
 
 export function CartItemRow({
@@ -19,15 +20,32 @@ export function CartItemRow({
   onQtyChange,
   onDiscountChange,
   onRemove,
+  onSellingUnitChange,
 }: CartItemProps) {
   const qtyInputRef = useRef<HTMLInputElement>(null)
   const discountType: DiscountType = item.discount_type ?? 'percent'
   const discountValue = discountType === 'flat' ? (item.discount_amount ?? 0) : item.discount_pct
 
+  // item.qty is ALWAYS stored/persisted in the product's BASE unit. When the merchant is
+  // ringing this line up in the secondary unit (e.g. Box), the input/stepper displays and
+  // edits the secondary-unit-equivalent qty, converting back to base on every change —
+  // sale_items.qty (and everything downstream) never sees anything but base-unit qty.
+  const conv = { unitId: item.unit?.id ?? '', secondaryUnitId: item.secondary_unit?.id, conversionFactor: item.conversion_factor }
+  const sellingSecondary = hasSecondaryUnit(conv) && item.selling_unit_id === item.secondary_unit?.id
+  const allowDecimal = sellingSecondary ? (item.secondary_unit?.allow_decimal ?? false) : (item.unit?.allow_decimal ?? false)
+  const step = qtyStepForUnit(allowDecimal)
+  const displayQty = sellingSecondary ? fromBaseQty(item.qty, conv) : item.qty
+  const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
+
+  const setDisplayQty = (nextDisplayQty: number) => {
+    const nextBaseQty = sellingSecondary ? toBaseQty(nextDisplayQty, conv) : nextDisplayQty
+    onQtyChange(item.product_id, nextBaseQty)
+  }
+
   const handleQtyInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value, 10)
+    const val = parseFloat(e.target.value)
     if (!isNaN(val) && val > 0) {
-      onQtyChange(item.product_id, val)
+      setDisplayQty(allowDecimal ? val : Math.round(val))
     }
   }
 
@@ -58,16 +76,41 @@ export function CartItemRow({
           {item.product_name}
         </p>
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-zinc-500">{formatINR(item.unit_price)}</span>
+          <span className="text-[10px] text-zinc-500">
+            {formatINR(sellingSecondary ? toSecondaryUnitPrice(item.unit_price, conv) : item.unit_price)}
+            {displayUnitSymbol ? ` / ${displayUnitSymbol}` : ''}
+          </span>
           <span className="text-[10px] text-zinc-600">· GST {item.tax_rate}%</span>
         </div>
       </div>
 
+      {/* Unit toggle (only when the product has a secondary selling unit configured) */}
+      {hasSecondaryUnit(conv) && (
+        <div className="hidden sm:flex rounded border border-zinc-700 overflow-hidden shrink-0">
+          {[
+            { id: item.unit!.id, label: item.unit!.symbol },
+            { id: item.secondary_unit!.id, label: item.secondary_unit!.symbol },
+          ].map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => onSellingUnitChange(item.product_id, opt.id)}
+              className={cn(
+                'px-1.5 h-6 text-[10px] font-medium transition-colors',
+                (item.selling_unit_id ?? item.unit?.id) === opt.id ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Qty controls */}
       <div className="flex items-center gap-0.5 shrink-0">
         <button
-          onClick={() => onQtyChange(item.product_id, item.qty - 1)}
-          disabled={item.qty <= 1}
+          onClick={() => setDisplayQty(displayQty - step)}
+          disabled={displayQty <= step}
           className="flex h-6 w-6 items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-white disabled:opacity-30 transition-colors"
         >
           <Minus className="h-3 w-3" />
@@ -75,13 +118,14 @@ export function CartItemRow({
         <input
           ref={qtyInputRef}
           type="number"
-          min="1"
-          value={item.qty}
+          min={step}
+          step={step}
+          value={displayQty}
           onChange={handleQtyInput}
           className="h-6 w-9 rounded border border-zinc-700 bg-zinc-900 text-center text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
         <button
-          onClick={() => onQtyChange(item.product_id, item.qty + 1)}
+          onClick={() => setDisplayQty(displayQty + step)}
           className="flex h-6 w-6 items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors"
         >
           <Plus className="h-3 w-3" />

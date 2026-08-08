@@ -185,8 +185,60 @@ export type Database = {
           },
         ]
       }
+      employee_advances: {
+        Row: {
+          advance_date: string
+          amount: number
+          created_at: string
+          created_by: string
+          employee_id: string
+          id: string
+          notes: string | null
+          organization_id: string
+          status: string
+        }
+        Insert: {
+          advance_date?: string
+          amount: number
+          created_at?: string
+          created_by: string
+          employee_id: string
+          id?: string
+          notes?: string | null
+          organization_id: string
+          status?: string
+        }
+        Update: {
+          advance_date?: string
+          amount?: number
+          created_at?: string
+          created_by?: string
+          employee_id?: string
+          id?: string
+          notes?: string | null
+          organization_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_advances_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_advances_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       employees: {
         Row: {
+          base_salary: number
           created_at: string
           email: string | null
           full_name: string
@@ -197,8 +249,10 @@ export type Database = {
           organization_id: string
           phone: string | null
           role: string
+          salary_advance_balance: number
         }
         Insert: {
+          base_salary?: number
           created_at?: string
           email?: string | null
           full_name: string
@@ -209,8 +263,10 @@ export type Database = {
           organization_id: string
           phone?: string | null
           role?: string
+          salary_advance_balance?: number
         }
         Update: {
+          base_salary?: number
           created_at?: string
           email?: string | null
           full_name?: string
@@ -221,6 +277,7 @@ export type Database = {
           organization_id?: string
           phone?: string | null
           role?: string
+          salary_advance_balance?: number
         }
         Relationships: [
           {
@@ -366,6 +423,7 @@ export type Database = {
       loyalty_customers: {
         Row: {
           created_at: string
+          customer_id: string | null
           customer_name: string
           customer_phone: string | null
           id: string
@@ -376,6 +434,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          customer_id?: string | null
           customer_name: string
           customer_phone?: string | null
           id?: string
@@ -386,6 +445,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          customer_id?: string | null
           customer_name?: string
           customer_phone?: string | null
           id?: string
@@ -395,6 +455,13 @@ export type Database = {
           total_points_redeemed?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "loyalty_customers_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "loyalty_customers_organization_id_fkey"
             columns: ["organization_id"]
@@ -486,26 +553,49 @@ export type Database = {
       memberships: {
         Row: {
           created_at: string
+          custom_role_id: string | null
+          employee_id: string | null
           id: string
+          is_active: boolean
           organization_id: string
           role: Database["public"]["Enums"]["user_role"]
           user_id: string
         }
         Insert: {
           created_at?: string
+          custom_role_id?: string | null
+          employee_id?: string | null
           id?: string
+          is_active?: boolean
           organization_id: string
           role: Database["public"]["Enums"]["user_role"]
           user_id: string
         }
         Update: {
           created_at?: string
+          custom_role_id?: string | null
+          employee_id?: string | null
           id?: string
+          is_active?: boolean
           organization_id?: string
           role?: Database["public"]["Enums"]["user_role"]
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "memberships_custom_role_id_fkey"
+            columns: ["custom_role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "memberships_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "memberships_organization_id_fkey"
             columns: ["organization_id"]
@@ -786,6 +876,7 @@ export type Database = {
           barcode_value: string | null
           brand: string | null
           category_id: string | null
+          conversion_factor: number | null
           cost_price: number
           created_at: string
           has_batches: boolean
@@ -798,15 +889,18 @@ export type Database = {
           name: string
           organization_id: string
           price: number
+          secondary_unit_id: string | null
           sku: string | null
           special_price: number | null
           tax_rate: number
           track_stock: boolean
+          unit_id: string
         }
         Insert: {
           barcode_value?: string | null
           brand?: string | null
           category_id?: string | null
+          conversion_factor?: number | null
           cost_price?: number
           created_at?: string
           has_batches?: boolean
@@ -819,15 +913,18 @@ export type Database = {
           name: string
           organization_id: string
           price: number
+          secondary_unit_id?: string | null
           sku?: string | null
           special_price?: number | null
           tax_rate?: number
           track_stock?: boolean
+          unit_id: string
         }
         Update: {
           barcode_value?: string | null
           brand?: string | null
           category_id?: string | null
+          conversion_factor?: number | null
           cost_price?: number
           created_at?: string
           has_batches?: boolean
@@ -840,10 +937,12 @@ export type Database = {
           name?: string
           organization_id?: string
           price?: number
+          secondary_unit_id?: string | null
           sku?: string | null
           special_price?: number | null
           tax_rate?: number
           track_stock?: boolean
+          unit_id?: string
         }
         Relationships: [
           {
@@ -858,6 +957,20 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_secondary_unit_id_fkey"
+            columns: ["secondary_unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
             referencedColumns: ["id"]
           },
         ]
@@ -1181,6 +1294,50 @@ export type Database = {
           },
         ]
       }
+      recurring_templates: {
+        Row: {
+          category: string
+          created_at: string
+          default_amount: number
+          due_day: number
+          id: string
+          is_active: boolean
+          last_billed_month: string | null
+          name: string
+          organization_id: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          default_amount?: number
+          due_day: number
+          id?: string
+          is_active?: boolean
+          last_billed_month?: string | null
+          name: string
+          organization_id: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          default_amount?: number
+          due_day?: number
+          id?: string
+          is_active?: boolean
+          last_billed_month?: string | null
+          name?: string
+          organization_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_templates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       return_items: {
         Row: {
           id: string
@@ -1307,6 +1464,79 @@ export type Database = {
           },
         ]
       }
+      salary_payments: {
+        Row: {
+          advance_deducted: number
+          allowances_bonus: number
+          base_salary: number
+          created_at: string
+          created_by: string
+          employee_id: string
+          expense_id: string | null
+          id: string
+          net_paid: number
+          organization_id: string
+          other_deductions: number
+          payment_date: string
+          payment_mode: Database["public"]["Enums"]["payment_mode"]
+          payment_month: string
+        }
+        Insert: {
+          advance_deducted?: number
+          allowances_bonus?: number
+          base_salary: number
+          created_at?: string
+          created_by: string
+          employee_id: string
+          expense_id?: string | null
+          id?: string
+          net_paid: number
+          organization_id: string
+          other_deductions?: number
+          payment_date?: string
+          payment_mode?: Database["public"]["Enums"]["payment_mode"]
+          payment_month: string
+        }
+        Update: {
+          advance_deducted?: number
+          allowances_bonus?: number
+          base_salary?: number
+          created_at?: string
+          created_by?: string
+          employee_id?: string
+          expense_id?: string | null
+          id?: string
+          net_paid?: number
+          organization_id?: string
+          other_deductions?: number
+          payment_date?: string
+          payment_mode?: Database["public"]["Enums"]["payment_mode"]
+          payment_month?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "salary_payments_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "salary_payments_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "salary_payments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sale_items: {
         Row: {
           cgst_amount: number
@@ -1397,6 +1627,10 @@ export type Database = {
           grand_total: number
           id: string
           invoice_no: string
+          loyalty_customer_id: string | null
+          loyalty_points_earned: number
+          loyalty_points_redeemed: number
+          loyalty_redeem_amount: number
           net_payable: number
           notes: string | null
           order_discount_amount: number
@@ -1422,6 +1656,10 @@ export type Database = {
           grand_total: number
           id?: string
           invoice_no: string
+          loyalty_customer_id?: string | null
+          loyalty_points_earned?: number
+          loyalty_points_redeemed?: number
+          loyalty_redeem_amount?: number
           net_payable?: number
           notes?: string | null
           order_discount_amount?: number
@@ -1447,6 +1685,10 @@ export type Database = {
           grand_total?: number
           id?: string
           invoice_no?: string
+          loyalty_customer_id?: string | null
+          loyalty_points_earned?: number
+          loyalty_points_redeemed?: number
+          loyalty_redeem_amount?: number
           net_payable?: number
           notes?: string | null
           order_discount_amount?: number
@@ -1468,6 +1710,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_loyalty_customer_id_fkey"
+            columns: ["loyalty_customer_id"]
+            isOneToOne: false
+            referencedRelation: "loyalty_customers"
             referencedColumns: ["id"]
           },
           {
@@ -1592,6 +1841,9 @@ export type Database = {
       suppliers: {
         Row: {
           address: string | null
+          bank_account: string | null
+          bank_ifsc: string | null
+          bank_name: string | null
           created_at: string
           email: string | null
           gstin: string | null
@@ -1599,9 +1851,13 @@ export type Database = {
           name: string
           organization_id: string
           phone: string | null
+          upi_id: string | null
         }
         Insert: {
           address?: string | null
+          bank_account?: string | null
+          bank_ifsc?: string | null
+          bank_name?: string | null
           created_at?: string
           email?: string | null
           gstin?: string | null
@@ -1609,9 +1865,13 @@ export type Database = {
           name: string
           organization_id: string
           phone?: string | null
+          upi_id?: string | null
         }
         Update: {
           address?: string | null
+          bank_account?: string | null
+          bank_ifsc?: string | null
+          bank_name?: string | null
           created_at?: string
           email?: string | null
           gstin?: string | null
@@ -1619,10 +1879,46 @@ export type Database = {
           name?: string
           organization_id?: string
           phone?: string | null
+          upi_id?: string | null
         }
         Relationships: [
           {
             foreignKeyName: "suppliers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      units: {
+        Row: {
+          allow_decimal: boolean
+          created_at: string
+          id: string
+          name: string
+          organization_id: string
+          symbol: string
+        }
+        Insert: {
+          allow_decimal?: boolean
+          created_at?: string
+          id?: string
+          name: string
+          organization_id: string
+          symbol: string
+        }
+        Update: {
+          allow_decimal?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+          organization_id?: string
+          symbol?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "units_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"

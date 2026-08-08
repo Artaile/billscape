@@ -8,32 +8,45 @@ export const GSTRateSchema = z.union([
   z.literal(28),
 ])
 
-export const ProductSchema = z.object({
-  name: z.string().min(1, 'Product name is required').max(200),
-  sku: z.string().max(50).optional(),
-  hsn_code: z
-    .string()
-    .refine(
-      (v) => v === '' || /^\d{4}(\d{2}(\d{2})?)?$/.test(v),
-      'HSN code must be 4, 6, or 8 digits',
-    )
-    .optional(),
-  tax_rate: GSTRateSchema,
-  price: z.number().positive('Selling price must be greater than 0'),
-  cost_price: z.number().min(0, 'Cost price cannot be negative'),
-  mrp: z.number().min(0).optional(),
-  special_price: z.number().min(0).optional(),
-  barcode_value: z.string().max(100).optional(),
-  track_stock: z.boolean().default(true),
-})
+export const ProductSchema = z
+  .object({
+    name: z.string().min(1, 'Product name is required').max(200),
+    sku: z.string().max(50).optional(),
+    hsn_code: z
+      .string()
+      .refine(
+        (v) => v === '' || /^\d{4}(\d{2}(\d{2})?)?$/.test(v),
+        'HSN code must be 4, 6, or 8 digits',
+      )
+      .optional(),
+    tax_rate: GSTRateSchema,
+    price: z.number().positive('Selling price must be greater than 0'),
+    cost_price: z.number().min(0, 'Cost price cannot be negative'),
+    mrp: z.number().min(0).optional(),
+    special_price: z.number().min(0).optional(),
+    barcode_value: z.string().max(100).optional(),
+    track_stock: z.boolean().default(true),
+    unit_id: z.string().uuid('Unit is required'),
+    secondary_unit_id: z.string().uuid().optional(),
+    conversion_factor: z.number().positive().optional(),
+  })
+  .refine(
+    (p) => (p.secondary_unit_id == null) === (p.conversion_factor == null),
+    { message: 'Secondary unit and conversion factor must both be set together', path: ['conversion_factor'] },
+  )
+  .refine(
+    (p) => p.secondary_unit_id == null || p.secondary_unit_id !== p.unit_id,
+    { message: 'Secondary unit must differ from the base unit', path: ['secondary_unit_id'] },
+  )
 
 export const CartItemSchema = z.object({
   product_id: z.string().uuid(),
   product_name: z.string().min(1),
   tax_rate: GSTRateSchema,
   unit_price: z.number().positive(),
-  qty: z.number().int().positive(),
+  qty: z.number().positive(),
   discount_pct: z.number().min(0).max(100).default(0),
+  selling_unit_id: z.string().uuid().optional(),
 })
 
 export const SaleSchema = z.object({
