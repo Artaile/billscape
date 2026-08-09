@@ -13,6 +13,7 @@ import { PlatformPlansPage } from '@/pages/platform/PlatformPlansPage'
 import { PlatformSubscriptionsPage } from '@/pages/platform/PlatformSubscriptionsPage'
 import { PlatformUsagePage } from '@/pages/platform/PlatformUsagePage'
 import { PlatformSettingsPage } from '@/pages/platform/PlatformSettingsPage'
+import { AcceptInvitePage } from '@/pages/auth/AcceptInvitePage'
 import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { BillingPage } from '@/pages/billing/BillingPage'
 import { ProductsPage } from '@/pages/products/ProductsPage'
@@ -108,6 +109,7 @@ export function AppRouter() {
 
       {/* ── Tenant App ── */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/accept-invite" element={<AcceptInvitePage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route
         path="/onboarding"

@@ -98,20 +98,73 @@ export function LoginPage() {
     const hash = window.location.hash
     const search = window.location.search
     
-    if (hash.includes('error=')) {
-      const params = new URLSearchParams(hash.substring(1))
-      const desc = params.get('error_description')
-      if (desc) {
-        toast.error('Authentication Error', desc.replace(/\+/g, ' '))
+    // Check for errors in both hash and search separately
+    const searchParams = new URLSearchParams(search)
+    const hashParams = new URLSearchParams(hash.substring(1))
+    
+    const errorParam = searchParams.get('error') || hashParams.get('error')
+    const errorDesc = searchParams.get('error_description') || hashParams.get('error_description')
+
+    if (errorParam || errorDesc) {
+      if (errorDesc) {
+        toast.error('Authentication Error', errorDesc.replace(/\+/g, ' '))
+      } else {
+        toast.error('Authentication Error', errorParam || 'Unknown error')
       }
       window.history.replaceState(null, '', window.location.pathname)
       return
     }
 
-    if (hash.includes('type=invite') || hash.includes('type=recovery') || hash.includes('access_token=') || search.includes('type=invite') || search.includes('type=recovery')) {
+    if (hash.includes('type=recovery') || search.includes('type=recovery')) {
       setMode('set-password')
+    } else if (hash.includes('type=invite') || search.includes('type=invite') || search.includes('code=')) {
+      sessionStorage.setItem('pending_invite_redirect', 'true')
     }
-  }, [])
+
+    // Handle token_hash flow for invites (the modern PKCE-compatible way)
+    const tokenHash = searchParams.get('token_hash')
+    const type = searchParams.get('type') as any
+    if (tokenHash && type === 'invite') {
+      supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'invite' }).then(({ error }) => {
+        if (error) {
+          toast.error('Invite Error', error.message)
+        } else {
+          navigate('/accept-invite', { replace: true })
+        }
+      })
+      return
+    }
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setMode('set-password')
+      } else if (event === 'SIGNED_IN') {
+        if (sessionStorage.getItem('pending_invite_redirect') === 'true') {
+          sessionStorage.removeItem('pending_invite_redirect')
+          navigate('/accept-invite', { replace: true })
+        } else if (window.location.pathname === '/login' && session?.user?.user_metadata?.invited_role) {
+           navigate('/accept-invite', { replace: true })
+        }
+      }
+    })
+
+    // Fallback: If they load the page and already have a session, assume they are here to set a password
+    // because standard navigation would have bypassed /login.
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        if (sessionStorage.getItem('pending_invite_redirect') === 'true' || data.session.user.user_metadata?.invited_role) {
+          sessionStorage.removeItem('pending_invite_redirect')
+          navigate('/accept-invite', { replace: true })
+        } else {
+          setMode('set-password')
+        }
+      }
+    })
+
+    return () => {
+      authListener.subscription.unsubscribe()
+    }
+  }, [navigate])
 
 
 
