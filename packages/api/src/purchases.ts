@@ -23,7 +23,7 @@ export interface PurchaseLineInput {
   // New-product-only metadata — ignored when is_new_product is false.
   category_id?: string | null
   hsn_code?: string
-  variants?: { size: string; color: string; price_delta: number; stock_qty: number }[]
+  variants?: { size: string; color: string; price_delta: number; stock_qty: number; barcode_value?: string }[]
   batches?: { batch_no: string; expiry_date: string; qty: number }[]
   // Required for new-product lines (DB requires products.unit_id); unused for existing products.
   unit_id?: string
@@ -99,6 +99,7 @@ async function createProductForLine(
           color: v.color || null,
           price_delta: v.price_delta ?? 0,
           stock_qty: v.stock_qty ?? 0,
+          barcode_value: v.barcode_value || generateBarcode(),
         })),
       )
     }

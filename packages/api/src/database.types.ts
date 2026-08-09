@@ -1555,6 +1555,8 @@ export type Database = {
           sgst_amount: number
           tax_rate: number
           unit_price: number
+          variant_id: string | null
+          variant_label: string | null
         }
         Insert: {
           cgst_amount?: number
@@ -1573,6 +1575,8 @@ export type Database = {
           sgst_amount?: number
           tax_rate?: number
           unit_price: number
+          variant_id?: string | null
+          variant_label?: string | null
         }
         Update: {
           cgst_amount?: number
@@ -1591,6 +1595,8 @@ export type Database = {
           sgst_amount?: number
           tax_rate?: number
           unit_price?: number
+          variant_id?: string | null
+          variant_label?: string | null
         }
         Relationships: [
           {
@@ -1612,6 +1618,13 @@ export type Database = {
             columns: ["sale_id"]
             isOneToOne: false
             referencedRelation: "sales"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_items_variant_id_fkey"
+            columns: ["variant_id"]
+            isOneToOne: false
+            referencedRelation: "product_variants"
             referencedColumns: ["id"]
           },
         ]
@@ -2030,6 +2043,15 @@ export type Database = {
       }
       increment_inventory: {
         Args: { p_org_id: string; p_product_id: string; p_qty: number }
+        Returns: undefined
+      }
+      increment_inventory_variant: {
+        Args: {
+          p_org_id: string
+          p_product_id: string
+          p_qty: number
+          p_variant_id: string
+        }
         Returns: undefined
       }
       is_super_admin: { Args: never; Returns: boolean }

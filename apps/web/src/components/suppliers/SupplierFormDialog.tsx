@@ -74,6 +74,7 @@ export function SupplierFormDialog({
   const [form, setForm] = useState<SupplierFormState>(emptyForm(initialName))
   const [nameError, setNameError] = useState('')
   const [addressError, setAddressError] = useState('')
+  const [emailError, setEmailError] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -95,12 +96,21 @@ export function SupplierFormDialog({
     }
     setNameError('')
     setAddressError('')
+    setEmailError('')
   }, [open, editTarget, initialName])
 
   function setField(field: keyof SupplierFormState, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }))
     if (field === 'name' && value.trim()) setNameError('')
     if (field === 'address' && value.trim()) setAddressError('')
+    if (field === 'email') setEmailError('')
+  }
+
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const emailInvalid = form.email.trim().length > 0 && !EMAIL_REGEX.test(form.email.trim())
+
+  function validateEmail() {
+    setEmailError(emailInvalid ? 'Enter a valid email address' : '')
   }
 
   const rawPhoneDigits = form.phone.replace(/\D/g, '')
@@ -114,6 +124,10 @@ export function SupplierFormDialog({
     }
     if (!form.address.trim()) {
       setAddressError('Address is required')
+      hasError = true
+    }
+    if (emailInvalid) {
+      setEmailError('Enter a valid email address')
       hasError = true
     }
     if (hasError) return
@@ -204,7 +218,11 @@ export function SupplierFormDialog({
                 placeholder="supplier@example.com"
                 value={form.email}
                 onChange={(e) => setField('email', e.target.value)}
+                onBlur={validateEmail}
+                aria-invalid={!!emailError}
+                className={emailError ? 'border-red-500 focus-visible:ring-red-500' : undefined}
               />
+              {emailError && <p className="text-xs text-red-400">{emailError}</p>}
             </div>
 
             <div className="space-y-1.5">

@@ -33,7 +33,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
-import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
+import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, formatINR, qtyStepForUnit, toBaseQty, toMoney } from '@billscape/core'
 import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
@@ -105,6 +105,11 @@ export function POSTab() {
   const [orderDiscountType, setOrderDiscountType] = useState<DiscountType>('percent')
   const [orderDiscountValue, setOrderDiscountValue] = useState('')
   const [showTaxDetails, setShowTaxDetails] = useState(false)
+
+  // Variant picker — opened when tapping a product that has variants, since a plain click
+  // can't know which size/color the cashier means (scanning a variant's own barcode skips
+  // this entirely and goes straight into the cart via addToCart's variant argument).
+  const [variantPickerProduct, setVariantPickerProduct] = useState<{ id: string; name: string; price: number; tax_rate: number; hsn_code?: string | null; barcode_value?: string | null; inventory?: unknown; track_stock: boolean; unit?: unknown; secondary_unit?: unknown; conversion_factor?: number | null } | null>(null)
 
   // Customer state
   const [customerSearch, setCustomerSearch] = useState('')
@@ -210,27 +215,72 @@ export function POSTab() {
     })
   }, [cart, totals.is_interstate])
 
-  // Fetch products
+  // Fetch products (each carries its own variants, if any, so a variant's barcode can be
+  // matched client-side without a second round-trip on every scan)
+  const PRODUCT_SELECT =
+    'id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor, product_variants(id, size, color, price_delta, stock_qty, barcode_value)'
   const { data: products } = useQuery({
     queryKey: ['billing-products', orgId, productSearch],
     enabled: !!orgId,
     queryFn: async () => {
       let query = supabase
         .from('products')
-        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+        .select(PRODUCT_SELECT)
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
         .limit(50)
 
       if (productSearch) {
+        // PostgREST's .or() cannot filter on an embedded table's column (product_variants.*)
+        // combined with top-level columns in one expression — it silently matches 0 rows for
+        // that clause instead of erroring, which made scanning/typing a variant's own barcode
+        // return an empty result. Match name/base-barcode server-side, then separately look up
+        // any product whose variant barcode matches and merge it in.
         query = query.or(`name.ilike.%${productSearch}%,barcode_value.ilike.%${productSearch}%`)
       }
 
       const { data } = await query
-      return data ?? []
+      const results = data ?? []
+
+      if (productSearch) {
+        const { data: variantMatches } = await supabase
+          .from('products')
+          .select(PRODUCT_SELECT)
+          .eq('organization_id', orgId!)
+          .eq('is_active', true)
+          .filter('product_variants.barcode_value', 'ilike', `%${productSearch}%`)
+          .not('product_variants', 'is', null)
+          .limit(10)
+
+        for (const p of variantMatches ?? []) {
+          if (!results.some((r) => r.id === p.id)) results.push(p)
+        }
+      }
+
+      return results
     },
   })
+
+  interface ProductVariant { id: string; size: string | null; color: string | null; price_delta: number; stock_qty: number; barcode_value: string | null }
+
+  function variantLabel(v: ProductVariant): string {
+    return [v.size, v.color].filter(Boolean).join(' / ')
+  }
+
+  // Finds a barcode match anywhere — base product first, then any variant's own barcode —
+  // so scanning a variant-specific label rings up that exact size/color at its own price
+  // instead of failing with "not found" or (worse) silently pricing it as the base product.
+  function findByBarcode(code: string): { product: NonNullable<typeof products>[number]; variant: ProductVariant | null } | null {
+    if (!products) return null
+    for (const p of products) {
+      if (p.barcode_value === code) return { product: p, variant: null }
+      const variants = (p.product_variants ?? []) as ProductVariant[]
+      const v = variants.find((v) => v.barcode_value === code)
+      if (v) return { product: p, variant: v }
+    }
+    return null
+  }
 
   // Fetch customers for picker
   const { data: customers } = useQuery({
@@ -331,43 +381,54 @@ export function POSTab() {
     unit?: unknown
     secondary_unit?: unknown
     conversion_factor?: number | null
-  }) => {
-    const stock = getStock(product.inventory)
+  }, variant?: ProductVariant | null) => {
+    const stock = variant ? variant.stock_qty : getStock(product.inventory)
     const unit = getUnit(product.unit)
     const secondaryUnit = getUnit(product.secondary_unit)
+    const label = variant ? variantLabel(variant) : undefined
+    const displayName = variant ? `${product.name} (${label})` : product.name
     if (product.track_stock && stock <= 0) {
-      toast.error(`Out of stock: ${product.name}`)
+      toast.error(`Out of stock: ${displayName}`)
       return
     }
 
+    // Cart lines are keyed by product_id — a variant of the same product gets its own line
+    // by using a synthetic id (product_id + variant_id) so "Red / L" and "Blue / M" of the
+    // same T-shirt don't collapse into one row or overwrite each other's price/qty.
+    const lineKey = variant ? `${product.id}::${variant.id}` : product.id
+
     setCart((prev) => {
-      const existing = prev.find((c) => c.product_id === product.id)
+      const existing = prev.find((c) => (c.variant_id ? `${c.product_id}::${c.variant_id}` : c.product_id) === lineKey)
       if (existing) {
         if (product.track_stock && existing.qty >= stock) {
-          toast.error(`Out of stock: ${product.name}`)
+          toast.error(`Out of stock: ${displayName}`)
           return prev
         }
         // Existing-line increment respects the unit's step (1 for count-based, 0.1 for
         // decimal-allowed units like Kg) — first add below always starts at a full 1 unit.
         const step = qtyStepForUnit(existing.unit?.allow_decimal ?? false)
         return prev.map((c) =>
-          c.product_id === product.id ? { ...c, qty: c.qty + step } : c,
+          (c.variant_id ? `${c.product_id}::${c.variant_id}` : c.product_id) === lineKey
+            ? { ...c, qty: c.qty + step }
+            : c,
         )
       }
       const newItem: CartItem = {
         product_id: product.id,
-        product_name: product.name,
+        product_name: displayName,
         hsn_code: product.hsn_code ?? undefined,
         tax_rate: product.tax_rate as CartItem['tax_rate'],
-        unit_price: product.price,
+        unit_price: variant ? toMoney(product.price + variant.price_delta) : product.price,
         qty: 1,
         discount_pct: 0,
         discount_type: 'percent',
         discount_amount: 0,
-        barcode_value: product.barcode_value ?? undefined,
+        barcode_value: (variant ? variant.barcode_value : product.barcode_value) ?? undefined,
         unit,
         secondary_unit: secondaryUnit,
         conversion_factor: product.conversion_factor ?? undefined,
+        variant_id: variant?.id,
+        variant_label: label,
       }
       return [...prev, newItem]
     })
@@ -395,10 +456,11 @@ export function POSTab() {
           lastScannedCode.current = ''
         }, 500)
 
-        // Lookup product
-        const found = products?.find((p) => p.barcode_value === code)
+        // Lookup product — checks the base barcode first, then every variant's own barcode,
+        // so a variant-specific scan rings up that exact size/color at its own price.
+        const found = findByBarcode(code)
         if (found) {
-          addToCart(found)
+          addToCart(found.product, found.variant)
         } else {
           toast({ title: `Product not found: ${code}`, variant: 'warning' })
         }
@@ -421,23 +483,28 @@ export function POSTab() {
     [products, addToCart, focusScanInput],
   )
 
-  const updateQty = useCallback((productId: string, qty: number) => {
+  // Cart lines are matched by product_id + variant_id together — two variants of the same
+  // product (e.g. Red/L and Blue/M) share a product_id but must be edited/removed independently.
+  const lineMatches = (c: CartItem, productId: string, variantId?: string) =>
+    c.product_id === productId && c.variant_id === variantId
+
+  const updateQty = useCallback((productId: string, qty: number, variantId?: string) => {
     if (qty <= 0) {
-      setCart((prev) => prev.filter((c) => c.product_id !== productId))
+      setCart((prev) => prev.filter((c) => !lineMatches(c, productId, variantId)))
       return
     }
     setCart((prev) =>
-      prev.map((c) => (c.product_id === productId ? { ...c, qty } : c)),
+      prev.map((c) => (lineMatches(c, productId, variantId) ? { ...c, qty } : c)),
     )
   }, [])
 
   // Switches which unit a cart line is being rung up in (base vs secondary, e.g. Piece vs Box).
   // Purely a display/entry convenience — sale_items.qty is always persisted in the product's
   // base unit (see createSale's item-building below), so this never touches what's stored.
-  const updateSellingUnit = useCallback((productId: string, unitId: string) => {
+  const updateSellingUnit = useCallback((productId: string, unitId: string, variantId?: string) => {
     setCart((prev) =>
       prev.map((c) => {
-        if (c.product_id !== productId) return c
+        if (!lineMatches(c, productId, variantId)) return c
         // Switching units resets the line to "1 of the new unit" rather than carrying over
         // a converted fractional qty (e.g. 1 Piece becoming 0.083 Box) — matches the same
         // "first add always starts at 1" convention used when a product first enters the cart.
@@ -450,10 +517,10 @@ export function POSTab() {
     )
   }, [])
 
-  const updateDiscount = useCallback((productId: string, discountType: DiscountType, value: number) => {
+  const updateDiscount = useCallback((productId: string, discountType: DiscountType, value: number, variantId?: string) => {
     setCart((prev) =>
       prev.map((c) =>
-        c.product_id === productId
+        lineMatches(c, productId, variantId)
           ? {
               ...c,
               discount_type: discountType,
@@ -465,8 +532,8 @@ export function POSTab() {
     )
   }, [])
 
-  const removeFromCart = useCallback((productId: string) => {
-    setCart((prev) => prev.filter((c) => c.product_id !== productId))
+  const removeFromCart = useCallback((productId: string, variantId?: string) => {
+    setCart((prev) => prev.filter((c) => !lineMatches(c, productId, variantId)))
   }, [])
 
   const saveHeldBills = (bills: HeldBill[]) => {
@@ -709,14 +776,25 @@ export function POSTab() {
         <div className="flex-1 overflow-y-auto p-3">
           <div className="grid grid-cols-3 gap-2">
             {products?.map((product) => {
-              const stock = getStock(product.inventory)
+              const variants = (product.product_variants ?? []) as ProductVariant[]
+              const hasVariants = product.has_variants && variants.length > 0
+              const stock = hasVariants
+                ? variants.reduce((sum, v) => sum + v.stock_qty, 0)
+                : getStock(product.inventory)
               const outOfStock = product.track_stock && stock <= 0
               const lowStock = product.track_stock && stock > 0 && stock <= 10
 
               return (
                 <button
                   key={product.id}
-                  onClick={() => !outOfStock && addToCart(product)}
+                  onClick={() => {
+                    if (outOfStock) return
+                    if (hasVariants) {
+                      setVariantPickerProduct(product)
+                    } else {
+                      addToCart(product)
+                    }
+                  }}
                   disabled={outOfStock}
                   className={cn(
                     'relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all',
@@ -731,16 +809,23 @@ export function POSTab() {
                   <p className="text-xs font-medium text-zinc-200 leading-tight line-clamp-2">
                     {product.name}
                   </p>
-                  <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>
-                  {product.track_stock && (
-                    <div className="mt-auto">
-                      {outOfStock ? (
+                  <p className="text-sm font-bold text-indigo-300">
+                    {hasVariants ? 'from ' : ''}{formatINR(product.price)}
+                  </p>
+                  <div className="mt-auto flex items-center gap-1 flex-wrap">
+                    {hasVariants && (
+                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-indigo-700 text-indigo-300">
+                        {variants.length} options
+                      </Badge>
+                    )}
+                    {product.track_stock && (
+                      outOfStock ? (
                         <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
                       ) : lowStock ? (
                         <Badge variant="warning" className="text-[9px] px-1.5 py-0">{stock} left</Badge>
-                      ) : null}
-                    </div>
-                  )}
+                      ) : null
+                    )}
+                  </div>
                 </button>
               )
             })}
@@ -873,7 +958,7 @@ export function POSTab() {
           ) : (
             cart.map((item, i) => (
               <CartItemRow
-                key={item.product_id}
+                key={item.variant_id ? `${item.product_id}::${item.variant_id}` : item.product_id}
                 item={item}
                 lineTotal={lineTotals[i]}
                 onQtyChange={updateQty}
@@ -1349,6 +1434,46 @@ export function POSTab() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Variant picker — shown when tapping a product tile that has size/color options */}
+      <Dialog open={!!variantPickerProduct} onOpenChange={(open) => !open && setVariantPickerProduct(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{variantPickerProduct?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5 max-h-80 overflow-y-auto">
+            {variantPickerProduct && ((products?.find((p) => p.id === variantPickerProduct.id)?.product_variants ?? []) as ProductVariant[]).map((v) => {
+              const vOut = variantPickerProduct.track_stock && v.stock_qty <= 0
+              return (
+                <button
+                  key={v.id}
+                  disabled={vOut}
+                  onClick={() => {
+                    addToCart(variantPickerProduct, v)
+                    setVariantPickerProduct(null)
+                  }}
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors',
+                    vOut
+                      ? 'border-zinc-800 bg-zinc-900/30 opacity-50 cursor-not-allowed'
+                      : 'border-zinc-800 bg-card hover:border-indigo-500 hover:bg-indigo-600/5',
+                  )}
+                >
+                  <div>
+                    <p className="text-sm font-medium text-zinc-100">{variantLabel(v)}</p>
+                    {variantPickerProduct.track_stock && (
+                      <p className="text-[11px] text-zinc-500">{vOut ? 'Out of stock' : `${v.stock_qty} in stock`}</p>
+                    )}
+                  </div>
+                  <span className="text-sm font-bold text-indigo-300">
+                    {formatINR(toMoney(variantPickerProduct.price + v.price_delta))}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </DialogContent>
       </Dialog>
 

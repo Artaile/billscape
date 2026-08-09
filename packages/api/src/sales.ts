@@ -38,6 +38,8 @@ function buildSaleItemRows(saleId: string, orgId: string, items: CartItem[], int
       product_id: item.product_id,
       product_name: item.product_name,
       hsn_code: item.hsn_code ?? null,
+      variant_id: item.variant_id ?? null,
+      variant_label: item.variant_label ?? null,
       qty: item.qty,
       unit_price: item.unit_price,
       discount_pct: item.discount_pct,
@@ -190,16 +192,17 @@ export async function updateSale(
 ) {
   const { data: oldItems, error: oldItemsError } = await client
     .from('sale_items')
-    .select('product_id, qty')
+    .select('product_id, qty, variant_id')
     .eq('sale_id', saleId)
 
   if (oldItemsError) return { data: null, error: oldItemsError }
 
   // Restore stock consumed by the original items before replacing them.
   for (const item of oldItems ?? []) {
-    await client.rpc('increment_inventory', {
+    await client.rpc('increment_inventory_variant', {
       p_org_id: orgId,
       p_product_id: item.product_id,
+      p_variant_id: item.variant_id ?? null,
       p_qty: item.qty,
     })
     await client.from('stock_movements').insert({
@@ -275,15 +278,16 @@ export async function voidSale(
 ) {
   const { data: items, error: itemsError } = await client
     .from('sale_items')
-    .select('product_id, qty')
+    .select('product_id, qty, variant_id')
     .eq('sale_id', saleId)
 
   if (itemsError) return { data: null, error: itemsError }
 
   for (const item of items ?? []) {
-    await client.rpc('increment_inventory', {
+    await client.rpc('increment_inventory_variant', {
       p_org_id: orgId,
       p_product_id: item.product_id,
+      p_variant_id: item.variant_id ?? null,
       p_qty: item.qty,
     })
     await client.from('stock_movements').insert({
@@ -332,15 +336,16 @@ export async function voidSale(
 export async function restoreSale(client: TypedSupabaseClient, orgId: string, saleId: string, userId: string) {
   const { data: items, error: itemsError } = await client
     .from('sale_items')
-    .select('product_id, qty')
+    .select('product_id, qty, variant_id')
     .eq('sale_id', saleId)
 
   if (itemsError) return { data: null, error: itemsError }
 
   for (const item of items ?? []) {
-    await client.rpc('increment_inventory', {
+    await client.rpc('increment_inventory_variant', {
       p_org_id: orgId,
       p_product_id: item.product_id,
+      p_variant_id: item.variant_id ?? null,
       p_qty: -item.qty,
     })
     await client.from('stock_movements').insert({

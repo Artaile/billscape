@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, Fragment } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2, Check, QrCode } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -9,7 +9,7 @@ import {
   generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
-import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
+import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, createCategory, type PurchaseLineInput } from '@billscape/api'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 import { useNavigationGuard, useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
@@ -28,7 +28,7 @@ interface Supplier { id: string; name: string; phone: string | null; gstin: stri
 interface ExistingProduct { id: string; name: string; sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null }
 interface UnitOption { id: string; name: string; symbol: string; allow_decimal: boolean }
 
-interface VariantRow { size: string; color: string; price_delta: string; stock_qty: string }
+interface VariantRow { size: string; color: string; price_delta: string; stock_qty: string; barcode_value: string }
 interface BatchRow { batch_no: string; expiry_date: string; qty: string }
 
 export interface PurchaseRow {
@@ -125,6 +125,9 @@ export function PurchaseFormPage() {
   const [purchaseType, setPurchaseType] = useState<'credit' | 'cash'>('credit')
   const [notes, setNotes] = useState('')
   const [showAddSupplier, setShowAddSupplier] = useState(false)
+  const [showAddCategory, setShowAddCategory] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [addingCategory, setAddingCategory] = useState(false)
 
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
   const [entrySearch, setEntrySearch] = useState('')
@@ -136,6 +139,16 @@ export function PurchaseFormPage() {
   const [roundOffEnabled, setRoundOffEnabled] = useState(false)
   const [justSavedNewProducts, setJustSavedNewProducts] = useState<PurchaseRow[]>([])
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+
+  function toggleRowExpanded(index: number) {
+    setExpandedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }
 
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const productNameRef = useRef<HTMLInputElement | null>(null)
@@ -223,7 +236,7 @@ export function PurchaseFormPage() {
     },
   })
 
-  const { data: categories } = useQuery({
+  const { data: categories, refetch: refetchCategories } = useQuery({
     queryKey: ['categories', orgId],
     enabled: !!orgId,
     queryFn: async () => {
@@ -231,6 +244,22 @@ export function PurchaseFormPage() {
       return (data ?? []) as { id: string; name: string }[]
     },
   })
+
+  async function handleAddCategory() {
+    if (!newCategoryName.trim() || !orgId) return
+    setAddingCategory(true)
+    const { data, error } = await createCategory(supabase, { organization_id: orgId, name: newCategoryName.trim() })
+    setAddingCategory(false)
+    if (error || !data) {
+      toast.error('Failed to add category', error?.message)
+      return
+    }
+    await refetchCategories()
+    setEntry((p) => ({ ...p, category_id: data.id }))
+    setNewCategoryName('')
+    setShowAddCategory(false)
+    toast.success('Category added')
+  }
 
   const { data: products } = useQuery({
     queryKey: ['products-all', orgId],
@@ -564,7 +593,7 @@ export function PurchaseFormPage() {
           secondary_unit_id: r.is_new_product ? (r.secondary_unit_id ?? undefined) : undefined,
           conversion_factor: r.is_new_product ? (r.conversion_factor ?? undefined) : undefined,
           variants: r.is_new_product && r.has_variants
-            ? r.variants.filter((v) => v.size.trim() || v.color.trim()).map((v) => ({ size: v.size, color: v.color, price_delta: parseNum(v.price_delta), stock_qty: parseNum(v.stock_qty) }))
+            ? r.variants.filter((v) => v.size.trim() || v.color.trim()).map((v) => ({ size: v.size, color: v.color, price_delta: parseNum(v.price_delta), stock_qty: parseNum(v.stock_qty), barcode_value: v.barcode_value.trim() || undefined }))
             : undefined,
           batches: r.is_new_product && r.has_batches
             ? r.batches.filter((b) => b.batch_no.trim() && b.expiry_date).map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date, qty: parseNum(b.qty) }))
@@ -913,16 +942,47 @@ export function PurchaseFormPage() {
                     {entry.showMoreDetails && (
                       <div className="mt-3 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
                         <div className="grid grid-cols-3 gap-2">
-                          <div className="space-y-1">
+                          <div className="space-y-1 relative">
                             <Label className="text-xs">Category</Label>
-                            <select
-                              value={entry.category_id ?? ''}
-                              onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
-                              className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                              <option value="">— No category —</option>
-                              {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
+                            {showAddCategory ? (
+                              <div className="flex gap-1">
+                                <Input
+                                  autoFocus
+                                  placeholder="Category name"
+                                  value={newCategoryName}
+                                  onChange={(e) => setNewCategoryName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); handleAddCategory() }
+                                    if (e.key === 'Escape') { setShowAddCategory(false); setNewCategoryName('') }
+                                  }}
+                                  className="h-9 text-xs"
+                                />
+                                <Button type="button" size="sm" className="h-9 px-2 shrink-0"
+                                  disabled={!newCategoryName.trim() || addingCategory}
+                                  onClick={handleAddCategory}>
+                                  {addingCategory ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                                </Button>
+                                <Button type="button" variant="ghost" size="sm" className="h-9 px-2 shrink-0"
+                                  onClick={() => { setShowAddCategory(false); setNewCategoryName('') }}>
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-1">
+                                <select
+                                  value={entry.category_id ?? ''}
+                                  onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
+                                  className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                >
+                                  <option value="">— No category —</option>
+                                  {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                                <Button type="button" variant="outline" size="sm" className="h-9 px-2 shrink-0"
+                                  title="Add new category" onClick={() => setShowAddCategory(true)}>
+                                  <Plus className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            )}
                           </div>
                           <div className="space-y-1">
                             <Label className="text-xs">Unit *</Label>
@@ -956,7 +1016,7 @@ export function PurchaseFormPage() {
                               onClick={() => setEntry((p) => ({
                                 ...p, has_variants: !p.has_variants,
                                 variants: !p.has_variants && p.variants.length === 0
-                                  ? [{ size: '', color: '', price_delta: '', stock_qty: '' }]
+                                  ? [{ size: '', color: '', price_delta: '', stock_qty: '', barcode_value: generateBarcode() }]
                                   : p.variants,
                               }))}
                               className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_variants ? 'bg-indigo-600' : 'bg-zinc-700')}
@@ -968,14 +1028,17 @@ export function PurchaseFormPage() {
 
                           {entry.has_variants && (
                             <div className="space-y-1.5 pl-1">
-                              <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
-                                <span>Size</span><span>Color</span><span>Price +/-</span><span>Stock</span><span></span>
+                              <p className="text-[11px] text-zinc-600">
+                                Each variant gets its own barcode — scanning it at billing/POS will ring up this exact size/color at its own price.
+                              </p>
+                              <div className="grid grid-cols-6 gap-2 text-[11px] text-zinc-500">
+                                <span>Size</span><span>Color</span><span>Price +/-</span><span>Stock</span><span>Barcode</span><span></span>
                               </div>
                               {entry.variants.map((v, i) => {
                                 const vTouched = v.size.trim() || v.color.trim() || v.price_delta || v.stock_qty
                                 const vMissing = vTouched && !v.size.trim() && !v.color.trim()
                                 return (
-                                <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                                <div key={i} className="grid grid-cols-6 gap-2 items-center">
                                   <Input placeholder="S / M / L" value={v.size}
                                     onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, size: e.target.value } : x) }))}
                                     className={cn('h-8 text-xs', vMissing && 'border-red-500')} />
@@ -988,6 +1051,16 @@ export function PurchaseFormPage() {
                                   <Input type="text" inputMode="decimal" placeholder="0" value={v.stock_qty}
                                     onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, stock_qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
                                     className="h-8 text-xs" />
+                                  <div className="flex gap-1">
+                                    <Input value={v.barcode_value}
+                                      onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, barcode_value: e.target.value } : x) }))}
+                                      className="h-8 text-[11px] font-mono" />
+                                    <button type="button" title="Regenerate barcode"
+                                      onClick={() => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, barcode_value: generateBarcode() } : x) }))}
+                                      className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                                      <RefreshCw className="h-3 w-3" />
+                                    </button>
+                                  </div>
                                   <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
                                     onClick={() => setEntry((p) => ({ ...p, variants: p.variants.filter((_, j) => j !== i) }))}>
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -996,7 +1069,7 @@ export function PurchaseFormPage() {
                                 )
                               })}
                               <Button type="button" variant="outline" size="sm" className="text-xs"
-                                onClick={() => setEntry((p) => ({ ...p, variants: [...p.variants, { size: '', color: '', price_delta: '', stock_qty: '' }] }))}>
+                                onClick={() => setEntry((p) => ({ ...p, variants: [...p.variants, { size: '', color: '', price_delta: '', stock_qty: '', barcode_value: generateBarcode() }] }))}>
                                 <Plus className="h-3.5 w-3.5" /> Add Variant
                               </Button>
                             </div>
@@ -1087,15 +1160,29 @@ export function PurchaseFormPage() {
                   <TableBody>
                     {rows.length === 0 ? (
                       <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
-                    ) : rows.map((r, i) => (
-                      <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
+                    ) : rows.map((r, i) => {
+                      const rowVariants = r.is_new_product && r.has_variants ? r.variants.filter((v) => v.size.trim() || v.color.trim()) : []
+                      const expanded = expandedRows.has(i)
+                      return (
+                      <Fragment key={i}>
+                      <TableRow className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
                         <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.sku}</TableCell>
                         <TableCell className="text-sm text-zinc-200 whitespace-nowrap">
                           <div className="flex items-center gap-2">
+                            {rowVariants.length > 0 && (
+                              <button type="button" onClick={() => toggleRowExpanded(i)} className="text-zinc-500 hover:text-zinc-200 shrink-0">
+                                {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
                             <span>{r.product_name}</span>
                             <span className={cn('shrink-0 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
                               {r.is_new_product ? 'New' : 'Existing'}
                             </span>
+                            {rowVariants.length > 0 && (
+                              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+                                {rowVariants.length} variants
+                              </span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.unit_cost))}</TableCell>
@@ -1119,7 +1206,31 @@ export function PurchaseFormPage() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      {expanded && rowVariants.length > 0 && (
+                        <TableRow className="bg-zinc-950/60">
+                          <TableCell colSpan={11} className="py-2">
+                            <div className="pl-6 space-y-1">
+                              <div className="grid grid-cols-[1fr_1fr_100px_80px_1fr] gap-2 text-[10px] text-zinc-500 uppercase tracking-wide">
+                                <span>Size</span><span>Color</span><span>Price +/-</span><span>Stock</span><span>Barcode</span>
+                              </div>
+                              {rowVariants.map((v, vi) => (
+                                <div key={vi} className="grid grid-cols-[1fr_1fr_100px_80px_1fr] gap-2 text-xs text-zinc-300 items-center">
+                                  <span>{v.size || '—'}</span>
+                                  <span>{v.color || '—'}</span>
+                                  <span className="tabular-nums">{v.price_delta ? formatINR(parseNum(v.price_delta)) : '—'}</span>
+                                  <span className="tabular-nums">{v.stock_qty || '0'}</span>
+                                  <span className="font-mono text-zinc-500 flex items-center gap-1">
+                                    <QrCode className="h-3 w-3" />{v.barcode_value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      </Fragment>
+                      )
+                    })}
                   </TableBody>
                 </Table>
                 </div>

@@ -209,6 +209,13 @@ export interface CartItem {
   unit?: Unit
   secondary_unit?: Unit
   conversion_factor?: number
+  // Set when this line was added via a specific product_variants row (e.g. scanning a
+  // variant's own barcode) rather than the base product. unit_price already has the
+  // variant's price_delta baked in — computeGST/computeLineTax never need to know about
+  // variants, they just see a priced line like any other. variant_label is display-only
+  // (e.g. "Red / L") for the cart row and printed invoice.
+  variant_id?: string
+  variant_label?: string
 }
 
 export interface TaxBreakupLine {

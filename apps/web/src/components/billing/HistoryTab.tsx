@@ -467,6 +467,8 @@ function EditSaleDialog({
         discount_pct: it.discount_pct,
         discount_type: it.discount_type,
         discount_amount: it.discount_amount,
+        variant_id: it.variant_id ?? undefined,
+        variant_label: it.variant_label ?? undefined,
       }))
       setItems(mapped)
       setLoaded(true)
@@ -485,12 +487,14 @@ function EditSaleDialog({
     return base
   }, [items, gstContext, sale])
 
-  const updateQty = (productId: string, qty: number) => {
+  // Two variants of the same product share a product_id, so qty edits must also match variant_id.
+  const updateQty = (productId: string, qty: number, variantId?: string) => {
+    const matches = (i: CartItem) => i.product_id === productId && i.variant_id === variantId
     if (qty <= 0) {
-      setItems((prev) => prev.filter((i) => i.product_id !== productId))
+      setItems((prev) => prev.filter((i) => !matches(i)))
       return
     }
-    setItems((prev) => prev.map((i) => (i.product_id === productId ? { ...i, qty } : i)))
+    setItems((prev) => prev.map((i) => (matches(i) ? { ...i, qty } : i)))
   }
 
   const saveMutation = useMutation({
@@ -538,14 +542,14 @@ function EditSaleDialog({
               the new quantities. Item removal or price is not editable — use Returns for refunds.
             </p>
             {items.map((item) => (
-              <div key={item.product_id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+              <div key={item.variant_id ? `${item.product_id}::${item.variant_id}` : item.product_id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-zinc-100 truncate">{item.product_name}</p>
                   <p className="text-xs text-zinc-500">{formatINR(item.unit_price)} × {item.qty}</p>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => updateQty(item.product_id, item.qty - 1)}
+                    onClick={() => updateQty(item.product_id, item.qty - 1, item.variant_id)}
                     disabled={item.qty <= 1}
                     className="flex h-7 w-7 items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-white disabled:opacity-30"
                   >
@@ -553,7 +557,7 @@ function EditSaleDialog({
                   </button>
                   <span className="w-8 text-center text-sm text-zinc-100">{item.qty}</span>
                   <button
-                    onClick={() => updateQty(item.product_id, item.qty + 1)}
+                    onClick={() => updateQty(item.product_id, item.qty + 1, item.variant_id)}
                     className="flex h-7 w-7 items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-white"
                   >
                     <Plus className="h-3.5 w-3.5" />

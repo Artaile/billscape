@@ -84,7 +84,9 @@ Supabase project ID: bzvbkscspzdschskbqtd
   **order_discount_type, order_discount_value, order_discount_amount, net_payable** — post-tax bill discount;
   **loyalty_customer_id, loyalty_points_redeemed, loyalty_redeem_amount, loyalty_points_earned** — POS
   loyalty integration, see Loyalty Program section)
-- sale_items (cgst_amount, sgst_amount, igst_amount per line; **discount_type, discount_amount** — flat/percent line discount, alongside existing discount_pct)
+- sale_items (cgst_amount, sgst_amount, igst_amount per line; **discount_type, discount_amount** — flat/percent line discount, alongside existing discount_pct; **variant_id** FK → product_variants,
+  **variant_label** — set when the line was rung up via a specific variant's own barcode/picker,
+  see Variant-aware POS section)
 - purchases (id, org_id, supplier_id, invoice_no, purchase_no, **purchase_date**, **purchase_type**
   enum[credit/cash], **bill_discount_type**, **bill_discount_value**, **round_off**, total_amount, notes)
 - purchase_items (product_id nullable — free-text items allowed; **tax_rate**, **taxable_amount**,
@@ -144,6 +146,13 @@ currency, date_format, timezone
   added — see Suppliers form section
 - migration 017_supplier_upi_id.sql (2026-08-06): suppliers.upi_id added (optional) — see
   Suppliers form section
+- migration 019_variant_sales.sql (2026-08-09): sale_items.variant_id (FK → product_variants) +
+  variant_label added; decrement_stock_on_sale() trigger updated to also decrement
+  product_variants.stock_qty when variant_id is set (GREATEST(0, ...) floor, mirrors the
+  aggregate inventory decrement); increment_inventory_variant(p_org_id, p_product_id,
+  p_variant_id, p_qty) RPC added — variant-aware sibling of increment_inventory, used by
+  updateSale/voidSale/restoreSale for stock reversal/reapplication on a variant-linked line —
+  see Variant-aware POS section
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -207,6 +216,13 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - **Layout**: 2-column grid (Name+Phone, Email+GSTIN, Bank Name+Account, IFSC+UPI) in a
   `max-w-lg` dialog — the original one-field-per-row layout in a `max-w-sm` dialog made the
   form tall enough that the Save/Cancel footer scrolled out of the viewport on a standard screen.
+
+## Suppliers form email validation (as of 2026-08-09)
+- `SupplierFormDialog.tsx` validates email format on blur (`EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/`)
+  — red border + inline "Enter a valid email address" message, and blocks Save while invalid.
+  No shared `SupplierSchema` exists in `packages/core/src/validation` (unlike Product), so this is
+  local component state/regex, not zod-driven — do not assume every form's validation is schema-based.
+  Editing the field after a blur-triggered error clears the error immediately (no need to blur again).
 
 ## Purchases page features (as of 2026-07-29)
 - **New Purchase / Edit Purchase are FULL PAGES** (`/purchases/new`, `/purchases/:id/edit`), not
@@ -284,6 +300,74 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
   `purchases.bill_discount_value`, `purchases.round_off` added; `purchase_items.tax_rate`,
   `taxable_amount`, `cgst_amount`, `sgst_amount`, `igst_amount` added (migration
   `013_purchase_enhancements.sql`).
+
+## Purchase form — inline category + variant QR/barcodes (as of 2026-08-09)
+- **Inline "Create new category"**: a `+` button next to the Category `<select>` (inside "More
+  details") swaps it for an inline `<Input>` + Check/X buttons (Enter submits, Escape cancels).
+  `handleAddCategory()` calls `createCategory` (`@billscape/api`), refetches the categories query,
+  and auto-selects the new category on the current row (`entry.category_id`) — no separate trip to
+  a Categories page needed mid-purchase-entry.
+- **Per-variant barcode**: `VariantRow` gained a `barcode_value` field, auto-filled with
+  `generateBarcode()` (`packages/core/src/codes.ts`) whenever a new variant row is created (Track
+  Variants toggle-on, or "Add Variant"). The variant table (inside "More details") has its own
+  Barcode column with an `<Input>` + regenerate button per row, plus an explanatory note that each
+  variant gets scanned/priced independently at POS. Saved via `createProductForLine` in
+  `packages/api/src/purchases.ts` into `product_variants.barcode_value` (falls back to
+  `generateBarcode()` if left blank).
+- **Items table variant breakdown**: rows with `has_variants && variants.length > 0` get an expand
+  chevron + "N variants" badge in the Product cell (`expandedRows: Set<number>` state,
+  `toggleRowExpanded`). Expanding renders a sub-`<TableRow colSpan={11}>` with a
+  `grid-cols-[1fr_1fr_100px_80px_1fr]` breakdown of Size/Color/Price±/Stock/Barcode per variant.
+  Uses `Fragment` (named import from `'react'`, not `React.Fragment` — this file has no default
+  `React` import) to wrap each row + its expandable sub-row.
+
+## Variant-aware POS scanning (as of 2026-08-09)
+- **Scope**: scanning or typing a specific variant's own barcode at POS resolves that exact
+  size/color, prices it at `product.price + variant.price_delta`, and decrements that variant's
+  own `product_variants.stock_qty` in addition to the aggregate `products`→`inventory.stock_qty`
+  row — not just "save a barcode string and price generically." This was an explicit scope
+  decision (via AskUserQuestion) over two lighter alternatives (price-correct-only /
+  save-barcode-only) because the user's ask was for scan-to-shop correctness end-to-end, including
+  stock.
+- `CartItem` (`packages/core/src/types/index.ts`) gained optional `variant_id`/`variant_label`.
+  Every cart-line operation in `POSTab.tsx` (`addToCart`, `updateQty`, `updateSellingUnit`,
+  `updateDiscount`, `removeFromCart`) and `CartItem.tsx`'s row callbacks now take an optional
+  `variantId` and match lines via a composite `product_id + variant_id` key (`lineMatches` /
+  `matches` helpers) — two variants of the same product share `product_id`, so matching on
+  `product_id` alone would collapse them into one cart line. Cart list `key` and `HistoryTab.tsx`'s
+  `EditSaleDialog` item list `key` are both composite for the same reason.
+- **Product grid tile**: a product with `has_variants && product_variants.length > 0` shows a
+  "from ₹X" price prefix + "N options" badge and opens a Variant Picker `<Dialog>` on click
+  instead of adding straight to cart. The picker lists each variant's label, its own price
+  (`product.price + variant.price_delta`), and disables it with "Out of stock" when
+  `track_stock && stock_qty <= 0`.
+- `findByBarcode(code)` (`POSTab.tsx`) checks the base product's `barcode_value` first, then each
+  variant's own `barcode_value`, and is used by both the USB-scanner keydown handler and manual
+  barcode typing in the search box.
+- **PostgREST `.or()` bug (found + fixed 2026-08-09)**: the product search query originally did
+  `.or('name.ilike...,barcode_value.ilike...,product_variants.barcode_value.ilike...')` — PostgREST
+  does **not** support filtering an embedded/joined table's column inside a top-level `.or()`
+  alongside the parent table's own columns; it silently returns 0 rows for that whole `.or()`
+  instead of erroring (visible as a `400` in the network tab, not a JS exception), which broke
+  typing or scanning a variant-only barcode into the search box. Fixed by splitting into two
+  queries: `.or('name.ilike...,barcode_value.ilike...')` on the base table, plus a separate query
+  using `.filter('product_variants.barcode_value', 'ilike', ...)` with `.not('product_variants',
+  'is', null)` (the correct PostgREST syntax for filtering by an embedded resource), merged
+  client-side by product id. **If any other query needs to search by a joined table's column
+  inside an `.or()`, it has the same bug — split it the same way, don't try to jam it into one
+  `.or()` string.**
+- **Sale pipeline**: `buildSaleItemRows()` writes `variant_id`/`variant_label` on insert. The
+  `decrement_stock_on_sale` trigger (migration `019_variant_sales.sql`) decrements
+  `product_variants.stock_qty` (floored at 0) in addition to its existing `inventory.stock_qty`
+  decrement, when `NEW.variant_id IS NOT NULL`. `updateSale`/`voidSale`/`restoreSale`
+  (`packages/api/src/sales.ts`) all now `select('product_id, qty, variant_id')` and call
+  `increment_inventory_variant` (not the old `increment_inventory`) so stock reversal/reapplication
+  during edit, void, and restore correctly targets the same variant the original sale line hit —
+  QC-verified: edit qty 1→3 correctly nets -2 on the variant's stock and leaves the sibling variant
+  untouched; void fully reverses; restore fully reapplies.
+- `InvoicePrint.tsx` needed no changes — the variant label is already baked into
+  `sale_items.product_name` (e.g. "T-Shirt (L / Red)") at cart-add time via `addToCart`'s
+  `displayName`, so print/reprint show it automatically.
 
 ## Dialog / Radix UI focus rules (CRITICAL — do not revert)
 - All dialogs use DialogContent from apps/web/src/components/ui/dialog.tsx
