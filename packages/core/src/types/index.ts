@@ -26,9 +26,68 @@ export interface OrgBranding {
   bank_ifsc?: string
   invoice_terms?: string
   invoice_prefix?: string
+  invoice_start_number?: number
   currency?: string
   date_format?: string
   timezone?: string
+  // Tax & GST
+  tax_inclusive?: boolean
+  default_gst_rate?: number
+  composition_scheme?: boolean
+  inter_state_tax?: boolean
+  show_hsn_on_invoice?: boolean
+  rcm_enabled?: boolean
+  // Barcode
+  barcode_type?: string
+  barcode_label_size?: string
+  auto_print_barcode_on_purchase?: boolean
+  // UPI / Payments
+  upi_id?: string
+  default_payment_mode?: string
+  default_payment_terms?: number
+  payment_reminder_days?: number
+  // Signature
+  signature_url?: string
+  show_signature_on_invoice?: boolean
+  // Notifications
+  notify_low_stock?: boolean
+  notify_expiry?: boolean
+  notify_invoice_due?: boolean
+  notify_payment_received?: boolean
+  notify_daily_summary?: boolean
+  // Print & PDF Layout
+  print_paper_size?: 'a4' | 'a5' | 'thermal_3inch' | 'thermal_2inch'
+  print_template_theme?: string
+  print_show_logo?: boolean
+  print_show_shop_name?: boolean
+  print_show_address?: boolean
+  print_show_contact?: boolean
+  print_show_gstin?: boolean
+  print_show_pan?: boolean
+  print_show_column_sno?: boolean
+  print_show_column_hsn?: boolean
+  print_show_column_mrp?: boolean
+  print_show_column_unit?: boolean
+  print_show_column_discount?: boolean
+  print_show_column_tax_rate?: boolean
+  print_show_column_tax_amount?: boolean
+  print_show_bank_details?: boolean
+  print_show_upi_qr?: boolean
+  print_show_terms?: boolean
+  print_show_signature?: boolean
+  print_thank_you_note?: string
+  // Custom Fields Definition
+  custom_fields?: CustomFieldDefinition[]
+}
+
+export interface CustomFieldDefinition {
+  id: string
+  name: string
+  type: 'text' | 'number' | 'date' | 'dropdown' | 'checkbox'
+  target: 'product' | 'service'
+  required: boolean
+  show_on_invoice: boolean
+  options?: string[]
 }
 
 export interface OrgFeatureFlags {
@@ -37,6 +96,11 @@ export interface OrgFeatureFlags {
   expiry_dates: boolean
   service_jobs: boolean
   loyalty_points: boolean
+  // Inventory settings
+  allow_negative_stock?: boolean
+  auto_deduct_stock?: boolean
+  low_stock_threshold?: number
+  show_out_of_stock_in_billing?: boolean
 }
 
 export interface OrgTaxProfile {
@@ -52,7 +116,12 @@ export interface Organization {
   gstin?: string
   state_code: string
   country: string
-  business_type: BusinessType
+  address?: string
+  phone?: string
+  email?: string
+  pan?: string
+  website?: string
+  business_type?: string
   plan: 'free' | 'pro' | 'enterprise'
   status: 'active' | 'suspended'
   created_at: string

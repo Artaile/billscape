@@ -10,6 +10,11 @@ interface OrgInfo {
   state_code: string
   gstin?: string
   address?: string
+  phone?: string
+  email?: string
+  pan?: string
+  business_type?: string
+  website?: string
   branding?: {
     primary_color: string
     logo_url?: string
@@ -21,11 +26,60 @@ interface OrgInfo {
     bank_ifsc?: string
     invoice_terms?: string
     invoice_prefix?: string
+    invoice_start_number?: number
     currency?: string
     date_format?: string
     timezone?: string
+    // Tax & GST
+    tax_inclusive?: boolean
+    default_gst_rate?: number
+    composition_scheme?: boolean
+    inter_state_tax?: boolean
+    show_hsn_on_invoice?: boolean
+    rcm_enabled?: boolean
+    // Barcode
+    barcode_type?: string
+    barcode_label_size?: string
+    auto_print_barcode_on_purchase?: boolean
+    // UPI / Payments
+    upi_id?: string
+    default_payment_mode?: string
+    default_payment_terms?: number
+    payment_reminder_days?: number
+    // Signature
+    signature_url?: string
+    show_signature_on_invoice?: boolean
+    // Notifications
+    notify_low_stock?: boolean
+    notify_expiry?: boolean
+    notify_invoice_due?: boolean
+    notify_payment_received?: boolean
+    notify_daily_summary?: boolean
+    // Print & PDF Layout
+    print_paper_size?: 'a4' | 'a5' | 'thermal_3inch' | 'thermal_2inch'
+    print_template_theme?: string
+    print_show_logo?: boolean
+    print_show_shop_name?: boolean
+    print_show_address?: boolean
+    print_show_contact?: boolean
+    print_show_gstin?: boolean
+    print_show_pan?: boolean
+    print_show_column_sno?: boolean
+    print_show_column_hsn?: boolean
+    print_show_column_mrp?: boolean
+    print_show_column_unit?: boolean
+    print_show_column_discount?: boolean
+    print_show_column_tax_rate?: boolean
+    print_show_column_tax_amount?: boolean
+    print_show_bank_details?: boolean
+    print_show_upi_qr?: boolean
+    print_show_terms?: boolean
+    print_show_signature?: boolean
+    print_thank_you_note?: string
+    // Custom Fields
+    custom_fields?: any[]
   }
-  feature_flags?: Record<string, boolean>
+  feature_flags?: Record<string, unknown>
 }
 
 interface AuthState {
@@ -88,7 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const [orgResult, settingsResult] = await Promise.all([
-        supabase.from('organizations').select('id,name,state_code,gstin,address').eq('id', orgId).single(),
+        supabase.from('organizations').select('id,name,state_code,gstin,address,phone,email,pan,business_type,website').eq('id', orgId).single(),
         supabase.from('org_settings').select('branding,feature_flags').eq('organization_id', orgId).single(),
       ])
 
@@ -98,8 +152,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         state_code: orgResult.data?.state_code ?? 'TN',
         gstin: orgResult.data?.gstin ?? undefined,
         address: orgResult.data?.address ?? undefined,
+        phone: orgResult.data?.phone ?? undefined,
+        email: orgResult.data?.email ?? undefined,
+        pan: orgResult.data?.pan ?? undefined,
+        business_type: orgResult.data?.business_type ?? undefined,
+        website: orgResult.data?.website ?? undefined,
         branding: settingsResult.data?.branding as OrgInfo['branding'],
-        feature_flags: settingsResult.data?.feature_flags as Record<string, boolean>,
+        feature_flags: settingsResult.data?.feature_flags as Record<string, unknown>,
       }
 
       applyBrandColor(org.branding?.primary_color ?? '#6366f1')
