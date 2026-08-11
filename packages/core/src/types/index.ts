@@ -30,6 +30,7 @@ export interface OrgBranding {
   currency?: string
   date_format?: string
   timezone?: string
+  financial_year_start?: string
   // Tax & GST
   tax_inclusive?: boolean
   default_gst_rate?: number
@@ -58,23 +59,74 @@ export interface OrgBranding {
   // Print & PDF Layout
   print_paper_size?: 'a4' | 'a5' | 'thermal_3inch' | 'thermal_2inch'
   print_template_theme?: string
+  
+  // Colors & Typography
+  print_text_color?: string
+  print_font_family?: string
+  print_font_size?: string
+
+  // Business Information
   print_show_logo?: boolean
   print_show_shop_name?: boolean
   print_show_address?: boolean
   print_show_contact?: boolean
   print_show_gstin?: boolean
   print_show_pan?: boolean
+  print_show_email_website?: boolean
+
+  // Customer / Party Details
+  print_show_customer_billing_address?: boolean
+  print_show_customer_shipping_address?: boolean
+  print_show_customer_pan?: boolean
+  print_show_customer_phone?: boolean
+
+  // Document Details
+  print_show_document_number?: boolean
+  print_show_document_date?: boolean
+  print_show_due_date?: boolean
+  print_show_place_of_supply?: boolean
+  print_show_delivery_note?: boolean
+  print_show_payment_mode?: boolean
+
+  // Item Table Columns
   print_show_column_sno?: boolean
   print_show_column_hsn?: boolean
   print_show_column_mrp?: boolean
+  print_show_column_item_name?: boolean
+  print_show_column_qty?: boolean
   print_show_column_unit?: boolean
+  print_show_column_rate?: boolean
+  print_show_column_discount_type?: boolean
   print_show_column_discount?: boolean
   print_show_column_tax_rate?: boolean
+  print_show_column_taxable_value?: boolean
   print_show_column_tax_amount?: boolean
-  print_show_bank_details?: boolean
-  print_show_upi_qr?: boolean
+  print_show_column_item_total?: boolean
+
+  // Tax Display Settings
+  print_show_cgst_sgst_igst?: boolean
+  print_show_tax_summary?: boolean
+
+  // Total Calculation Blocks
+  print_show_block_subtotal?: boolean
+  print_show_block_discount?: boolean
+  print_show_block_tax_amount?: boolean
+  print_show_block_rounding?: boolean
+  print_show_block_round_off?: boolean
+  print_show_block_grand_total?: boolean
+  print_show_block_received_amount?: boolean
+  print_show_block_balance_due?: boolean
+  print_show_block_change_returned?: boolean
+
+  // Additional Sections
   print_show_terms?: boolean
+  print_show_notes?: boolean
+  print_show_bank_details?: boolean
+  print_show_signature_outline?: boolean
   print_show_signature?: boolean
+  print_show_party_details?: boolean
+  print_show_upi_qr?: boolean
+
   print_thank_you_note?: string
   // Custom Fields Definition
   custom_fields?: CustomFieldDefinition[]
@@ -103,6 +155,30 @@ export interface OrgFeatureFlags {
   show_out_of_stock_in_billing?: boolean
 }
 
+export interface OrgInvoiceTemplate {
+  prefix_sale?: string
+  prefix_purchase?: string
+  prefix_estimate?: string
+  prefix_sale_order?: string
+  prefix_proforma?: string
+  prefix_credit_note?: string
+  prefix_challan?: string
+  prefix_receipt?: string
+  prefix_expense?: string
+  auto_generate_numbers?: boolean
+  number_format?: string
+  number_suffix?: string
+  show_logo?: boolean
+  show_signature?: boolean
+  signature_url?: string
+  enable_round_off?: boolean
+  round_off_type?: string
+  enable_fy_number_reset?: boolean
+  invoice_header?: string
+  invoice_footer?: string
+  default_terms?: string
+}
+
 export interface OrgTaxProfile {
   type: TaxStrategy
   state_code: string
@@ -117,6 +193,8 @@ export interface Organization {
   state_code: string
   country: string
   address?: string
+  city?: string
+  pincode?: string
   phone?: string
   email?: string
   pan?: string

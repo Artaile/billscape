@@ -697,6 +697,12 @@ export type Database = {
       organizations: {
         Row: {
           address: string | null
+          city: string | null
+          pincode: string | null
+          phone: string | null
+          email: string | null
+          pan: string | null
+          website: string | null
           business_type: Database["public"]["Enums"]["business_type"]
           country: string
           created_at: string
@@ -709,6 +715,12 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          city?: string | null
+          pincode?: string | null
+          phone?: string | null
+          email?: string | null
+          pan?: string | null
+          website?: string | null
           business_type?: Database["public"]["Enums"]["business_type"]
           country?: string
           created_at?: string
@@ -721,6 +733,12 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          city?: string | null
+          pincode?: string | null
+          phone?: string | null
+          email?: string | null
+          pan?: string | null
+          website?: string | null
           business_type?: Database["public"]["Enums"]["business_type"]
           country?: string
           created_at?: string

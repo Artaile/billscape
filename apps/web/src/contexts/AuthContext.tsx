@@ -143,7 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const [orgResult, settingsResult] = await Promise.all([
         supabase.from('organizations').select('id,name,state_code,gstin,address,phone,email,pan,business_type,website').eq('id', orgId).single(),
-        supabase.from('org_settings').select('branding,feature_flags').eq('organization_id', orgId).single(),
+        supabase.from('org_settings').select('branding,feature_flags,invoice_template').eq('organization_id', orgId).single(),
       ])
 
       const org: OrgInfo = {
@@ -158,7 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         business_type: orgResult.data?.business_type ?? undefined,
         website: orgResult.data?.website ?? undefined,
         branding: settingsResult.data?.branding as OrgInfo['branding'],
-        feature_flags: settingsResult.data?.feature_flags as Record<string, unknown>,
+        feature_flags: settingsResult.data?.feature_flags as OrgInfo['feature_flags'],
+        invoice_template: settingsResult.data?.invoice_template as OrgInfo['invoice_template'],
       }
 
       applyBrandColor(org.branding?.primary_color ?? '#6366f1')

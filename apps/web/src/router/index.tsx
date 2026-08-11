@@ -3,6 +3,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import type { UserRole } from '@billscape/core'
 import { LoginPage } from '@/pages/auth/LoginPage'
 import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage'
+import { RegisterPage } from '@/pages/auth/RegisterPage'
+import { AcceptInvitePage } from '@/pages/auth/AcceptInvitePage'
 import { OnboardingPage } from '@/pages/auth/OnboardingPage'
 import { AppShell } from '@/components/layout/AppShell'
 import { PlatformShell } from '@/components/platform/PlatformShell'
@@ -102,6 +104,8 @@ export function AppRouter() {
       {/* ── Tenant App ── */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/accept-invite" element={<AcceptInvitePage />} />
       <Route
         path="/onboarding"
         element={

@@ -29,10 +29,14 @@ import {
   Bell,
   CheckCircle2,
   CalendarClock,
-  Loader2
+  Loader2,
+  ClipboardList,
+  EyeOff,
+  Eye
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { useNotifications } from '@/hooks/useNotifications'
 import { Button } from '@/components/ui/button'
 import type { UserRole } from '@billscape/core'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -151,7 +155,9 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const pendingStandard = recurringTemplates?.filter(t => t.category !== 'salary' && t.last_billed_month !== currentMonth) ?? []
   const pendingCount = pendingStandard.length + (isSalaryPending ? 1 : 0)
 
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [routineWorksOpen, setRoutineWorksOpen] = useState(false)
+  const [systemNotificationsOpen, setSystemNotificationsOpen] = useState(false)
+  const { notifications: sysNotifications, markAsPaid } = useNotifications()
   const [salaryPayoutOpen, setSalaryPayoutOpen] = useState(false)
   const [confirmExpenseTemplate, setConfirmExpenseTemplate] = useState<any>(null)
 
@@ -270,7 +276,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['employees'] })
       queryClient.invalidateQueries({ queryKey: ['recurring_templates'] })
       setSalaryPayoutOpen(false)
-      setNotificationsOpen(false)
+      setRoutineWorksOpen(false)
     },
     onError: (err: Error) => toast.error('Failed to process payroll', err.message)
   })
@@ -306,7 +312,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       toast.success(`${confirmExpenseTemplate.name} processed successfully`)
       queryClient.invalidateQueries({ queryKey: ['recurring_templates'] })
       setConfirmExpenseTemplate(null)
-      setNotificationsOpen(false)
+      setRoutineWorksOpen(false)
     },
     onError: (err: Error) => toast.error('Failed to process expense', err.message)
   })
@@ -436,23 +442,83 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             </h1>
           </div>
 
-          {/* Routine Works Notification Bell */}
+          
+          
+          {/* System Notifications */}
           <div className="relative">
             <button
-              onClick={() => setNotificationsOpen(prev => !prev)}
+              onClick={() => setSystemNotificationsOpen(prev => !prev)}
               className="relative p-2 rounded-full hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
             >
               <Bell className="h-5 w-5" />
-              {pendingCount > 0 && (
+              {sysNotifications.length > 0 && (
                 <span className="absolute top-1 right-1 h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center border-2 border-card">
+                  {sysNotifications.length}
+                </span>
+              )}
+            </button>
+
+            {systemNotificationsOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setSystemNotificationsOpen(false)} />
+                <div className="absolute right-0 top-full z-40 mt-1 w-80 rounded-lg border border-border bg-card shadow-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border bg-secondary/30">
+                    <h3 className="font-semibold text-sm">Notifications</h3>
+                    <p className="text-xs text-muted-foreground">{sysNotifications.length} pending items</p>
+                  </div>
+                  
+                  <div className="max-h-80 overflow-y-auto">
+                    {sysNotifications.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-muted-foreground flex flex-col items-center gap-2">
+                        <CheckCircle2 className="h-8 w-8 text-emerald-500/50" />
+                        <p>You're all caught up!</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border">
+                        {sysNotifications.map((n: any) => (
+                          <div key={n.id} className="p-4 flex items-start justify-between gap-3 hover:bg-secondary/30 transition-colors">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">{n.title}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">{n.description}</p>
+                              {n.type === 'low_stock' ? (
+                                <p className="text-xs font-bold text-red-500 mt-1">Stock: {n.amount}</p>
+                              ) : (
+                                <p className="text-xs font-semibold mt-1">₹{n.amount}</p>
+                              )}
+                            </div>
+                            {n.type === 'low_stock' ? (
+                               <Button size="sm" variant="outline" onClick={() => { setSystemNotificationsOpen(false); navigate('/inventory') }}>Restock</Button>
+                            ) : (
+                               <Button size="sm" variant="outline" onClick={() => markAsPaid.mutate(n)}>Done</Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Routine Works */}
+          <div className="relative">
+            <button
+              onClick={() => setRoutineWorksOpen(prev => !prev)}
+              className="relative p-2 rounded-full hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ClipboardList className="h-5 w-5" />
+              {pendingCount > 0 && (
+                <span className="absolute top-1 right-1 h-4 w-4 rounded-full bg-orange-500 text-[10px] font-bold text-white flex items-center justify-center border-2 border-card">
                   {pendingCount}
                 </span>
               )}
             </button>
 
-            {notificationsOpen && (
+            {routineWorksOpen && (
+
               <>
-                <div className="fixed inset-0 z-30" onClick={() => setNotificationsOpen(false)} />
+                <div className="fixed inset-0 z-30" onClick={() => setRoutineWorksOpen(false)} />
                 <div className="absolute right-0 top-full z-40 mt-1 w-80 rounded-lg border border-border bg-card shadow-xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-border bg-secondary/30">
                     <h3 className="font-semibold text-sm">Routine Works</h3>
