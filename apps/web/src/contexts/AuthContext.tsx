@@ -78,8 +78,10 @@ interface OrgInfo {
     print_thank_you_note?: string
     // Custom Fields
     custom_fields?: any[]
+    [key: string]: any
   }
   feature_flags?: Record<string, unknown>
+  invoice_template?: any
 }
 
 interface AuthState {

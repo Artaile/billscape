@@ -30,8 +30,14 @@ export function AcceptInvitePage() {
 
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (password.length < 8) return toast.error('Password must be at least 8 characters')
-    if (password !== confirmPassword) return toast.error('Passwords do not match')
+    if (password.length < 8) {
+      toast.error('Password must be at least 8 characters')
+      return
+    }
+    if (password !== confirmPassword) {
+      toast.error('Passwords do not match')
+      return
+    }
 
     setSaving(true)
     try {
