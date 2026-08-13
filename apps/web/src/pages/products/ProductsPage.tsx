@@ -237,11 +237,13 @@ export function ProductsPage() {
 
   const getStockBadge = useCallback((item: ProductWithInventory) => {
     if (!item.track_stock || !item.inventory) return null
-    const { stock_qty, reorder_level } = item.inventory
-    if (stock_qty === 0) return <Badge variant="destructive">Out of stock</Badge>
-    if (stock_qty <= reorder_level) return <Badge variant="warning">Low stock</Badge>
-    return <Badge variant="success">In stock</Badge>
-  }, [])
+    const { stock_qty } = item.inventory
+    const threshold = org?.feature_flags?.low_stock_threshold ?? 10
+    
+    if (stock_qty === 0) return <Badge variant="destructive">Out of stock ({stock_qty})</Badge>
+    if (stock_qty <= threshold) return <Badge variant="warning">Low stock ({stock_qty})</Badge>
+    return <Badge variant="success">In stock ({stock_qty})</Badge>
+  }, [org?.feature_flags?.low_stock_threshold])
 
   return (
     <div className="p-4 lg:p-6">

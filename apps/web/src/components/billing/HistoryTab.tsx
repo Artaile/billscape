@@ -421,12 +421,16 @@ function ViewSaleDialog({ saleId, onClose }: { saleId: string | null; onClose: (
             shopAddress={org?.address}
             shopGstin={org?.gstin}
             shopLogoUrl={org?.branding?.logo_url}
+            shopPhone={org?.phone}
+            shopEmail={org?.email}
             customerName={sale.customers?.name}
             customerPhone={sale.customers?.phone ?? undefined}
             customerGstin={sale.customers?.gstin ?? undefined}
             items={cartItems}
             totals={totals}
             paymentMode={sale.payment_mode}
+            branding={org?.branding}
+            invoiceTemplate={(org as any)?.invoice_template}
           />
         )}
       </DialogContent>

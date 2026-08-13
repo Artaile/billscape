@@ -47,7 +47,7 @@ export function ManageCategoriesDialog({
     enabled: !!orgId && open,
     queryFn: async () => {
       const { data, error } = await getCategoriesWithProductCount(
-        supabase as Parameters<typeof getCategoriesWithProductCount>[0],
+        supabase,
         orgId!,
       )
       if (error) throw error
@@ -63,7 +63,7 @@ export function ManageCategoriesDialog({
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await createCategory(supabase as Parameters<typeof createCategory>[0], {
+      const { error } = await createCategory(supabase, {
         organization_id: orgId!,
         name: newName.trim(),
         color: newColor,
@@ -80,7 +80,7 @@ export function ManageCategoriesDialog({
 
   const updateMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await updateCategory(supabase as Parameters<typeof updateCategory>[0], orgId!, id, {
+      const { error } = await updateCategory(supabase, orgId!, id, {
         name: editName.trim(),
         color: editColor,
       })
@@ -96,7 +96,7 @@ export function ManageCategoriesDialog({
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await deleteCategory(supabase as Parameters<typeof deleteCategory>[0], orgId!, id)
+      const { error } = await deleteCategory(supabase, orgId!, id)
       if (error) throw error
     },
     onSuccess: () => {

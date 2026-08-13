@@ -1,6 +1,6 @@
 import type { TypedSupabaseClient } from './client'
 import type { GSTContext, GSTRate } from '@billscape/core'
-import { computeLineTax, computeGST, isInterState, generateBarcode } from '@billscape/core'
+import { computeLineTax, computeGST, isInterState, generateBarcode, formatDocumentNumber } from '@billscape/core'
 import { generateProductCode } from './products'
 import type { Database } from './database.types'
 
@@ -376,12 +376,24 @@ export async function updatePurchase(
 }
 
 export async function generatePurchaseNo(client: TypedSupabaseClient, orgId: string) {
-  const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  // Query org_settings to get configured prefix and format
+  const { data: orgSettings } = await client
+    .from('org_settings')
+    .select('invoice_template')
+    .eq('organization_id', orgId)
+    .single()
+
+  const prefix = orgSettings?.invoice_template?.prefix_purchase || 'BILL'
+  const format = orgSettings?.invoice_template?.number_format
+  const suffix = orgSettings?.invoice_template?.number_suffix
+
   const { count } = await client
     .from('purchases')
     .select('id', { count: 'exact', head: true })
     .eq('organization_id', orgId)
-  return `PUR-${datePart}-${String((count ?? 0) + 1).padStart(4, '0')}`
+
+  const seq = (count ?? 0) + 1
+  return formatDocumentNumber(prefix, seq, { format, suffix })
 }
 
 export async function getPurchaseWithItems(client: TypedSupabaseClient, orgId: string, purchaseId: string) {

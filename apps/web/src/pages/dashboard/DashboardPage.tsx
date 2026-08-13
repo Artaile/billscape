@@ -1,5 +1,6 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import {
   BarChart,
   Bar,
@@ -143,11 +144,12 @@ export function DashboardPage() {
     queryKey: ['low-stock', orgId],
     enabled: !!orgId,
     queryFn: async () => {
+      const threshold = org?.feature_flags?.low_stock_threshold ?? 10
       const { data } = await supabase
         .from('inventory')
         .select('stock_qty, reorder_level, products(name)')
         .eq('organization_id', orgId!)
-        .filter('stock_qty', 'lte', 'reorder_level')
+        .lte('stock_qty', threshold)
         .limit(5)
       return data ?? []
     },
@@ -349,17 +351,18 @@ export function DashboardPage() {
             ) : lowStock && lowStock.length > 0 ? (
               lowStock.map((item, i) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const product = (item.products as unknown as { name: string }[] | null)?.[0] ?? null
+                const product = (item.products as unknown as { name: string } | null) ?? null
                 return (
-                  <div
+                  <Link
                     key={i}
-                    className="flex items-center justify-between py-1.5 text-sm"
+                    to="/inventory?filter=low"
+                    className="flex items-center justify-between py-1.5 text-sm hover:bg-zinc-800/50 px-2 -mx-2 rounded-md transition-colors"
                   >
-                    <span className="text-zinc-300 truncate flex-1">{product?.name ?? 'Unknown'}</span>
+                    <span className="text-zinc-300 truncate flex-1 hover:text-indigo-400 transition-colors">{product?.name ?? 'Unknown'}</span>
                     <Badge variant={item.stock_qty === 0 ? 'destructive' : 'warning'} className="ml-2 shrink-0">
                       {item.stock_qty} left
                     </Badge>
-                  </div>
+                  </Link>
                 )
               })
             ) : (

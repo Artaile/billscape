@@ -5,22 +5,45 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string | Date) {
+export function formatDate(date: string | Date, dateFormat?: string) {
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return ''
+
+  if (dateFormat === 'YYYY-MM-DD') {
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+  if (dateFormat === 'MM/DD/YYYY') {
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${mm}/${dd}/${yyyy}`
+  }
+  if (dateFormat === 'DD/MM/YYYY') {
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${dd}/${mm}/${yyyy}`
+  }
+
   return new Intl.DateTimeFormat('en-IN', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  }).format(new Date(date))
+  }).format(d)
 }
 
-export function formatDateTime(date: string | Date) {
-  return new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+export function formatDateTime(date: string | Date, dateFormat?: string) {
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return ''
+  const datePart = formatDate(d, dateFormat)
+  const timePart = new Intl.DateTimeFormat('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(date))
+  }).format(d)
+  return `${datePart}, ${timePart}`
 }
 
 export { generateBarcode, generateSku } from '@billscape/core'

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatINR } from '@billscape/core'
+import { formatINR, formatDocumentNumber } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -257,8 +257,12 @@ export function LedgerPage() {
         .from('vouchers')
         .select('id', { count: 'exact', head: true })
         .eq('organization_id', org!.id)
-      const seq = ((count ?? 0) + 1).toString().padStart(4, '0')
-      const voucher_no = `VCH-${seq}`
+      const prefix = vchType === 'receipt'
+        ? ((org as any)?.invoice_template?.prefix_receipt || 'RCP')
+        : vchType === 'payment' ? 'PMT' : vchType === 'journal' ? 'JRN' : 'CON'
+      const format = (org as any)?.invoice_template?.number_format
+      const suffix = (org as any)?.invoice_template?.number_suffix
+      const voucher_no = formatDocumentNumber(prefix, (count ?? 0) + 1, { format, suffix })
 
       // 2. Insert voucher
       const { data: vch, error: vchErr } = await supabase

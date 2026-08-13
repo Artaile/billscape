@@ -33,7 +33,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
-import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
+import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
 import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
@@ -57,6 +57,7 @@ interface CustomerOption {
   name: string
   phone?: string | null
   gstin?: string | null
+  state_code?: string | null
 }
 
 const SCANNER_THRESHOLD_MS = 75
@@ -150,10 +151,11 @@ export function POSTab() {
   const scanDebounceTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // GST context
-  const gstContext: GSTContext = {
+  const gstContext: GSTContext = useMemo(() => ({
     shopStateCode: org?.state_code ?? 'TN',
-    customerStateCode: undefined,
-  }
+    customerStateCode: selectedCustomer?.state_code ?? undefined,
+    taxInclusive: org?.branding?.tax_inclusive ?? false,
+  }), [org?.state_code, org?.branding?.tax_inclusive, selectedCustomer?.state_code])
 
   // Compute totals (pre order-discount)
   const baseTotals = useMemo(() => {
@@ -171,6 +173,7 @@ export function POSTab() {
         is_interstate: false,
         order_discount_amount: 0,
         loyalty_redeem_amount: 0,
+        round_off_amount: 0,
         net_payable: 0,
       } as InvoiceTotals
     }
@@ -187,15 +190,23 @@ export function POSTab() {
 
   const resolvedLoyaltyRedeemValue = parseFloat(loyaltyRedeemValue) || 0
 
-  // Final totals with loyalty redemption applied on top of order discount
+  // Final totals with loyalty redemption & dynamic round-off applied
   const totals = useMemo(() => {
-    if (!redeemLoyalty || resolvedLoyaltyRedeemValue <= 0) return discountedTotals
-    return applyLoyaltyRedemption(discountedTotals, resolvedLoyaltyRedeemValue)
-  }, [discountedTotals, redeemLoyalty, resolvedLoyaltyRedeemValue])
+    const loyaltyTotals = (!redeemLoyalty || resolvedLoyaltyRedeemValue <= 0)
+      ? discountedTotals
+      : applyLoyaltyRedemption(discountedTotals, resolvedLoyaltyRedeemValue)
+
+    return applyRoundOff(
+      loyaltyTotals,
+      (org as any)?.invoice_template?.enable_round_off ?? true,
+      (org as any)?.invoice_template?.round_off_type,
+    )
+  }, [discountedTotals, redeemLoyalty, resolvedLoyaltyRedeemValue, org])
 
   // Line totals per item
   const lineTotals = useMemo(() => {
     const interstate = totals.is_interstate
+    const taxInclusive = org?.branding?.tax_inclusive ?? false
     return cart.map((item) => {
       const lt = computeLineTax(
         item.unit_price,
@@ -205,10 +216,11 @@ export function POSTab() {
         interstate,
         item.discount_type,
         item.discount_amount,
+        taxInclusive,
       )
       return lt.lineTotal
     })
-  }, [cart, totals.is_interstate])
+  }, [cart, totals.is_interstate, org?.branding?.tax_inclusive])
 
   // Fetch products
   const { data: products } = useQuery({
@@ -335,16 +347,18 @@ export function POSTab() {
     const stock = getStock(product.inventory)
     const unit = getUnit(product.unit)
     const secondaryUnit = getUnit(product.secondary_unit)
-    if (product.track_stock && stock <= 0) {
-      toast.error(`Out of stock: ${product.name}`)
+    const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+
+    if (!allowNegativeStock && product.track_stock && stock <= 0) {
+      toast.error(`Out of stock: ${product.name}`, 'Negative stock billing is disabled in Settings > Inventory.')
       return
     }
 
     setCart((prev) => {
       const existing = prev.find((c) => c.product_id === product.id)
       if (existing) {
-        if (product.track_stock && existing.qty >= stock) {
-          toast.error(`Out of stock: ${product.name}`)
+        if (!allowNegativeStock && product.track_stock && existing.qty >= stock) {
+          toast.error(`Insufficient stock: ${product.name}`, `Only ${stock} units available in inventory.`)
           return prev
         }
         // Existing-line increment respects the unit's step (1 for count-based, 0.1 for
@@ -593,6 +607,7 @@ export function POSTab() {
         ...paymentFields,
         gst_context: gstContext,
         created_by: user.id,
+        invoice_template: (org as any)?.invoice_template,
         order_discount_type: resolvedOrderDiscountValue > 0 ? orderDiscountType : undefined,
         order_discount_value: resolvedOrderDiscountValue > 0 ? resolvedOrderDiscountValue : undefined,
         loyalty_customer_id: loyaltyCustomerId,
@@ -708,42 +723,52 @@ export function POSTab() {
         {/* Product grid */}
         <div className="flex-1 overflow-y-auto p-3">
           <div className="grid grid-cols-3 gap-2">
-            {products?.map((product) => {
-              const stock = getStock(product.inventory)
-              const outOfStock = product.track_stock && stock <= 0
-              const lowStock = product.track_stock && stock > 0 && stock <= 10
+            {products
+              ?.filter((product) => {
+                const showOutOfStock = (org as any)?.feature_flags?.show_out_of_stock_in_billing ?? true
+                if (showOutOfStock) return true
+                if (!product.track_stock) return true
+                return getStock(product.inventory) > 0
+              })
+              .map((product) => {
+                const stock = getStock(product.inventory)
+                const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+                const lowStockThreshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
+                const isOutOfStock = product.track_stock && stock <= 0
+                const isLowStock = product.track_stock && stock > 0 && stock <= lowStockThreshold
+                const isDisabled = !allowNegativeStock && isOutOfStock
 
-              return (
-                <button
-                  key={product.id}
-                  onClick={() => !outOfStock && addToCart(product)}
-                  disabled={outOfStock}
-                  className={cn(
-                    'relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all',
-                    outOfStock
-                      ? 'border-zinc-800 bg-zinc-900/30 opacity-50 cursor-not-allowed'
-                      : 'border-zinc-800 bg-card hover:border-indigo-500 hover:bg-indigo-600/5 active:scale-95',
-                  )}
-                >
-                  <div className="flex h-8 w-8 items-center justify-center rounded bg-zinc-800 mb-1">
-                    <Package className="h-4 w-4 text-zinc-500" />
-                  </div>
-                  <p className="text-xs font-medium text-zinc-200 leading-tight line-clamp-2">
-                    {product.name}
-                  </p>
-                  <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>
-                  {product.track_stock && (
-                    <div className="mt-auto">
-                      {outOfStock ? (
-                        <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
-                      ) : lowStock ? (
-                        <Badge variant="warning" className="text-[9px] px-1.5 py-0">{stock} left</Badge>
-                      ) : null}
+                return (
+                  <button
+                    key={product.id}
+                    onClick={() => (!isDisabled || allowNegativeStock) && addToCart(product)}
+                    disabled={isDisabled}
+                    className={cn(
+                      'relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all',
+                      isDisabled
+                        ? 'border-zinc-800 bg-zinc-900/30 opacity-50 cursor-not-allowed'
+                        : 'border-zinc-800 bg-card hover:border-indigo-500 hover:bg-indigo-600/5 active:scale-95 cursor-pointer',
+                    )}
+                  >
+                    <div className="flex h-8 w-8 items-center justify-center rounded bg-zinc-800 mb-1">
+                      <Package className="h-4 w-4 text-zinc-500" />
                     </div>
-                  )}
-                </button>
-              )
-            })}
+                    <p className="text-xs font-medium text-zinc-200 leading-tight line-clamp-2">
+                      {product.name}
+                    </p>
+                    <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>
+                    {product.track_stock && (
+                      <div className="mt-auto">
+                        {isOutOfStock ? (
+                          <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
+                        ) : isLowStock ? (
+                          <Badge variant="warning" className="text-[9px] px-1.5 py-0">{stock} left</Badge>
+                        ) : null}
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
           </div>
         </div>
       </div>
@@ -1271,6 +1296,8 @@ export function POSTab() {
                 shopAddress={org?.address}
                 shopGstin={org?.gstin}
                 shopLogoUrl={org?.branding?.logo_url}
+                shopPhone={org?.phone}
+                shopEmail={org?.email}
                 customerName={selectedCustomer?.name}
                 customerPhone={selectedCustomer?.phone ?? undefined}
                 customerGstin={selectedCustomer?.gstin ?? undefined}
@@ -1278,6 +1305,8 @@ export function POSTab() {
                 totals={completedSale.totals}
                 paymentMode={completedSale.paymentMode}
                 paymentDetail={completedSale.paymentDetail}
+                branding={org?.branding}
+                invoiceTemplate={(org as any)?.invoice_template}
               />
             </>
           )}

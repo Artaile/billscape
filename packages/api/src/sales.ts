@@ -1,10 +1,19 @@
 import type { TypedSupabaseClient } from './client'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
-import { applyLoyaltyRedemption, applyOrderDiscount, computeGST, computeLineTax } from '@billscape/core'
+import { applyLoyaltyRedemption, applyOrderDiscount, applyRoundOff, computeGST, computeLineTax, formatDocumentNumber } from '@billscape/core'
 
 interface CreateSaleInput {
   organization_id: string
   customer_id?: string
+  invoice_no?: string
+  invoice_template?: {
+    prefix_sale?: string
+    number_format?: string
+    number_suffix?: string
+    invoice_start_number?: number
+    enable_round_off?: boolean
+    round_off_type?: string
+  }
   items: CartItem[]
   payment_mode: 'cash' | 'card' | 'upi' | 'split'
   cash_amount?: number
@@ -57,16 +66,41 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
   const discountedTotals = input.order_discount_type
     ? applyOrderDiscount(baseTotals, input.order_discount_type, input.order_discount_value ?? 0)
     : baseTotals
-  const totals = input.loyalty_redeem_amount
+  const loyaltyTotals = input.loyalty_redeem_amount
     ? applyLoyaltyRedemption(discountedTotals, input.loyalty_redeem_amount)
     : discountedTotals
+  const totals = applyRoundOff(
+    loyaltyTotals,
+    input.invoice_template?.enable_round_off ?? true,
+    input.invoice_template?.round_off_type,
+  )
   const interstate = totals.is_interstate
 
-  // Generate invoice number (format: BS-YYYYMMDD-XXXX)
-  const now = new Date()
-  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '')
-  const seq = Math.floor(Math.random() * 9000) + 1000
-  const invoice_no = `BS-${datePart}-${seq}`
+  // Generate invoice number based on org's configured prefix and format
+  let invoice_no = input.invoice_no
+  if (!invoice_no) {
+    let prefix = input.invoice_template?.prefix_sale
+    let format = input.invoice_template?.number_format
+    let suffix = input.invoice_template?.number_suffix
+
+    if (!prefix) {
+      const { data: orgSettings } = await client
+        .from('org_settings')
+        .select('invoice_template, branding')
+        .eq('organization_id', input.organization_id)
+        .single()
+
+      prefix =
+        orgSettings?.invoice_template?.prefix_sale ||
+        orgSettings?.branding?.invoice_prefix ||
+        'INVOICE'
+      format = orgSettings?.invoice_template?.number_format
+      suffix = orgSettings?.invoice_template?.number_suffix
+    }
+
+    const seq = Math.floor(Math.random() * 9000) + 1000
+    invoice_no = formatDocumentNumber(prefix || 'INVOICE', seq, { format, suffix })
+  }
 
   const { data: sale, error: saleError } = await client
     .from('sales')

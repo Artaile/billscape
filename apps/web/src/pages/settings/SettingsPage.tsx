@@ -36,12 +36,14 @@ import {
   Layers,
   Sparkles,
   CheckCircle2,
+  Clock,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
 import { UnitsSettingsPanel } from '@/components/settings/UnitsSettingsPanel'
+import * as XLSX from 'xlsx'
 import type { UserRole } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -785,6 +787,8 @@ export function SettingsPage() {
   const [invoiceFooter, setInvoiceFooter] = useState(org?.invoice_template?.invoice_footer ?? org?.branding?.invoice_footer ?? '')
   const [showInviteDialog, setShowInviteDialog] = useState(false)
   const [inviteLink, setInviteLink] = useState<{link: string, otp: string} | null>(null)
+  const [memberToDelete, setMemberToDelete] = useState<{ id: string; name: string } | null>(null)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
 
   React.useEffect(() => {
     if (org?.branding?.logo_url && !logoFile) {
@@ -1024,16 +1028,107 @@ export function SettingsPage() {
   })
 
 
-  // Fetch members
-  const { data: members } = useQuery({
+  // Fetch members and enrich with profiles & employees
+  const { data: members = [], isLoading: membersLoading } = useQuery({
     queryKey: ['members', orgId],
     enabled: !!orgId,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data: mData, error: mErr } = await supabase
         .from('memberships')
-        .select('id, role, user_id, profiles(full_name, email, avatar_url)')
+        .select('id, role, role_id, user_id, created_at, employee_id')
         .eq('organization_id', orgId!)
-        .order('created_at')
+        .order('created_at', { ascending: true })
+
+      if (mErr) {
+        console.error('Error fetching memberships:', mErr)
+        throw mErr
+      }
+
+      if (!mData || mData.length === 0) return []
+
+      const userIds = mData.map((m) => m.user_id).filter(Boolean)
+      let profilesMap: Record<string, { full_name: string; avatar_url: string | null; phone: string | null }> = {}
+      if (userIds.length > 0) {
+        const { data: pData } = await supabase
+          .from('profiles')
+          .select('id, full_name, avatar_url, phone')
+          .in('id', userIds)
+
+        if (pData) {
+          for (const p of pData) {
+            profilesMap[p.id] = p
+          }
+        }
+      }
+
+      const { data: empData } = await supabase
+        .from('employees')
+        .select('id, full_name, email, phone, role')
+        .eq('organization_id', orgId!)
+
+      const empMap: Record<string, any> = {}
+      if (empData) {
+        for (const emp of empData) {
+          empMap[emp.id] = emp
+        }
+      }
+
+      return mData.map((m) => {
+        const profile = profilesMap[m.user_id] || null
+        const emp = m.employee_id ? empMap[m.employee_id] : null
+        const isCurrentUser = m.user_id === user?.id
+
+        const name = isCurrentUser
+          ? (user?.user_metadata?.full_name || profile?.full_name || org?.name || 'Shop Owner')
+          : (emp?.full_name || profile?.full_name || 'Dashboard User')
+
+        const email = isCurrentUser
+          ? user?.email
+          : (emp?.email || null)
+
+        const phone = emp?.phone || profile?.phone || null
+        const avatarUrl = profile?.avatar_url || null
+
+        return {
+          ...m,
+          full_name: name,
+          email: email,
+          phone: phone,
+          avatar_url: avatarUrl,
+          is_current_user: isCurrentUser,
+        }
+      })
+    },
+  })
+
+  // Fetch pending invitations
+  const { data: pendingInvitations = [], isLoading: invitationsLoading } = useQuery({
+    queryKey: ['user_invitations', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('user_invitations')
+        .select('*')
+        .eq('organization_id', orgId!)
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        return []
+      }
+      return data ?? []
+    },
+  })
+
+  // Fetch available roles
+  const { data: roles = [] } = useQuery({
+    queryKey: ['roles', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('roles')
+        .select('id, name, is_system')
+        .eq('organization_id', orgId!)
+        .order('is_system', { ascending: false })
       return data ?? []
     },
   })
@@ -1252,6 +1347,11 @@ export function SettingsPage() {
           auto_deduct_stock: autoDeductStock,
           low_stock_threshold: lowStockThreshold,
           show_out_of_stock_in_billing: showOutOfStockInBilling,
+          allow_duplicate_item_names: allowDuplicateItemNames,
+          enable_stock_tracking: enableStockTracking,
+          enable_expiry_tracking: enableExpiryTracking,
+          expiry_alert_period: expiryAlertPeriod,
+          hide_from_online_store_before_expiry: hideFromOnlineStoreBeforeExpiry,
         },
       }, { onConflict: 'organization_id' })
       if (error) throw error
@@ -1280,24 +1380,27 @@ export function SettingsPage() {
 
   const saveNotificationsMutation = useMutation({
     mutationFn: async () => {
-      const existing = org?.branding ?? {}
+      const existingBranding = org?.branding ?? {}
+      const existingFlags = (org as any)?.feature_flags ?? {}
       const { error } = await supabase.from('org_settings').upsert({
         organization_id: orgId!,
         branding: {
-          ...existing,
+          ...existingBranding,
           notify_low_stock: notifyLowStock,
           notify_expiry: notifyExpiry,
           notify_invoice_due: notifyInvoiceDue,
           notify_payment_received: notifyPaymentReceived,
           notify_daily_summary: notifyDailySummary,
-
           notify_trial_expiry: notifyTrialExpiry,
           payment_reminders: paymentReminders,
           due_date_reminders: dueDateReminders,
           remind_before_due: remindBeforeDue,
           remind_after_due: remindAfterDue,
-
         },
+        feature_flags: {
+          ...existingFlags,
+          low_stock_threshold: lowStockThreshold,
+        }
       }, { onConflict: 'organization_id' })
       if (error) throw error
     },
@@ -1428,24 +1531,29 @@ export function SettingsPage() {
         supabase.from('expenses').select('category,amount,description,expense_date').eq('organization_id', orgId).order('expense_date', { ascending: false }),
       ])
 
-      const toCSV = (headers: string[], rows: Record<string, unknown>[]) =>
-        [headers, ...rows.map((r) => headers.map((h) => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))].map((r) => r.join(',')).join('\n')
-
-      const sections = [
-        '=== PRODUCTS ===\n' + toCSV(['name', 'sku', 'price', 'cost_price', 'tax_rate', 'hsn_code', 'barcode_value'], products.data ?? []),
-        '=== CUSTOMERS ===\n' + toCSV(['name', 'phone', 'email', 'gstin', 'address', 'balance'], customers.data ?? []),
-        '=== SALES ===\n' + toCSV(['invoice_no', 'grand_total', 'payment_mode', 'created_at'], sales.data ?? []),
-        '=== PURCHASES ===\n' + toCSV(['invoice_no', 'total_amount', 'created_at'], purchases.data ?? []),
-        '=== EXPENSES ===\n' + toCSV(['category', 'amount', 'description', 'expense_date'], expenses.data ?? []),
-      ].join('\n\n')
-
-      const blob = new Blob([sections], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `billscape-backup-${new Date().toISOString().split('T')[0]}.csv`
-      a.click()
-      URL.revokeObjectURL(url)
+      const wb = XLSX.utils.book_new()
+      
+      if (products.data && products.data.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(products.data), "Products")
+      }
+      if (customers.data && customers.data.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(customers.data), "Customers")
+      }
+      if (sales.data && sales.data.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sales.data), "Sales")
+      }
+      if (purchases.data && purchases.data.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchases.data), "Purchases")
+      }
+      if (expenses.data && expenses.data.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenses.data), "Expenses")
+      }
+      
+      if (wb.SheetNames.length === 0) {
+         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ message: "No data available" }]), "Empty")
+      }
+      
+      XLSX.writeFile(wb, `billscape-backup-${new Date().toISOString().split('T')[0]}.xlsx`)
       toast.success('Data exported successfully')
     } catch (e: unknown) {
       toast.error('Export failed', e instanceof Error ? e.message : 'Unknown error')
@@ -1508,17 +1616,21 @@ export function SettingsPage() {
     },
     onSuccess: (data) => {
       setInviteLink(data as any)
+      queryClient.invalidateQueries({ queryKey: ['user_invitations', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['members', orgId] })
       toast.success('Invitation email sent!')
     },
     onError: (err: Error) => toast.error('Failed to send invite', err.message),
   })
 
-
   const updateRoleMutation = useMutation({
-    mutationFn: async ({ memberId, role }: { memberId: string; role: UserRole }) => {
+    mutationFn: async ({ memberId, roleId, roleName }: { memberId: string; roleId: string; roleName: string }) => {
+      const baseRole = (roleName === 'owner' || roleName === 'manager' || roleName === 'cashier')
+        ? (roleName as UserRole)
+        : 'manager'
       const { error } = await supabase
         .from('memberships')
-        .update({ role })
+        .update({ role_id: roleId, role: baseRole })
         .eq('id', memberId)
         .eq('organization_id', orgId!)
       if (error) throw error
@@ -1527,6 +1639,39 @@ export function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['members', orgId] })
       toast.success('Role updated')
     },
+    onError: (err: Error) => toast.error('Failed to update role', err.message),
+  })
+
+  const deleteMemberMutation = useMutation({
+    mutationFn: async (memberId: string) => {
+      const { error } = await supabase
+        .from('memberships')
+        .delete()
+        .eq('id', memberId)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['members', orgId] })
+      toast.success('Member removed from dashboard')
+    },
+    onError: (err: Error) => toast.error('Failed to remove member', err.message),
+  })
+
+  const cancelInviteMutation = useMutation({
+    mutationFn: async (inviteId: string) => {
+      const { error } = await supabase
+        .from('user_invitations')
+        .delete()
+        .eq('id', inviteId)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user_invitations', orgId] })
+      toast.success('Invitation cancelled')
+    },
+    onError: (err: Error) => toast.error('Failed to cancel invitation', err.message),
   })
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1567,10 +1712,6 @@ export function SettingsPage() {
                 Shop Info
               </TabsTrigger>
 
-              <TabsTrigger value="appearance" className="justify-start px-3 py-2 text-sm font-medium rounded-xl data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold hover:bg-secondary/60 transition-all">
-                {theme === 'dark' ? <Moon className="h-4 w-4 mr-2.5 shrink-0 text-primary" /> : <Sun className="h-4 w-4 mr-2.5 shrink-0 text-primary" />}
-                Appearance
-              </TabsTrigger>
               <TabsTrigger value="regional" className="justify-start px-3 py-2 text-sm font-medium rounded-xl data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold hover:bg-secondary/60 transition-all">
                 <Globe className="h-4 w-4 mr-2.5 shrink-0 text-primary" />
                 Regional
@@ -1716,6 +1857,64 @@ export function SettingsPage() {
                           title={c.name}
                         />
                       ))}
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-3">
+                    <Label>Theme</Label>
+                    <p className="text-xs text-muted-foreground">Choose between dark and light mode for the interface.</p>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => theme === 'light' && toggleTheme()}
+                        className={cn(
+                          'flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all w-32 cursor-pointer',
+                          theme === 'dark'
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border hover:border-border/80',
+                        )}
+                      >
+                        <div className="h-14 w-20 rounded-lg bg-zinc-950 border border-zinc-800 flex flex-col overflow-hidden">
+                          <div className="h-3.5 bg-zinc-900 border-b border-zinc-800 flex items-center px-1.5 gap-1">
+                            <div className="h-1 w-1 rounded-full bg-zinc-700" />
+                            <div className="h-0.5 w-6 rounded bg-zinc-800" />
+                          </div>
+                          <div className="flex-1 flex items-center justify-center">
+                            <div className="h-1.5 w-8 rounded bg-zinc-800" />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Moon className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium text-foreground">Dark</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => theme === 'dark' && toggleTheme()}
+                        className={cn(
+                          'flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all w-32 cursor-pointer',
+                          theme === 'light'
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border hover:border-border/80',
+                        )}
+                      >
+                        <div className="h-14 w-20 rounded-lg bg-white border border-zinc-200 flex flex-col overflow-hidden">
+                          <div className="h-3.5 bg-zinc-100 border-b border-zinc-200 flex items-center px-1.5 gap-1">
+                            <div className="h-1 w-1 rounded-full bg-zinc-300" />
+                            <div className="h-0.5 w-6 rounded bg-zinc-200" />
+                          </div>
+                          <div className="flex-1 flex items-center justify-center">
+                            <div className="h-1.5 w-8 rounded bg-zinc-100" />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Sun className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium text-foreground">Light</span>
+                        </div>
+                      </button>
                     </div>
                   </div>
 
@@ -1959,263 +2158,213 @@ export function SettingsPage() {
           </TabsContent>
 
 
-
-          {/* Appearance */}
-          <TabsContent value="appearance">
-            <div className="rounded-lg border border-border bg-card p-6 space-y-6">
-              <h2 className="text-base font-semibold text-foreground">Appearance</h2>
-
-              <div className="space-y-3">
-                <Label>Theme</Label>
-                <p className="text-xs text-muted-foreground">Choose between dark and light mode for the interface.</p>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => theme === 'light' && toggleTheme()}
-                    className={cn(
-                      'flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all w-32',
-                      theme === 'dark'
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border hover:border-border/80',
-                    )}
-                  >
-                    <div className="h-16 w-24 rounded-lg bg-zinc-950 border border-zinc-800 flex flex-col overflow-hidden">
-                      <div className="h-4 bg-zinc-900 border-b border-zinc-800 flex items-center px-2 gap-1">
-                        <div className="h-1.5 w-1.5 rounded-full bg-zinc-700" />
-                        <div className="h-1 w-8 rounded bg-zinc-800" />
-                      </div>
-                      <div className="flex-1 flex items-center justify-center">
-                        <div className="h-2 w-12 rounded bg-zinc-800" />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Moon className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">Dark</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => theme === 'dark' && toggleTheme()}
-                    className={cn(
-                      'flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all w-32',
-                      theme === 'light'
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border hover:border-border/80',
-                    )}
-                  >
-                    <div className="h-16 w-24 rounded-lg bg-white border border-zinc-200 flex flex-col overflow-hidden">
-                      <div className="h-4 bg-zinc-100 border-b border-zinc-200 flex items-center px-2 gap-1">
-                        <div className="h-1.5 w-1.5 rounded-full bg-zinc-300" />
-                        <div className="h-1 w-8 rounded bg-zinc-200" />
-                      </div>
-                      <div className="flex-1 flex items-center justify-center">
-                        <div className="h-2 w-12 rounded bg-zinc-100" />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Sun className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">Light</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Team */}
+          {/* Dashboard Users */}
           <TabsContent value="team" className="space-y-6">
-            <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-              <h2 className="text-base font-semibold text-foreground">Change Password</h2>
-              <form
-                onSubmit={changePasswordForm.handleSubmit((v) => changePasswordMutation.mutate(v))}
-                className="space-y-4 max-w-sm"
-              >
-                <div className="space-y-1.5">
-                  <Label htmlFor="current-password">Current Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-                    <Input
-                      id="current-password"
-                      type={showCurrentPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      className="pl-9 pr-10"
-                      autoComplete="current-password"
-                      {...changePasswordForm.register('currentPassword')}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrentPassword((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                      tabIndex={-1}
-                    >
-                      {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  {changePasswordForm.formState.errors.currentPassword && (
-                    <p className="text-xs text-red-400">{changePasswordForm.formState.errors.currentPassword.message}</p>
-                  )}
+            <div className="rounded-xl border border-border bg-card p-6 shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                    <Users className="h-5 w-5 text-primary" />
+                    Dashboard Users
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Team members who can sign in to this shop's dashboard and access features based on their assigned roles.
+                  </p>
                 </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="new-password">New Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-                    <Input
-                      id="new-password"
-                      type={showNewPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      className="pl-9 pr-10"
-                      autoComplete="new-password"
-                      {...changePasswordForm.register('newPassword', {
-                        onChange: (e) => setNewPasswordValue(e.target.value),
-                      })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPassword((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                      tabIndex={-1}
-                    >
-                      {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  {changePasswordForm.formState.errors.newPassword && (
-                    <p className="text-xs text-red-400">{changePasswordForm.formState.errors.newPassword.message}</p>
-                  )}
-                  {newPasswordValue.length > 0 && (() => {
-                    const { checks, score } = getPasswordStrength(newPasswordValue)
-                    const strengthLabel = score <= 1 ? 'Weak' : score === 2 ? 'Fair' : score === 3 ? 'Good' : 'Strong'
-                    const strengthColor = score <= 1 ? 'bg-red-500' : score === 2 ? 'bg-yellow-500' : score === 3 ? 'bg-blue-500' : 'bg-emerald-500'
-                    const textColor = score <= 1 ? 'text-red-400' : score === 2 ? 'text-yellow-400' : score === 3 ? 'text-blue-400' : 'text-emerald-400'
-                    return (
-                      <div className="space-y-2 mt-1">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 flex gap-1">
-                            {[1, 2, 3, 4].map((i) => (
-                              <div key={i} className={cn('h-1 flex-1 rounded-full transition-all', i <= score ? strengthColor : 'bg-zinc-700')} />
-                            ))}
-                          </div>
-                          <span className={cn('text-xs font-medium', textColor)}>{strengthLabel}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-1">
-                          {[
-                            { key: 'length', label: '8+ characters' },
-                            { key: 'upper', label: 'Uppercase letter (A-Z)' },
-                            { key: 'lower', label: 'Lowercase letter (a-z)' },
-                            { key: 'special', label: 'Special character (!@#...)' },
-                          ].map(({ key, label }) => (
-                            <div key={key} className={cn('flex items-center gap-1.5 text-[11px]', checks[key as keyof typeof checks] ? 'text-emerald-400' : 'text-zinc-500')}>
-                              <div className={cn('h-1.5 w-1.5 rounded-full', checks[key as keyof typeof checks] ? 'bg-emerald-400' : 'bg-zinc-600')} />
-                              {label}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )
-                  })()}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="confirm-password">Confirm New Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-                    <Input
-                      id="confirm-password"
-                      type={showConfirmPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      className="pl-9 pr-10"
-                      autoComplete="new-password"
-                      {...changePasswordForm.register('confirmPassword')}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                      tabIndex={-1}
-                    >
-                      {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  {changePasswordForm.formState.errors.confirmPassword && (
-                    <p className="text-xs text-red-400">{changePasswordForm.formState.errors.confirmPassword.message}</p>
-                  )}
-                </div>
-
-                <Button type="submit" disabled={changePasswordMutation.isPending}>
-                  {changePasswordMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Updating...
-                    </>
-                  ) : (
-                    'Update Password'
-                  )}
-                </Button>
-              </form>
-            </div>
-
-            <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-foreground">Dashboard Users</h2>
-                <Button size="sm" onClick={() => setShowInviteDialog(true)}>
+                <Button size="sm" onClick={() => setShowInviteDialog(true)} className="shrink-0 gap-1.5">
                   <Plus className="h-4 w-4" />
                   Invite Member
                 </Button>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {members?.map((member) => {
-                    const profile = (member.profiles as unknown as { full_name: string; email: string }) ?? null
-                    return (
-                      <TableRow key={member.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-700 text-xs font-bold text-white">
-                              {(profile?.full_name ?? profile?.email ?? '?').charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium text-zinc-200">{profile?.full_name ?? 'Unknown'}</p>
-                              <p className="text-xs text-zinc-500">{profile?.email}</p>
-                            </div>
+              {/* Members Table */}
+              <div className="rounded-lg border border-border/80 overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-secondary/40">
+                    <TableRow>
+                      <TableHead className="w-[300px]">User</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Joined</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {membersLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center py-10">
+                          <div className="flex flex-col items-center gap-2">
+                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                            <p className="text-xs text-muted-foreground">Loading dashboard users...</p>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge variant={getRoleBadgeVariant(member.role as UserRole)} className="capitalize">
-                            {member.role}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <select
-                            defaultValue={member.role}
-                            onChange={(e) =>
-                              updateRoleMutation.mutate({
-                                memberId: member.id,
-                                role: e.target.value as UserRole,
-                              })
-                            }
-                            className="h-7 rounded border border-zinc-700 bg-zinc-800 px-2 text-xs text-zinc-200 focus:outline-none"
-                          >
-                            {ROLES.map((r) => (
-                              <option key={r} value={r} className="bg-zinc-900 capitalize">
-                                {r}
-                              </option>
-                            ))}
-                          </select>
+                      </TableRow>
+                    ) : members.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center py-10">
+                          <div className="flex flex-col items-center gap-2">
+                            <Users className="h-8 w-8 text-muted-foreground/50" />
+                            <p className="text-sm font-medium text-foreground">No dashboard users found</p>
+                            <p className="text-xs text-muted-foreground">Invite staff members to grant them dashboard access.</p>
+                            <Button size="sm" variant="outline" onClick={() => setShowInviteDialog(true)} className="mt-2">
+                              <Plus className="h-3.5 w-3.5 mr-1.5" />
+                              Invite Member
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+                    ) : (
+                      members.map((member: any) => {
+                        const displayName = member.full_name || 'Dashboard User'
+                        const displayEmail = member.email || (member.is_current_user ? user?.email : 'No email')
+                        const initial = displayName.charAt(0).toUpperCase()
+                        const memberRole = roles.find((r) => r.id === member.role_id)?.name || member.role || 'cashier'
+
+                        return (
+                          <TableRow key={member.id} className="hover:bg-secondary/20 transition-colors">
+                            <TableCell>
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-primary border border-primary/30 text-xs font-bold shrink-0">
+                                  {initial}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-medium text-foreground">{displayName}</p>
+                                    {member.is_current_user && (
+                                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal bg-primary/10 text-primary border-primary/20">
+                                        You
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground truncate max-w-[220px]">
+                                    {displayEmail}
+                                  </p>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {member.is_current_user || member.role === 'owner' ? (
+                                <div className="flex items-center gap-1.5">
+                                  <Badge variant="default" className="text-xs capitalize font-medium">
+                                    {memberRole}
+                                  </Badge>
+                                </div>
+                              ) : (
+                                <select
+                                  value={member.role_id || roles.find(r => r.name.toLowerCase() === member.role.toLowerCase())?.id || ''}
+                                  onChange={(e) => {
+                                    const selectedRole = roles.find((r) => r.id === e.target.value)
+                                    if (selectedRole) {
+                                      updateRoleMutation.mutate({
+                                        memberId: member.id,
+                                        roleId: selectedRole.id,
+                                        roleName: selectedRole.name,
+                                      })
+                                    }
+                                  }}
+                                  className="h-8 rounded-lg border border-border bg-secondary/50 px-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-medium"
+                                  disabled={updateRoleMutation.isPending}
+                                >
+                                  {roles.length > 0 ? (
+                                    roles.map((r) => (
+                                      <option key={r.id} value={r.id} className="bg-card text-foreground capitalize">
+                                        {r.name}
+                                      </option>
+                                    ))
+                                  ) : (
+                                    <>
+                                      <option value="owner" className="bg-card text-foreground">Owner</option>
+                                      <option value="manager" className="bg-card text-foreground">Manager</option>
+                                      <option value="cashier" className="bg-card text-foreground">Cashier</option>
+                                    </>
+                                  )}
+                                </select>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground font-mono">
+                              {member.created_at
+                                ? new Date(member.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                                : '—'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {member.is_current_user || member.role === 'owner' ? (
+                                <span className="text-[11px] text-muted-foreground/60 italic pr-2">Owner</span>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                  title="Remove user"
+                                  onClick={() => {
+                                    setMemberToDelete({ id: member.id, name: displayName })
+                                    setDeleteConfirmOpen(true)
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pending Invitations section if any */}
+              {pendingInvitations.length > 0 && (
+                <div className="space-y-3 pt-4 border-t border-border">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-amber-400" />
+                      Pending Invitations ({pendingInvitations.length})
+                    </h3>
+                  </div>
+
+                  <div className="rounded-lg border border-border/80 overflow-hidden">
+                    <Table>
+                      <TableHeader className="bg-secondary/40">
+                        <TableRow>
+                          <TableHead>Invited Email</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Cancel</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pendingInvitations.map((inv: any) => (
+                          <TableRow key={inv.id} className="hover:bg-secondary/20 transition-colors">
+                            <TableCell className="text-sm font-medium text-foreground">
+                              {inv.email}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs capitalize font-normal">
+                                {inv.role}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-[11px] bg-amber-500/10 text-amber-400 border-amber-500/20 font-medium">
+                                Pending Invite
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                                disabled={cancelInviteMutation.isPending}
+                                onClick={() => cancelInviteMutation.mutate(inv.id)}
+                              >
+                                Cancel
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
             </div>
           </TabsContent>
 
@@ -2896,6 +3045,25 @@ export function SettingsPage() {
                       )}
                     >
                       <span className={cn('pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200', allowNegativeStock ? 'translate-x-4' : 'translate-x-0')} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-start justify-between gap-4 border-b border-border/50 pb-5">
+                    <div className="space-y-1">
+                      <Label className="text-sm font-medium">Show Out of Stock Items in Billing</Label>
+                      <p className="text-xs text-muted-foreground">Display items with zero inventory in the POS billing grid</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={showOutOfStockInBilling}
+                      onClick={() => setShowOutOfStockInBilling(!showOutOfStockInBilling)}
+                      className={cn(
+                        'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200',
+                        showOutOfStockInBilling ? 'bg-primary' : 'bg-zinc-300 dark:bg-zinc-700'
+                      )}
+                    >
+                      <span className={cn('pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200', showOutOfStockInBilling ? 'translate-x-4' : 'translate-x-0')} />
                     </button>
                   </div>
 
@@ -3660,7 +3828,7 @@ export function SettingsPage() {
                   {...inviteForm.register('employee_id')}
                 >
                   <option value="" disabled className="bg-zinc-900">-- Choose Employee --</option>
-                  {employees?.filter((e: any) => !members?.some(m => (m.profiles as any)?.email === e.email)).map((emp: any) => (
+                  {employees?.filter((e: any) => !members?.some((m: any) => m.employee_id === e.id || (m.email && e.email && m.email.toLowerCase() === e.email.toLowerCase()))).map((emp: any) => (
                     <option key={emp.id} value={emp.id} className="bg-zinc-900">{emp.full_name} ({emp.email || 'No email'})</option>
                   ))}
                 </select>
@@ -3705,6 +3873,37 @@ export function SettingsPage() {
               </DialogFooter>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Member Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove Dashboard User</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove <span className="font-semibold text-foreground">{memberToDelete?.name}</span> from accessing this shop's dashboard?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button type="button" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteMemberMutation.isPending}
+              onClick={() => {
+                if (memberToDelete?.id) {
+                  deleteMemberMutation.mutate(memberToDelete.id, {
+                    onSettled: () => setDeleteConfirmOpen(false),
+                  })
+                }
+              }}
+            >
+              {deleteMemberMutation.isPending ? 'Removing...' : 'Remove User'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

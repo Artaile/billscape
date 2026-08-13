@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Loader2, FileText, Eye, Trash2, CheckCircle2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatINR } from '@billscape/core'
+import { formatINR, formatDocumentNumber } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -98,7 +98,10 @@ export function QuotationsPage() {
       if (validItems.length === 0) throw new Error('Add at least one item')
 
       const { count } = await supabase.from('quotations').select('*', { count: 'exact', head: true }).eq('organization_id', orgId!)
-      const quoteNo = `QT-${String((count ?? 0) + 1).padStart(4, '0')}`
+      const prefix = (org as any)?.invoice_template?.prefix_estimate || 'EST'
+      const format = (org as any)?.invoice_template?.number_format
+      const suffix = (org as any)?.invoice_template?.number_suffix
+      const quoteNo = formatDocumentNumber(prefix, (count ?? 0) + 1, { format, suffix })
 
       const { data: quote, error: quoteErr } = await supabase.from('quotations').insert({
         organization_id: orgId!,

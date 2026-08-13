@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Loader2, Shield, Pencil, Copy, Trash2, Check, X } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -38,6 +38,9 @@ const ALL_PERMISSIONS: { key: string; label: string; group: string }[] = [
   { key: 'promotions', label: 'Promotions', group: 'Marketing' },
   { key: 'loyalty', label: 'Loyalty', group: 'Marketing' },
   { key: 'reports', label: 'Reports', group: 'Analytics' },
+  { key: 'activity', label: 'Activity Log', group: 'Admin' },
+  { key: 'shifts', label: 'Shifts & Registers', group: 'General' },
+  { key: 'ledger', label: 'Ledger', group: 'Finance' },
   { key: 'roles', label: 'Roles & Permissions', group: 'Admin' },
   { key: 'settings', label: 'Settings', group: 'Admin' },
 ]
@@ -47,6 +50,45 @@ const GROUPS = Array.from(new Set(ALL_PERMISSIONS.map((p) => p.group)))
 const DEFAULT_PERMS: Record<string, boolean> = Object.fromEntries(
   ALL_PERMISSIONS.map((p) => [p.key, false])
 )
+
+const SYSTEM_ROLE_NAMES = ['owner', 'admin', 'manager', 'cashier']
+export const isSystemRole = (role: { name: string; is_system?: boolean }) =>
+  role.is_system || SYSTEM_ROLE_NAMES.includes(role.name.toLowerCase().trim())
+
+const SYSTEM_ROLE_DEFAULTS: Record<string, Record<string, boolean>> = {
+  owner: Object.fromEntries(ALL_PERMISSIONS.map((p) => [p.key, true])),
+  admin: Object.fromEntries(ALL_PERMISSIONS.map((p) => [p.key, true])),
+  manager: Object.fromEntries(
+    ALL_PERMISSIONS.map((p) => [
+      p.key,
+      !['roles', 'settings', 'activity'].includes(p.key),
+    ])
+  ),
+  cashier: Object.fromEntries(
+    ALL_PERMISSIONS.map((p) => [
+      p.key,
+      ['billing', 'customers', 'returns', 'quotations', 'shifts'].includes(p.key),
+    ])
+  ),
+}
+
+export const getRolePermissions = (role: { name: string; permissions?: Record<string, boolean> | null }): Record<string, boolean> => {
+  if (role.permissions && typeof role.permissions === 'object' && Object.keys(role.permissions).length > 0) {
+    return { ...DEFAULT_PERMS, ...role.permissions }
+  }
+  const normName = role.name.toLowerCase().trim()
+  if (SYSTEM_ROLE_DEFAULTS[normName]) {
+    return SYSTEM_ROLE_DEFAULTS[normName]
+  }
+  return DEFAULT_PERMS
+}
+
+const ROLE_SORT_ORDER: Record<string, number> = {
+  owner: 1,
+  admin: 2,
+  manager: 3,
+  cashier: 4,
+}
 
 export function RolesPage() {
   const { org } = useAuth()
@@ -67,9 +109,43 @@ export function RolesPage() {
         .from('roles')
         .select('*')
         .eq('organization_id', orgId!)
-        .order('is_system', { ascending: false })
+
       if (error) throw error
-      return (data ?? []) as Role[]
+
+      const rawRoles = (data ?? []) as Role[]
+
+      // Ensure system roles have is_system flag and valid permissions
+      const normalizedRoles = rawRoles.map((r) => ({
+        ...r,
+        permissions: getRolePermissions(r),
+        is_system: isSystemRole(r),
+      }))
+
+      // Auto-sync in background if database had is_system = false for any base system role
+      const needDbUpdate = rawRoles.filter(
+        (r) => SYSTEM_ROLE_NAMES.includes(r.name.toLowerCase().trim()) && !r.is_system
+      )
+      if (needDbUpdate.length > 0) {
+        supabase
+          .from('roles')
+          .update({ is_system: true })
+          .in('id', needDbUpdate.map((r) => r.id))
+          .then(() => {})
+      }
+
+      // Sort: system roles first (owner, admin, manager, cashier), then custom roles alphabetically
+      return normalizedRoles.sort((a, b) => {
+        const aSys = isSystemRole(a)
+        const bSys = isSystemRole(b)
+        if (aSys && bSys) {
+          const orderA = ROLE_SORT_ORDER[a.name.toLowerCase().trim()] ?? 99
+          const orderB = ROLE_SORT_ORDER[b.name.toLowerCase().trim()] ?? 99
+          return orderA - orderB
+        }
+        if (aSys) return -1
+        if (bSys) return 1
+        return a.name.localeCompare(b.name)
+      })
     },
   })
 
@@ -82,10 +158,14 @@ export function RolesPage() {
   }
 
   function openEdit(role: Role) {
+    if (isSystemRole(role)) {
+      toast.error('System Role Locked', `${role.name.charAt(0).toUpperCase() + role.name.slice(1)} is a default system role and cannot be edited.`)
+      return
+    }
     setEditing(role)
     setFormName(role.name)
     setFormDesc(role.description ?? '')
-    setFormPerms({ ...DEFAULT_PERMS, ...role.permissions })
+    setFormPerms(getRolePermissions(role))
     setShowDialog(true)
   }
 
@@ -93,7 +173,7 @@ export function RolesPage() {
     setEditing(null)
     setFormName(`${role.name} (Copy)`)
     setFormDesc(`Cloned from ${role.name}`)
-    setFormPerms({ ...DEFAULT_PERMS, ...role.permissions })
+    setFormPerms(getRolePermissions(role))
     setShowDialog(true)
   }
 
@@ -112,19 +192,39 @@ export function RolesPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!formName.trim()) throw new Error('Role name is required')
-      const payload = {
-        organization_id: orgId!,
-        name: formName.trim(),
-        description: formDesc.trim() || null,
-        is_system: false,
-        permissions: formPerms,
+      const trimmedName = formName.trim()
+      if (!trimmedName) throw new Error('Role name is required')
+
+      if (!editing && SYSTEM_ROLE_NAMES.includes(trimmedName.toLowerCase())) {
+        throw new Error(`"${trimmedName}" is a reserved default role name. Please choose another name.`)
       }
+
       if (editing) {
-        if (editing.is_system) throw new Error('System roles cannot be edited')
-        const { error } = await supabase.from('roles').update(payload).eq('id', editing.id)
+        if (isSystemRole(editing)) {
+          throw new Error('Default system roles cannot be edited.')
+        }
+        if (
+          editing.name.toLowerCase() !== trimmedName.toLowerCase() &&
+          SYSTEM_ROLE_NAMES.includes(trimmedName.toLowerCase())
+        ) {
+          throw new Error(`"${trimmedName}" is a reserved system role name.`)
+        }
+        const payload = {
+          name: trimmedName,
+          description: formDesc.trim() || null,
+          is_system: false,
+          permissions: formPerms,
+        }
+        const { error } = await supabase.from('roles').update(payload).eq('id', editing.id).eq('organization_id', orgId!)
         if (error) throw error
       } else {
+        const payload = {
+          organization_id: orgId!,
+          name: trimmedName,
+          description: formDesc.trim() || null,
+          is_system: false,
+          permissions: formPerms,
+        }
         const { error } = await supabase.from('roles').insert(payload)
         if (error) throw error
       }
@@ -139,7 +239,12 @@ export function RolesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('roles').delete().eq('id', id)
+      const role = roles.find((r) => r.id === id)
+      if (role && isSystemRole(role)) {
+        throw new Error(`Cannot delete the default system role "${role.name}".`)
+      }
+      
+      const { error } = await supabase.from('roles').delete().eq('id', id).eq('organization_id', orgId!)
       if (error) throw error
     },
     onSuccess: () => {
@@ -150,7 +255,7 @@ export function RolesPage() {
   })
 
   const permCount = (role: Role) =>
-    Object.values(role.permissions).filter(Boolean).length
+    Object.values(getRolePermissions(role)).filter(Boolean).length
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
@@ -180,51 +285,57 @@ export function RolesPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {roles.map((role) => (
-                <div key={role.id}
-                  className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={cn('h-9 w-9 rounded-lg flex items-center justify-center shrink-0',
-                      role.is_system ? 'bg-indigo-600/15' : 'bg-zinc-700/40')}>
-                      <Shield className={cn('h-4 w-4', role.is_system ? 'text-indigo-400' : 'text-zinc-400')} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-foreground">{role.name}</p>
-                        {role.is_system && (
-                          <Badge variant="secondary" className="text-[10px]">System</Badge>
-                        )}
+              {roles.map((role) => {
+                const isSys = isSystemRole(role)
+                return (
+                  <div key={role.id}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={cn('h-9 w-9 rounded-lg flex items-center justify-center shrink-0',
+                        isSys ? 'bg-indigo-600/15' : 'bg-zinc-700/40')}>
+                        <Shield className={cn('h-4 w-4', isSys ? 'text-indigo-400' : 'text-zinc-400')} />
                       </div>
-                      {role.description && (
-                        <p className="text-xs text-muted-foreground truncate">{role.description}</p>
-                      )}
-                      <p className="text-[10px] text-zinc-600 mt-0.5">
-                        {permCount(role)} / {ALL_PERMISSIONS.length} permissions enabled
-                      </p>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-foreground capitalize">{role.name}</p>
+                          {isSys && (
+                            <Badge variant="secondary" className="text-[10px]">System</Badge>
+                          )}
+                        </div>
+                        {role.description && (
+                          <p className="text-xs text-muted-foreground truncate">{role.description}</p>
+                        )}
+                        <p className="text-[10px] text-zinc-600 mt-0.5">
+                          {permCount(role)} / {ALL_PERMISSIONS.length} permissions enabled
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1"
-                      onClick={() => cloneRole(role)}>
-                      <Copy className="h-3 w-3" /> Clone
-                    </Button>
-                    {!role.is_system && (
-                      <>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
-                          onClick={() => openEdit(role)}>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => cloneRole(role)}>
+                        <Copy className="h-3 w-3" /> Clone
+                      </Button>
+                      {!isSys && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openEdit(role)} title="Edit role">
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-400"
+                      )}
+                      {!isSys && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-400 hover:text-red-400"
+                          title="Delete role"
                           onClick={() => {
-                            if (confirm(`Delete role "${role.name}"?`)) deleteMutation.mutate(role.id)
-                          }}>
+                            if (window.confirm(`Delete ${role.name} role?`)) deleteMutation.mutate(role.id)
+                          }}
+                        >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
-                      </>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </TabsContent>
@@ -247,8 +358,8 @@ export function RolesPage() {
               </thead>
               <tbody>
                 {GROUPS.map((group) => (
-                  <>
-                    <tr key={`group-${group}`} className="bg-zinc-900/50">
+                  <React.Fragment key={group}>
+                    <tr className="bg-zinc-900/50">
                       <td colSpan={roles.length + 1}
                         className="px-3 py-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
                         {group}
@@ -259,18 +370,21 @@ export function RolesPage() {
                         <td className="sticky left-0 bg-card p-3 text-muted-foreground font-medium">
                           {perm.label}
                         </td>
-                        {roles.map((role) => (
-                          <td key={role.id} className="p-3 text-center">
-                            {role.permissions[perm.key] ? (
-                              <Check className="h-3.5 w-3.5 text-emerald-400 mx-auto" />
-                            ) : (
-                              <X className="h-3.5 w-3.5 text-zinc-700 mx-auto" />
-                            )}
-                          </td>
-                        ))}
+                        {roles.map((role) => {
+                          const perms = getRolePermissions(role)
+                          return (
+                            <td key={role.id} className="p-3 text-center">
+                              {perms[perm.key] ? (
+                                <Check className="h-3.5 w-3.5 text-emerald-400 mx-auto" />
+                              ) : (
+                                <X className="h-3.5 w-3.5 text-zinc-700 mx-auto" />
+                              )}
+                            </td>
+                          )
+                        })}
                       </tr>
                     ))}
-                  </>
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

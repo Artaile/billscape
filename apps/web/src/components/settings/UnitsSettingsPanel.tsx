@@ -49,7 +49,7 @@ export function UnitsSettingsPanel() {
     queryKey: ['units-manage', orgId],
     enabled: !!orgId,
     queryFn: async () => {
-      const { data, error } = await getUnits(supabase as Parameters<typeof getUnits>[0], orgId!)
+      const { data, error } = await getUnits(supabase, orgId!)
       if (error) throw error
       return (data ?? []) as UnitRow[]
     },
@@ -62,7 +62,7 @@ export function UnitsSettingsPanel() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await createUnit(supabase as Parameters<typeof createUnit>[0], {
+      const { error } = await createUnit(supabase, {
         organization_id: orgId!,
         name: newName.trim(),
         symbol: newSymbol.trim(),
@@ -82,7 +82,7 @@ export function UnitsSettingsPanel() {
 
   const updateMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await updateUnit(supabase as Parameters<typeof updateUnit>[0], orgId!, id, {
+      const { error } = await updateUnit(supabase, orgId!, id, {
         name: editName.trim(),
         symbol: editSymbol.trim(),
         allow_decimal: editAllowDecimal,
@@ -99,7 +99,7 @@ export function UnitsSettingsPanel() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await deleteUnit(supabase as Parameters<typeof deleteUnit>[0], orgId!, id)
+      const { error } = await deleteUnit(supabase, orgId!, id)
       if (error) throw error
     },
     onSuccess: () => {

@@ -4,6 +4,7 @@ import type { CartItem, DiscountType, GSTRate, InvoiceTotals, TaxBreakupLine } f
 export interface GSTContext {
   shopStateCode: string
   customerStateCode?: string
+  taxInclusive?: boolean
 }
 
 export function isInterState(ctx: GSTContext): boolean {
@@ -31,6 +32,7 @@ export function computeLineTax(
   interstate: boolean,
   discountType?: DiscountType,
   discountAmount?: number,
+  taxInclusive?: boolean,
 ): {
   taxableAmount: number
   cgst: number
@@ -40,25 +42,41 @@ export function computeLineTax(
 } {
   const baseAmount = toMoney(price * qty)
   const discountAmt = resolveLineDiscount(baseAmount, discountPct, discountType, discountAmount)
-  const taxableAmount = toMoney(baseAmount - discountAmt)
+  const netAmount = toMoney(baseAmount - discountAmt)
 
+  let taxableAmount = 0
   let cgst = 0
   let sgst = 0
   let igst = 0
+  let lineTotal = 0
 
-  if (interstate) {
-    igst = toMoney(taxableAmount * (taxRate / 100))
+  if (taxInclusive && taxRate > 0) {
+    taxableAmount = toMoney(netAmount / (1 + taxRate / 100))
+    const totalTax = toMoney(netAmount - taxableAmount)
+    if (interstate) {
+      igst = totalTax
+    } else {
+      cgst = toMoney(totalTax / 2)
+      sgst = toMoney(totalTax - cgst)
+    }
+    lineTotal = netAmount
   } else {
-    cgst = toMoney(taxableAmount * (taxRate / 200))
-    sgst = toMoney(taxableAmount * (taxRate / 200))
+    taxableAmount = netAmount
+    if (interstate) {
+      igst = toMoney(taxableAmount * (taxRate / 100))
+    } else {
+      cgst = toMoney(taxableAmount * (taxRate / 200))
+      sgst = toMoney(taxableAmount * (taxRate / 200))
+    }
+    lineTotal = toMoney(taxableAmount + cgst + sgst + igst)
   }
 
-  const lineTotal = toMoney(taxableAmount + cgst + sgst + igst)
   return { taxableAmount, cgst, sgst, igst, lineTotal }
 }
 
 export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
   const interstate = isInterState(ctx)
+  const taxInclusive = !!ctx.taxInclusive
 
   let subtotal = 0
   let discountTotal = 0
@@ -80,6 +98,7 @@ export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
       interstate,
       item.discount_type,
       item.discount_amount,
+      taxInclusive,
     )
 
     subtotal = toMoney(subtotal + baseAmount)
@@ -107,7 +126,9 @@ export function computeGST(ctx: GSTContext, items: CartItem[]): InvoiceTotals {
   }
 
   const taxTotal = toMoney(cgstTotal + sgstTotal + igstTotal)
-  const grandTotal = toMoney(taxableAmount + taxTotal)
+  const grandTotal = taxInclusive
+    ? toMoney(subtotal - discountTotal)
+    : toMoney(taxableAmount + taxTotal)
 
   return {
     subtotal,
@@ -177,5 +198,36 @@ export function applyLoyaltyRedemption(
     ...totals,
     loyalty_redeem_amount: loyaltyRedeemAmount,
     net_payable: netPayable,
+  }
+}
+
+// Dynamic Round Off calculation (Round to Nearest, Round Up, Round Down)
+export function applyRoundOff(
+  totals: InvoiceTotals,
+  enableRoundOff?: boolean,
+  roundOffType?: string,
+): InvoiceTotals {
+  if (!enableRoundOff) {
+    return { ...totals, round_off_amount: 0 }
+  }
+
+  const currentPayable = totals.net_payable
+  let rounded = currentPayable
+
+  if (roundOffType === 'Round Up') {
+    rounded = Math.ceil(currentPayable)
+  } else if (roundOffType === 'Round Down') {
+    rounded = Math.floor(currentPayable)
+  } else {
+    // Default: Round to Nearest
+    rounded = Math.round(currentPayable)
+  }
+
+  const roundOffAmount = toMoney(rounded - currentPayable)
+
+  return {
+    ...totals,
+    round_off_amount: roundOffAmount,
+    net_payable: toMoney(rounded),
   }
 }

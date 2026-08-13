@@ -55,6 +55,11 @@ interface OrgInfo {
     notify_invoice_due?: boolean
     notify_payment_received?: boolean
     notify_daily_summary?: boolean
+    notify_trial_expiry?: boolean
+    payment_reminders?: boolean
+    due_date_reminders?: boolean
+    remind_before_due?: number
+    remind_after_due?: number
     // Print & PDF Layout
     print_paper_size?: 'a4' | 'a5' | 'thermal_3inch' | 'thermal_2inch'
     print_template_theme?: string
@@ -80,14 +85,15 @@ interface OrgInfo {
     custom_fields?: any[]
     [key: string]: any
   }
-  feature_flags?: Record<string, unknown>
+  feature_flags?: Record<string, any>
   invoice_template?: any
 }
 
 interface AuthState {
   session: Session | null
   user: User | null
-  role: UserRole | null
+  role: UserRole | null // Base system role
+  permissions: Record<string, boolean> | null // Custom role UI permissions
   org: OrgInfo | null
   loading: boolean
   isSuperAdmin: boolean
@@ -105,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     session: null,
     user: null,
     role: null,
+    permissions: null,
     org: null,
     loading: true,
     isSuperAdmin: false,
@@ -112,7 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadOrgFromSession = async (session: Session | null) => {
     if (!session?.user) {
-      setState({ session: null, user: null, role: null, org: null, loading: false, isSuperAdmin: false })
+      setState({ session: null, user: null, role: null, permissions: null, org: null, loading: false, isSuperAdmin: false })
       return
     }
 
@@ -129,17 +136,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Get primary membership (non-super_admin first for tenant context)
       const { data: memberships } = await supabase
         .from('memberships')
-        .select('role, organization_id')
+        .select('role, role_id, organization_id, roles!memberships_role_id_fkey(permissions)')
         .eq('user_id', session.user.id)
         .order('created_at', { ascending: true })
 
       // Pick the first non-super_admin membership for tenant context
       const tenantMembership = memberships?.find((m) => m.role !== 'super_admin')
       const role = (tenantMembership?.role as UserRole) ?? null
+      const permissions = ((tenantMembership?.roles as any)?.permissions as Record<string, boolean>) ?? null
       const orgId = tenantMembership?.organization_id ?? null
 
       if (!orgId) {
-        setState({ session, user: session.user, role, org: null, loading: false, isSuperAdmin })
+        setState({ session, user: session.user, role, permissions, org: null, loading: false, isSuperAdmin })
         return
       }
 
@@ -166,9 +174,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       applyBrandColor(org.branding?.primary_color ?? '#6366f1')
 
-      setState({ session, user: session.user, role, org, loading: false, isSuperAdmin })
-    } catch {
-      setState({ session, user: session.user, role: null, org: null, loading: false, isSuperAdmin: false })
+      setState({ session, user: session.user, role, permissions, org, loading: false, isSuperAdmin })
+    } catch (error) {
+      console.error("AuthContext fetchUserAndOrg error:", error)
+      setState({ session, user: session.user, role: null, permissions: null, org: null, loading: false, isSuperAdmin: false })
     }
   }
 
@@ -180,7 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Recovery session must not be treated as a normal sign-in (would fall
         // through to /dashboard via RequireAuth/RequireOrg before the user sets
         // a new password) — send them to the reset-password screen instead.
-        setState({ session, user: session?.user ?? null, role: null, org: null, loading: false, isSuperAdmin: false })
+        setState({ session, user: session?.user ?? null, role: null, permissions: null, org: null, loading: false, isSuperAdmin: false })
         if (window.location.pathname !== '/reset-password') {
           window.location.replace('/reset-password')
         }

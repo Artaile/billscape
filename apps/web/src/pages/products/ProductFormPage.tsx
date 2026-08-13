@@ -79,13 +79,13 @@ export function ProductFormPage() {
       name: '',
       sku: '',
       hsn_code: '',
-      tax_rate: 18,
+      tax_rate: (org?.branding?.default_gst_rate as 0 | 5 | 12 | 18 | 28) ?? 18,
       price: 0,
       cost_price: 0,
       mrp: undefined,
       special_price: undefined,
       barcode_value: '',
-      track_stock: true,
+      track_stock: (org as any)?.feature_flags?.enable_stock_tracking ?? true,
       unit_id: '',
       secondary_unit_id: undefined,
       conversion_factor: undefined,
@@ -123,7 +123,7 @@ export function ProductFormPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('*')
+        .select('*, inventory(stock_qty)')
         .eq('id', id!)
         .eq('organization_id', orgId!)
         .single()
@@ -146,7 +146,7 @@ export function ProductFormPage() {
   })
 
   const selectedCategoryName = categories?.find((c) => c.id === categoryId)?.name
-  const selectedUnitSymbol = units?.find((u) => u.id === watchedUnitId)?.symbol
+  const selectedUnitSymbol = units?.find((u: any) => u.id === watchedUnitId)?.symbol
 
   const addCategoryMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -221,6 +221,15 @@ export function ProductFormPage() {
       if ((existingProduct as any).has_batches) setHasBatches(true)
       if ((existingProduct as any).brand) setBrand((existingProduct as any).brand)
       if ((existingProduct as any).secondary_unit_id) setHasSecondaryUnit(true)
+
+      const inv = (existingProduct as any).inventory
+      if (inv) {
+        if (Array.isArray(inv) && inv.length > 0) {
+          setInitialStock(inv[0].stock_qty)
+        } else if (!Array.isArray(inv)) {
+          setInitialStock(inv.stock_qty)
+        }
+      }
     }
   }, [existingProduct, reset])
 
@@ -228,7 +237,7 @@ export function ProductFormPage() {
   // create flow (isEdit's unit_id comes from existingProduct above, don't stomp it).
   useEffect(() => {
     if (!isEdit && units && units.length > 0 && !watchedUnitId) {
-      const piece = units.find((u) => u.name === 'Piece')
+      const piece = units.find((u: any) => u.name === 'Piece')
       setValue('unit_id', piece?.id ?? units[0].id)
     }
   }, [isEdit, units, watchedUnitId, setValue])
@@ -350,6 +359,21 @@ export function ProductFormPage() {
         if (values.track_stock) {
           await supabase.from('inventory').insert({
             product_id: product.id,
+            organization_id: orgId!,
+            stock_qty: values.initialStock ?? 0,
+            reorder_level: 10, // Legacy fallback, actual threshold is global
+          })
+        }
+      }
+
+      if (isEdit && values.track_stock) {
+        // Handle stock edit logic
+        const { data: invCheck } = await supabase.from('inventory').select('id').eq('product_id', id!).single()
+        if (invCheck) {
+          await supabase.from('inventory').update({ stock_qty: values.initialStock ?? 0 }).eq('product_id', id!)
+        } else {
+          await supabase.from('inventory').insert({
+            product_id: id!,
             organization_id: orgId!,
             stock_qty: values.initialStock ?? 0,
             reorder_level: 10,
@@ -664,10 +688,10 @@ export function ProductFormPage() {
               />
             </div>
 
-            {trackStock && !isEdit && (
+            {trackStock && (
               <div className="space-y-1.5">
                 <Label htmlFor="initialStock">
-                  Opening Stock{selectedUnitSymbol ? ` (${selectedUnitSymbol})` : ' Qty'}
+                  {isEdit ? 'Current Stock' : 'Opening Stock'}{selectedUnitSymbol ? ` (${selectedUnitSymbol})` : ' Qty'}
                 </Label>
                 <Input
                   id="initialStock"
@@ -697,7 +721,7 @@ export function ProductFormPage() {
                 className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 {!watchedUnitId && <option value="">— Select unit —</option>}
-                {units?.map((u) => (
+                {units?.map((u: any) => (
                   <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
                 ))}
               </select>
@@ -733,7 +757,7 @@ export function ProductFormPage() {
                       className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     >
                       <option value="">— Select unit —</option>
-                      {units?.filter((u) => u.id !== watchedUnitId).map((u) => (
+                      {units?.filter((u: any) => u.id !== watchedUnitId).map((u: any) => (
                         <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
                       ))}
                     </select>
@@ -752,7 +776,7 @@ export function ProductFormPage() {
                   </div>
                   {watchedSecondaryUnitId && watchedConversionFactor ? (
                     <p className="col-span-2 text-xs text-zinc-500">
-                      1 {units?.find((u) => u.id === watchedSecondaryUnitId)?.symbol} = {watchedConversionFactor} {selectedUnitSymbol}
+                      1 {units?.find((u: any) => u.id === watchedSecondaryUnitId)?.symbol} = {watchedConversionFactor} {selectedUnitSymbol}
                     </p>
                   ) : null}
                 </div>
@@ -1050,7 +1074,7 @@ export function ProductFormPage() {
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-400 bg-zinc-800/60 flex items-center gap-1">
                   <Ruler className="h-2.5 w-2.5" />
                   {hasSecondaryUnit && watchedSecondaryUnitId && watchedConversionFactor
-                    ? `${units?.find((u) => u.id === watchedSecondaryUnitId)?.symbol} · ${watchedConversionFactor} ${selectedUnitSymbol}`
+                    ? `${units?.find((u: any) => u.id === watchedSecondaryUnitId)?.symbol} · ${watchedConversionFactor} ${selectedUnitSymbol}`
                     : selectedUnitSymbol}
                 </span>
               )}

@@ -373,10 +373,10 @@ export function PurchasesPage() {
             ? <div className="flex items-center justify-center h-32"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
             : viewPurchase && (() => {
               const { purchase, items } = viewPurchase
-              const taxableTotal = items.reduce((s, it) => s + (it.taxable_amount ?? 0), 0)
-              const cgstTotal = items.reduce((s, it) => s + (it.cgst_amount ?? 0), 0)
-              const sgstTotal = items.reduce((s, it) => s + (it.sgst_amount ?? 0), 0)
-              const igstTotal = items.reduce((s, it) => s + (it.igst_amount ?? 0), 0)
+              const taxableTotal = items.reduce((s: number, it: any) => s + (it.taxable_amount ?? 0), 0)
+              const cgstTotal = items.reduce((s: number, it: any) => s + (it.cgst_amount ?? 0), 0)
+              const sgstTotal = items.reduce((s: number, it: any) => s + (it.sgst_amount ?? 0), 0)
+              const igstTotal = items.reduce((s: number, it: any) => s + (it.igst_amount ?? 0), 0)
               const taxTotal = cgstTotal + sgstTotal + igstTotal
               const interstate = igstTotal > 0
               return (
@@ -398,7 +398,7 @@ export function PurchasesPage() {
                     <Separator />
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-semibold text-zinc-300">Items</h3>
-                      {items.some((it) => it.products?.barcode_value) && (
+                      {items.some((it: any) => it.products?.barcode_value) && (
                         <Button
                           type="button" variant="outline" size="sm" className="h-7 text-xs"
                           onClick={() => {
@@ -433,7 +433,7 @@ export function PurchasesPage() {
                         <TableBody>
                           {items.length === 0
                             ? <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-4">No items</TableCell></TableRow>
-                            : items.map((it) => (
+                            : items.map((it: any) => (
                               <TableRow key={it.id}>
                                 <TableCell className="font-mono text-xs text-zinc-400">{it.products?.sku ?? '—'}</TableCell>
                                 <TableCell className="text-zinc-200">{it.product_name}</TableCell>

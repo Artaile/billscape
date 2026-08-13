@@ -183,7 +183,7 @@ export function PurchaseFormPage() {
       setPurchaseType((purchase.purchase_type as 'credit' | 'cash') ?? 'credit')
       setNotes(purchase.notes ?? '')
       setRows(
-        items.map((it) => {
+        items.map((it: any) => {
           const product = (it as unknown as { products?: { sku?: string; barcode_value?: string; price?: number; mrp?: number; special_price?: number; unit_id?: string; secondary_unit_id?: string | null; conversion_factor?: number | null } }).products
           return {
             product_id: it.product_id,

@@ -66,36 +66,36 @@ interface NavItem {
   icon: React.ElementType
   badge?: string
   group?: string
-  allowedRoles?: Array<UserRole>
+  permissionKey?: string
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS' },
-  { label: 'Products', href: '/products', icon: Package },
-  { label: 'Inventory', href: '/inventory', icon: Boxes },
-  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, allowedRoles: ['owner', 'manager'] },
-  { label: 'Suppliers', href: '/suppliers', icon: Truck, allowedRoles: ['owner', 'manager'] },
-  { label: 'Customers', href: '/customers', icon: Users },
-  { label: 'Returns', href: '/returns', icon: RotateCcw },
-  { label: 'Quotations', href: '/quotations', icon: FileText },
-  { label: 'Loyalty', href: '/loyalty', icon: Star },
-  { label: 'Employees', href: '/employees', icon: UserCog, allowedRoles: ['owner', 'manager'] },
-  { label: 'Roles', href: '/roles', icon: Shield, allowedRoles: ['owner'] },
-  { label: 'Expenses', href: '/expenses', icon: Receipt, allowedRoles: ['owner', 'manager'] },
-  { label: 'Promotions', href: '/promotions', icon: Tag, allowedRoles: ['owner', 'manager'] },
-  { label: 'Activity', href: '/activity', icon: Activity, allowedRoles: ['owner', 'manager'] },
-  { label: 'Shifts', href: '/shifts', icon: Clock, allowedRoles: ['owner', 'manager'] },
-  { label: 'Ledger', href: '/ledger', icon: BookOpen, allowedRoles: ['owner', 'manager'] },
-  { label: 'Reports', href: '/reports', icon: BarChart3, allowedRoles: ['owner', 'manager'] },
-  { label: 'Settings', href: '/settings', icon: Settings, allowedRoles: ['owner'] },
+  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' },
+  { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing' },
+  { label: 'Products', href: '/products', icon: Package, permissionKey: 'products' },
+  { label: 'Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory' },
+  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, permissionKey: 'purchases' },
+  { label: 'Suppliers', href: '/suppliers', icon: Truck, permissionKey: 'suppliers' },
+  { label: 'Customers', href: '/customers', icon: Users, permissionKey: 'customers' },
+  { label: 'Returns', href: '/returns', icon: RotateCcw, permissionKey: 'returns' },
+  { label: 'Quotations', href: '/quotations', icon: FileText, permissionKey: 'quotations' },
+  { label: 'Loyalty', href: '/loyalty', icon: Star, permissionKey: 'loyalty' },
+  { label: 'Employees', href: '/employees', icon: UserCog, permissionKey: 'employees' },
+  { label: 'Roles', href: '/roles', icon: Shield, permissionKey: 'roles' },
+  { label: 'Expenses', href: '/expenses', icon: Receipt, permissionKey: 'expenses' },
+  { label: 'Promotions', href: '/promotions', icon: Tag, permissionKey: 'promotions' },
+  { label: 'Activity', href: '/activity', icon: Activity, permissionKey: 'activity' },
+  { label: 'Shifts', href: '/shifts', icon: Clock, permissionKey: 'shifts' },
+  { label: 'Ledger', href: '/ledger', icon: BookOpen, permissionKey: 'ledger' },
+  { label: 'Reports', href: '/reports', icon: BarChart3, permissionKey: 'reports' },
+  { label: 'Settings', href: '/settings', icon: Settings, permissionKey: 'settings' },
 ]
 
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { requestNavigation } = useNavigationGuard()
-  const { user, org, role, signOut } = useAuth()
+  const { user, org, role, permissions, signOut } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -339,7 +339,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       <nav className="flex-1 overflow-y-auto py-4 px-2">
         <ul className="space-y-0.5">
           {NAV_ITEMS.filter((item) =>
-            !item.allowedRoles || (role != null && item.allowedRoles.includes(role))
+            !item.permissionKey || permissions?.[item.permissionKey] !== false
           ).map((item) => {
             const isActive =
               item.href === '/dashboard'

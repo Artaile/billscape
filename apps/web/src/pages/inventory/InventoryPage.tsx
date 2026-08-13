@@ -148,9 +148,10 @@ export function InventoryPage() {
   const filteredInventory = inventory?.filter((item) => {
     const productName = item.products?.name ?? ''
     const matchesSearch = productName.toLowerCase().includes(search.toLowerCase())
+    const threshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
 
     let matchesFilter = true
-    if (filter === 'low') matchesFilter = item.stock_qty > 0 && item.stock_qty <= item.reorder_level
+    if (filter === 'low') matchesFilter = item.stock_qty > 0 && item.stock_qty <= threshold
     if (filter === 'out') matchesFilter = item.stock_qty === 0
 
     const matchesCategory = !categoryFilter || item.products?.category_id === categoryFilter
@@ -159,9 +160,10 @@ export function InventoryPage() {
   })
 
   const getStatusBadge = (item: InventoryRow) => {
-    if (item.stock_qty === 0) return <Badge variant="destructive">Out of Stock</Badge>
-    if (item.stock_qty <= item.reorder_level) return <Badge variant="warning">Low Stock</Badge>
-    return <Badge variant="success">In Stock</Badge>
+    const threshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
+    if (item.stock_qty === 0) return <Badge variant="destructive">Out of Stock ({item.stock_qty})</Badge>
+    if (item.stock_qty <= threshold) return <Badge variant="warning">Low Stock ({item.stock_qty})</Badge>
+    return <Badge variant="success">In Stock ({item.stock_qty})</Badge>
   }
 
   // Stock movements (ledger & history)

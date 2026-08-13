@@ -110,8 +110,15 @@ Supabase project ID: bzvbkscspzdschskbqtd
 
 ## OrgBranding fields (org_settings.branding jsonb)
 primary_color, logo_url, shop_name, invoice_header, invoice_footer,
-bank_name, bank_account, bank_ifsc, invoice_terms, invoice_prefix,
+bank_name, bank_account, bank_ifsc, invoice_terms, invoice_prefix, invoice_start_number,
 currency, date_format, timezone
+**Tax & GST**: tax_inclusive, default_gst_rate, composition_scheme, inter_state_tax, show_hsn_on_invoice, rcm_enabled
+**Barcode**: barcode_type, barcode_label_size, auto_print_barcode_on_purchase
+**UPI / Payments**: upi_id, default_payment_mode, default_payment_terms, payment_reminder_days
+**Signature**: signature_url, show_signature_on_invoice
+**Notifications**: notify_low_stock, notify_expiry, notify_invoice_due, notify_payment_received, notify_daily_summary
+**Print & PDF Layout**: print_paper_size, print_template_theme, print_show_logo, print_show_shop_name, print_show_address, print_show_contact, print_show_gstin, print_show_pan, print_show_column_sno, print_show_column_hsn, print_show_column_mrp, print_show_column_unit, print_show_column_discount, print_show_column_tax_rate, print_show_column_tax_amount, print_show_bank_details, print_show_upi_qr, print_show_terms, print_show_signature, print_thank_you_note
+**Custom Fields**: custom_fields array
 
 ## Critical DB fixes applied
 - purchases.invoice_ref renamed to invoice_no
@@ -496,6 +503,14 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - Loyalty settings query key is `loyalty_settings` (underscore, matches `/loyalty`'s existing
   LoyaltyPage key) — POSTab must use the same key or a rate change saved on `/loyalty` won't
   invalidate POSTab's cached settings in another open tab.
+
+## Dashboard Invitations (as of 2026-08-12)
+- The manual 6-digit OTP flow for adding dashboard users has been completely replaced by a frictionless, secure **Supabase Magic Link** flow.
+- Generating an invite (`SettingsPage.tsx` > Team > Dashboard Users) creates a `user_invitations` row and calls `supabase.auth.signInWithOtp()` to instantly email the employee a one-time use Magic Link.
+- **Mandatory Password Setup**: When an employee clicks their Magic Link, they are routed to `/accept-invite`. Because this is their first time joining, the `AcceptInvitePage` intercepts them and forces them to choose a permanent password (via `supabase.auth.updateUser`) before they can access the dashboard.
+- The `AcceptInvitePage` relies on the `useAuth` hook to safely wait for Supabase to parse the URL `#access_token` hash before checking session state, preventing a race condition that would otherwise incorrectly redirect valid invitees to `/login`.
+- A secure PostgreSQL RPC function `accept_invite_by_email` automatically creates the user's `memberships` row with their assigned role immediately after they set their password, linking them to the tenant shop.
+- If a user attempts to copy and paste a Magic Link they already clicked from their email, it will fail because Supabase securely invalidates the token upon first use.
 
 ## Sidebar nav order (as of 2026-07-25)
 Dashboard → Billing (POS) → Products → Inventory → Purchases → Suppliers → Customers →
