@@ -52,7 +52,7 @@ const DEFAULT_PERMS: Record<string, boolean> = Object.fromEntries(
 )
 
 const SYSTEM_ROLE_NAMES = ['owner', 'admin', 'manager', 'cashier']
-export const isSystemRole = (role: { name: string; is_system?: boolean }) =>
+const isSystemRole = (role: { name: string; is_system?: boolean }) =>
   role.is_system || SYSTEM_ROLE_NAMES.includes(role.name.toLowerCase().trim())
 
 const SYSTEM_ROLE_DEFAULTS: Record<string, Record<string, boolean>> = {
@@ -72,7 +72,7 @@ const SYSTEM_ROLE_DEFAULTS: Record<string, Record<string, boolean>> = {
   ),
 }
 
-export const getRolePermissions = (role: { name: string; permissions?: Record<string, boolean> | null }): Record<string, boolean> => {
+const getRolePermissions = (role: { name: string; permissions?: Record<string, boolean> | null }): Record<string, boolean> => {
   if (role.permissions && typeof role.permissions === 'object' && Object.keys(role.permissions).length > 0) {
     return { ...DEFAULT_PERMS, ...role.permissions }
   }

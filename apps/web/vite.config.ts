@@ -9,6 +9,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'logo.svg'],
+      workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
+      },
       manifest: {
         name: 'BillScape — Smart Billing POS',
         short_name: 'BillScape',
@@ -26,6 +29,20 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+    },
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          query: ['@tanstack/react-query', '@supabase/supabase-js'],
+          ui: ['lucide-react'],
+          charts: ['recharts'],
+          export: ['xlsx', 'qrcode', 'jsbarcode'],
+        },
+      },
     },
   },
   server: {
