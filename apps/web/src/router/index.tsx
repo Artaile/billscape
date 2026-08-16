@@ -36,6 +36,9 @@ import { ShiftsPage } from '@/pages/shifts/ShiftsPage'
 import { LedgerPage } from '@/pages/ledger/LedgerPage'
 import { EmployeesPage } from '@/pages/employees/EmployeesPage'
 import { RolesPage } from '@/pages/roles/RolesPage'
+import { BranchesPage } from '@/pages/branches/BranchesPage'
+import { BranchTransfersPage } from '@/pages/branches/BranchTransfersPage'
+import { BranchProvider } from '@/contexts/BranchContext'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -119,34 +122,38 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <RequireOrg>
-              <AppShell>
-                <Routes>
-                  <Route index element={<Navigate to="/dashboard" replace />} />
-                  <Route path="dashboard" element={<DashboardPage />} />
-                  <Route path="billing" element={<BillingPage />} />
-                  <Route path="products" element={<ProductsPage />} />
-                  <Route path="products/new" element={<ProductFormPage />} />
-                  <Route path="products/:id/edit" element={<ProductFormPage />} />
-                  <Route path="inventory" element={<InventoryPage />} />
-                  <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
-                  <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
-                  <Route path="purchases/:id/edit" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
-                  <Route path="suppliers" element={<RequireRole roles={['owner', 'manager']}><SuppliersPage /></RequireRole>} />
-                  <Route path="customers" element={<CustomersPage />} />
-                  <Route path="expenses" element={<RequireRole roles={['owner', 'manager']}><ExpensesPage /></RequireRole>} />
-                  <Route path="promotions" element={<RequireRole roles={['owner', 'manager']}><PromotionsPage /></RequireRole>} />
-                  <Route path="returns" element={<ReturnsPage />} />
-                  <Route path="quotations" element={<QuotationsPage />} />
-                  <Route path="loyalty" element={<LoyaltyPage />} />
-                  <Route path="employees" element={<RequireRole roles={['owner', 'manager']}><EmployeesPage /></RequireRole>} />
-                  <Route path="roles" element={<RequireRole roles={['owner']}><RolesPage /></RequireRole>} />
-                  <Route path="activity" element={<RequireRole roles={['owner', 'manager']}><ActivityPage /></RequireRole>} />
-                  <Route path="reports" element={<RequireRole roles={['owner', 'manager']}><ReportsPage /></RequireRole>} />
-                  <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />
-                  <Route path="ledger" element={<RequireRole roles={['owner', 'manager']}><LedgerPage /></RequireRole>} />
-                  <Route path="settings" element={<RequireRole roles={['owner']}><SettingsPage /></RequireRole>} />
-                </Routes>
-              </AppShell>
+              <BranchProvider>
+                <AppShell>
+                  <Routes>
+                    <Route index element={<Navigate to="/dashboard" replace />} />
+                    <Route path="dashboard" element={<DashboardPage />} />
+                    <Route path="billing" element={<BillingPage />} />
+                    <Route path="products" element={<ProductsPage />} />
+                    <Route path="products/new" element={<ProductFormPage />} />
+                    <Route path="products/:id/edit" element={<ProductFormPage />} />
+                    <Route path="inventory" element={<InventoryPage />} />
+                    <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
+                    <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
+                    <Route path="purchases/:id/edit" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
+                    <Route path="suppliers" element={<RequireRole roles={['owner', 'manager']}><SuppliersPage /></RequireRole>} />
+                    <Route path="customers" element={<CustomersPage />} />
+                    <Route path="expenses" element={<RequireRole roles={['owner', 'manager']}><ExpensesPage /></RequireRole>} />
+                    <Route path="promotions" element={<RequireRole roles={['owner', 'manager']}><PromotionsPage /></RequireRole>} />
+                    <Route path="returns" element={<ReturnsPage />} />
+                    <Route path="quotations" element={<QuotationsPage />} />
+                    <Route path="loyalty" element={<LoyaltyPage />} />
+                    <Route path="employees" element={<RequireRole roles={['owner', 'manager']}><EmployeesPage /></RequireRole>} />
+                    <Route path="roles" element={<RequireRole roles={['owner']}><RolesPage /></RequireRole>} />
+                    <Route path="branches" element={<RequireRole roles={['owner', 'manager']}><BranchesPage /></RequireRole>} />
+                    <Route path="transfers" element={<RequireRole roles={['owner', 'manager']}><BranchTransfersPage /></RequireRole>} />
+                    <Route path="activity" element={<RequireRole roles={['owner', 'manager']}><ActivityPage /></RequireRole>} />
+                    <Route path="reports" element={<RequireRole roles={['owner', 'manager']}><ReportsPage /></RequireRole>} />
+                    <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />
+                    <Route path="ledger" element={<RequireRole roles={['owner', 'manager']}><LedgerPage /></RequireRole>} />
+                    <Route path="settings" element={<RequireRole roles={['owner']}><SettingsPage /></RequireRole>} />
+                  </Routes>
+                </AppShell>
+              </BranchProvider>
             </RequireOrg>
           </RequireAuth>
         }

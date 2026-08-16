@@ -32,10 +32,14 @@ import {
   Loader2,
   ClipboardList,
   EyeOff,
-  Eye
+  Eye,
+  Building2,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
+import { BranchSwitcher } from './BranchSwitcher'
 import { useNotifications } from '@/hooks/useNotifications'
 import { Button } from '@/components/ui/button'
 import type { UserRole } from '@billscape/core'
@@ -67,6 +71,7 @@ interface NavItem {
   badge?: string
   group?: string
   permissionKey?: string
+  requiresMultiBranch?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -74,6 +79,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing' },
   { label: 'Products', href: '/products', icon: Package, permissionKey: 'products' },
   { label: 'Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory' },
+  { label: 'Transfers', href: '/transfers', icon: ArrowRightLeft, permissionKey: 'inventory', requiresMultiBranch: true },
   { label: 'Purchases', href: '/purchases', icon: ShoppingBag, permissionKey: 'purchases' },
   { label: 'Suppliers', href: '/suppliers', icon: Truck, permissionKey: 'suppliers' },
   { label: 'Customers', href: '/customers', icon: Users, permissionKey: 'customers' },
@@ -82,6 +88,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Loyalty', href: '/loyalty', icon: Star, permissionKey: 'loyalty' },
   { label: 'Employees', href: '/employees', icon: UserCog, permissionKey: 'employees' },
   { label: 'Roles', href: '/roles', icon: Shield, permissionKey: 'roles' },
+  { label: 'Branches', href: '/branches', icon: Building2, permissionKey: 'settings', requiresMultiBranch: true },
   { label: 'Expenses', href: '/expenses', icon: Receipt, permissionKey: 'expenses' },
   { label: 'Promotions', href: '/promotions', icon: Tag, permissionKey: 'promotions' },
   { label: 'Activity', href: '/activity', icon: Activity, permissionKey: 'activity' },
@@ -96,6 +103,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const navigate = useNavigate()
   const { requestNavigation } = useNavigationGuard()
   const { user, org, role, permissions, signOut } = useAuth()
+  const { isMultiBranchEnabled } = useBranch()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
@@ -338,9 +346,10 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
 
       <nav className="flex-1 overflow-y-auto py-4 px-2">
         <ul className="space-y-0.5">
-          {NAV_ITEMS.filter((item) =>
-            !item.permissionKey || permissions?.[item.permissionKey] !== false
-          ).map((item) => {
+          {NAV_ITEMS.filter((item) => {
+            if (item.requiresMultiBranch && !isMultiBranchEnabled) return false
+            return !item.permissionKey || permissions?.[item.permissionKey] !== false
+          }).map((item) => {
             const isActive =
               item.href === '/dashboard'
                 ? location.pathname === '/dashboard' || location.pathname === '/'
@@ -436,10 +445,11 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className="flex-1">
+          <div className="flex-1 flex items-center gap-3">
             <h1 className="text-sm font-semibold text-foreground lg:hidden">
               {org?.name ?? 'BillScape'}
             </h1>
+            <BranchSwitcher />
           </div>
 
           

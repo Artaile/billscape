@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag } from 'lucide-react'
+import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag, Building2, ArrowRightLeft, Warehouse, Store } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -53,6 +55,7 @@ interface InventoryRow {
 
 export function InventoryPage() {
   const { org, user } = useAuth()
+  const { branches, activeBranch, isMultiBranchEnabled } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
 
@@ -240,9 +243,36 @@ export function InventoryPage() {
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Inventory Management</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Stock levels, movements, and adjustments</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
+            <PackageOpen className="h-6 w-6 text-primary" />
+            Inventory Management
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Stock levels, movements, and adjustments
+            {isMultiBranchEnabled && activeBranch && (
+              <span className="text-primary font-medium ml-1.5">• Branch: {activeBranch.name}</span>
+            )}
+          </p>
+        </div>
+
+        {isMultiBranchEnabled && (
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link to="/transfers">
+                <ArrowRightLeft className="h-4 w-4 text-indigo-400" />
+                Stock Transfers (IBT)
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link to="/branches">
+                <Building2 className="h-4 w-4 text-primary" />
+                Branches
+              </Link>
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Summary KPIs */}

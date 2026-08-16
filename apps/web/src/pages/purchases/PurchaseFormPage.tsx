@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
   generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit,
@@ -115,11 +116,13 @@ export function PurchaseFormPage() {
   const importSupplierIdFromState = (location.state as { importSupplierId?: string } | null)?.importSupplierId
   const draftId = (location.state as { draftId?: string } | null)?.draftId
   const { org, user } = useAuth()
+  const { branches, activeBranch, isMultiBranchEnabled } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
   const { requestNavigation } = useNavigationGuard()
 
   const [supplierId, setSupplierId] = useState('')
+  const [receivingBranchId, setReceivingBranchId] = useState<string>(activeBranch?.id || '')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [purchaseType, setPurchaseType] = useState<'credit' | 'cash'>('credit')
@@ -606,6 +609,7 @@ export function PurchaseFormPage() {
         bill_discount_type: parseNum(billDiscountValue) > 0 ? billDiscountType : undefined,
         bill_discount_value: parseNum(billDiscountValue) > 0 ? parseNum(billDiscountValue) : undefined,
         round_off: roundOff,
+        branch_id: receivingBranchId || activeBranch?.id || undefined,
         created_by: user.id,
       })
 
@@ -695,6 +699,23 @@ export function PurchaseFormPage() {
                   </span>
                 )}
               </div>
+
+              {isMultiBranchEnabled && (
+                <div className="lg:w-[200px] shrink-0 space-y-1.5">
+                  <Label>Receiving Branch *</Label>
+                  <select
+                    value={receivingBranchId}
+                    onChange={(e) => setReceivingBranchId(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="lg:w-[160px] shrink-0 space-y-1.5">
                 <Label>Invoice No</Label>

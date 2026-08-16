@@ -31,6 +31,8 @@ import {
   Phone,
   Mail,
   Building2,
+  Warehouse,
+  ArrowRightLeft,
   Bell,
   Printer,
   Layers,
@@ -39,10 +41,13 @@ import {
   Clock,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
 import { UnitsSettingsPanel } from '@/components/settings/UnitsSettingsPanel'
+import { getBranches } from '@billscape/api'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@billscape/core'
 import { Button } from '@/components/ui/button'
@@ -777,6 +782,7 @@ function LivePrintBillPreview({
 export function SettingsPage() {
   const { org, user, refreshOrg } = useAuth()
   const { theme, toggleTheme } = useTheme()
+  const { refetchBranches } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
 
@@ -857,6 +863,7 @@ export function SettingsPage() {
   const [enableExpiryTracking, setEnableExpiryTracking] = useState<boolean>((org as any)?.feature_flags?.enable_expiry_tracking ?? true)
   const [expiryAlertPeriod, setExpiryAlertPeriod] = useState<number>((org as any)?.feature_flags?.expiry_alert_period ?? 7)
   const [hideFromOnlineStoreBeforeExpiry, setHideFromOnlineStoreBeforeExpiry] = useState<number>((org as any)?.feature_flags?.hide_from_online_store_before_expiry ?? 30)
+  const [enableMultiBranch, setEnableMultiBranch] = useState<boolean>((org as any)?.feature_flags?.enable_multi_branch ?? false)
 
   // Barcode settings
   const [barcodeType, setBarcodeType] = useState<string>(org?.branding?.barcode_type ?? 'code128')
@@ -1133,6 +1140,13 @@ export function SettingsPage() {
     },
   })
 
+  // Fetch branches
+  const { data: branchList = [] } = useQuery({
+    queryKey: ['settings-branches', orgId],
+    enabled: !!orgId,
+    queryFn: () => getBranches(supabase, orgId!, true),
+  })
+
   // Fetch Recurring Templates
   const { data: recurringTemplates, isLoading: templatesLoading } = useQuery({
     queryKey: ['recurring_templates', orgId],
@@ -1352,11 +1366,33 @@ export function SettingsPage() {
           enable_expiry_tracking: enableExpiryTracking,
           expiry_alert_period: expiryAlertPeriod,
           hide_from_online_store_before_expiry: hideFromOnlineStoreBeforeExpiry,
+          enable_multi_branch: enableMultiBranch,
         },
       }, { onConflict: 'organization_id' })
       if (error) throw error
     },
     onSuccess: async () => { await refreshOrg(); toast.success('Inventory settings saved') },
+    onError: (err: Error) => toast.error('Save failed', err.message),
+  })
+
+  const saveBranchesSettingsMutation = useMutation({
+    mutationFn: async () => {
+      const existingFlags = (org as any)?.feature_flags ?? {}
+      const { error } = await supabase.from('org_settings').upsert({
+        organization_id: orgId!,
+        feature_flags: {
+          ...existingFlags,
+          enable_multi_branch: enableMultiBranch,
+        },
+      }, { onConflict: 'organization_id' })
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      await refreshOrg()
+      refetchBranches()
+      queryClient.invalidateQueries({ queryKey: ['settings-branches', orgId] })
+      toast.success('Branch settings saved')
+    },
     onError: (err: Error) => toast.error('Save failed', err.message),
   })
 
@@ -1748,6 +1784,10 @@ export function SettingsPage() {
           <div>
             <p className="text-[11px] font-semibold text-muted-foreground uppercase px-3 py-1 tracking-wider">Operations</p>
             <TabsList className="flex flex-col w-full h-auto bg-transparent p-0 gap-1 items-stretch">
+              <TabsTrigger value="branches" className="justify-start px-3 py-2 text-sm font-medium rounded-xl data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold hover:bg-secondary/60 transition-all">
+                <Building2 className="h-4 w-4 mr-2.5 shrink-0 text-primary" />
+                Branches
+              </TabsTrigger>
               <TabsTrigger value="inventory" className="justify-start px-3 py-2 text-sm font-medium rounded-xl data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold hover:bg-secondary/60 transition-all">
                 <Package className="h-4 w-4 mr-2.5 shrink-0 text-primary" />
                 Inventory
@@ -2960,6 +3000,209 @@ export function SettingsPage() {
               <Button onClick={() => saveTaxGstMutation.mutate()} disabled={saveTaxGstMutation.isPending}>
                 {saveTaxGstMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Tax & GST Settings'}
               </Button>
+            </div>
+          </TabsContent>
+
+          {/* Branches & Multi-Location Settings */}
+          <TabsContent value="branches" className="mt-0">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
+                  <Building2 className="h-6 w-6 text-primary" /> Branches &amp; Locations
+                </h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Configure multi-location management, retail outlets, godowns, and stock transfers
+                </p>
+              </div>
+              <Button
+                onClick={() => saveBranchesSettingsMutation.mutate()}
+                disabled={saveBranchesSettingsMutation.isPending}
+                size="sm"
+              >
+                {saveBranchesSettingsMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving...
+                  </>
+                ) : (
+                  'Save Settings'
+                )}
+              </Button>
+            </div>
+
+            <div className="space-y-6 max-w-4xl pb-10">
+              {/* Card 1: Multi-Branch Feature Activation */}
+              <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+                <div className="px-5 py-4 border-b border-border bg-secondary/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center text-primary">
+                      <Building2 className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-sm text-foreground">Multi-Branch Module</h3>
+                      <p className="text-xs text-muted-foreground">Master switch for multi-location capabilities</p>
+                    </div>
+                  </div>
+                  <Badge variant={enableMultiBranch ? 'default' : 'secondary'} className="text-xs">
+                    {enableMultiBranch ? 'Module Enabled' : 'Disabled (Single Branch)'}
+                  </Badge>
+                </div>
+                <div className="p-5 space-y-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <Label className="text-sm font-medium">Enable Multi-Branch &amp; Multi-Location Features</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Turns on the topbar branch switcher, allows managing multiple retail stores/godowns, and unlocks Inter-Branch Stock Transfers (IBT).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enableMultiBranch}
+                      onClick={() => setEnableMultiBranch(!enableMultiBranch)}
+                      className={cn(
+                        'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 cursor-pointer',
+                        enableMultiBranch ? 'bg-primary' : 'bg-zinc-300 dark:bg-zinc-700'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+                          enableMultiBranch ? 'translate-x-4' : 'translate-x-0'
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  {enableMultiBranch && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/60">
+                      <div className="p-3 rounded-lg bg-secondary/30 border border-border/50 space-y-1">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                          <Store className="h-3.5 w-3.5 text-primary" />
+                          Multi-Store Outlets
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Each store has its own active counter, manager, phone, and optional custom invoice prefixes.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-secondary/30 border border-border/50 space-y-1">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                          <Warehouse className="h-3.5 w-3.5 text-amber-400" />
+                          Godowns &amp; Warehouses
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Central receiving godowns for vendor purchases with rack location tracking.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-secondary/30 border border-border/50 space-y-1">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                          <ArrowRightLeft className="h-3.5 w-3.5 text-indigo-400" />
+                          Inter-Branch Transfers
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Move inventory between branches with delivery challans and gate pass tracking.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 2: Configured Branches Overview */}
+              <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+                <div className="px-5 py-4 border-b border-border bg-secondary/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-sm text-foreground">Configured Locations ({branchList.length})</h3>
+                    <p className="text-xs text-muted-foreground">Active outlets and storage godowns for your business</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button asChild size="sm" variant="outline" className="h-8 text-xs gap-1.5">
+                      <Link to="/transfers">
+                        <ArrowRightLeft className="h-3.5 w-3.5 text-indigo-400" />
+                        Stock Transfers
+                      </Link>
+                    </Button>
+                    <Button asChild size="sm" className="h-8 text-xs gap-1.5">
+                      <Link to="/branches">
+                        <Building2 className="h-3.5 w-3.5" />
+                        Manage All Branches ➔
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="divide-y divide-border">
+                  {branchList.length === 0 ? (
+                    <div className="p-8 text-center text-muted-foreground text-xs">
+                      No branches loaded. Save settings or open Branches Manager to create branches.
+                    </div>
+                  ) : (
+                    branchList.map((branch) => {
+                      const isWh = branch.branch_type === 'warehouse'
+                      return (
+                        <div key={branch.id} className="p-4 flex items-center justify-between gap-4 hover:bg-secondary/20 transition-colors">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className={cn(
+                                'h-9 w-9 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold',
+                                isWh ? 'bg-amber-500/15 text-amber-400' : 'bg-primary/15 text-primary'
+                              )}
+                            >
+                              {isWh ? <Warehouse className="h-4 w-4" /> : <Store className="h-4 w-4" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-sm text-foreground truncate">{branch.name}</span>
+                                <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                                  {branch.code}
+                                </span>
+                                {branch.is_default && (
+                                  <Badge className="bg-primary/20 text-primary border-primary/30 text-[9px] px-1.5 py-0">
+                                    Main Branch
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                {branch.city || branch.address || 'Address not set'} {branch.phone && `• Ph: ${branch.phone}`}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant={branch.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                              {branch.is_active ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Card 3: Multi-Location Rules Info */}
+              <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+                <div className="px-5 py-4 border-b border-border bg-secondary/30">
+                  <h3 className="font-semibold text-sm text-foreground">Multi-Branch Rules &amp; Workflows</h3>
+                </div>
+                <div className="p-5">
+                  <ul className="space-y-2.5 text-xs text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold text-foreground min-w-[140px]">POS Sales &amp; Billing:</span>
+                      <span>Sales automatically deduct stock from the currently active branch selected in the top bar.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold text-foreground min-w-[140px]">Purchases &amp; Receiving:</span>
+                      <span>When receiving vendor bills, choose the specific receiving warehouse or retail outlet.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="font-semibold text-foreground min-w-[140px]">Stock Transfers (IBT):</span>
+                      <span>Dispatching transfers deducts source branch stock, and receiving at the destination branch adds stock with complete delivery challans.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </TabsContent>
 

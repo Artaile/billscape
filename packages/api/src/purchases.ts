@@ -44,6 +44,7 @@ export interface CreatePurchaseInput {
   bill_discount_type?: 'flat' | 'percent'
   bill_discount_value?: number
   round_off?: number
+  branch_id?: string
   created_by: string
 }
 
@@ -246,6 +247,7 @@ export async function createPurchase(client: TypedSupabaseClient, input: CreateP
       bill_discount_value: input.bill_discount_value ?? null,
       round_off: roundOff,
       total_amount: totalAmount,
+      branch_id: input.branch_id || null,
       notes: input.notes || null,
       created_by: input.created_by,
     })
@@ -263,6 +265,40 @@ export async function createPurchase(client: TypedSupabaseClient, input: CreateP
   const { error: itemsError } = await client.from('purchase_items').insert(itemRows)
   if (itemsError) {
     return { data: null, error: { message: itemsError.message } }
+  }
+
+  // If branch_id specified, increment branch_inventory
+  if (input.branch_id) {
+    for (const it of resolvedItems) {
+      if (it.product_id) {
+        const { data: inv } = await (client as any)
+          .from('branch_inventory')
+          .select('id, stock_qty')
+          .eq('branch_id', input.branch_id)
+          .eq('product_id', it.product_id)
+          .maybeSingle()
+
+        if (inv) {
+          await (client as any)
+            .from('branch_inventory')
+            .update({
+              stock_qty: (inv.stock_qty || 0) + it.qty,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', inv.id)
+        } else {
+          await (client as any)
+            .from('branch_inventory')
+            .insert({
+              organization_id: input.organization_id,
+              branch_id: input.branch_id,
+              product_id: it.product_id,
+              stock_qty: it.qty,
+              reorder_level: 5,
+            })
+        }
+      }
+    }
   }
 
   return { data: { purchase, totals: { ...totals, net_payable: totalAmount } }, error: null }

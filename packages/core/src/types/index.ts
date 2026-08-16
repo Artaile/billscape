@@ -148,11 +148,13 @@ export interface OrgFeatureFlags {
   expiry_dates: boolean
   service_jobs: boolean
   loyalty_points: boolean
+  enable_multi_branch?: boolean
   // Inventory settings
   allow_negative_stock?: boolean
   auto_deduct_stock?: boolean
   low_stock_threshold?: number
   show_out_of_stock_in_billing?: boolean
+  enable_stock_tracking?: boolean
 }
 
 export interface OrgInvoiceTemplate {
@@ -484,4 +486,80 @@ export interface ActivityLog {
   entity_id?: string
   metadata?: Record<string, unknown>
   created_at: string
+}
+
+// ─── Multi-Branch & Multi-Location ────────────────────────────────────────────
+export type BranchType = 'retail' | 'warehouse' | 'franchise' | 'kiosk'
+export type BranchTransferStatus = 'draft' | 'in_transit' | 'received' | 'cancelled'
+
+export interface Branch {
+  id: string
+  organization_id: string
+  name: string
+  code: string
+  branch_type: BranchType
+  is_default: boolean
+  is_active: boolean
+  manager_name?: string | null
+  phone?: string | null
+  email?: string | null
+  address?: string | null
+  city?: string | null
+  state_code?: string | null
+  pincode?: string | null
+  gstin?: string | null
+  bank_name?: string | null
+  bank_account?: string | null
+  bank_ifsc?: string | null
+  upi_id?: string | null
+  invoice_prefix?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BranchInventory {
+  id: string
+  organization_id: string
+  branch_id: string
+  product_id: string
+  stock_qty: number
+  reorder_level: number
+  rack_location?: string | null
+  updated_at: string
+  // Joins
+  branch?: Branch
+  product?: Product
+}
+
+export interface BranchTransfer {
+  id: string
+  organization_id: string
+  transfer_no: string
+  from_branch_id: string
+  to_branch_id: string
+  status: BranchTransferStatus
+  transfer_date: string
+  vehicle_no?: string | null
+  driver_contact?: string | null
+  notes?: string | null
+  created_by: string
+  received_by?: string | null
+  dispatched_at?: string | null
+  received_at?: string | null
+  created_at: string
+  updated_at: string
+  // Joins
+  from_branch?: Branch
+  to_branch?: Branch
+  items?: BranchTransferItem[]
+}
+
+export interface BranchTransferItem {
+  id: string
+  transfer_id: string
+  product_id: string
+  qty: number
+  unit_cost?: number | null
+  // Joins
+  product?: Product
 }

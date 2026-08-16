@@ -24,6 +24,7 @@ interface CreateSaleInput {
   created_by: string
   order_discount_type?: DiscountType
   order_discount_value?: number
+  branch_id?: string
   loyalty_customer_id?: string
   loyalty_points_redeemed?: number
   loyalty_redeem_amount?: number
@@ -124,6 +125,7 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
       cash_amount: input.cash_amount ?? null,
       card_amount: input.card_amount ?? null,
       upi_amount: input.upi_amount ?? null,
+      branch_id: input.branch_id ?? null,
       notes: input.notes ?? null,
       created_by: input.created_by,
     })
@@ -140,6 +142,30 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
 
   if (itemsError) {
     return { data: null, error: itemsError }
+  }
+
+  // If branch_id is present, update branch_inventory
+  if (input.branch_id) {
+    for (const item of input.items) {
+      if (item.product_id) {
+        const { data: inv } = await (client as any)
+          .from('branch_inventory')
+          .select('id, stock_qty')
+          .eq('branch_id', input.branch_id)
+          .eq('product_id', item.product_id)
+          .maybeSingle()
+
+        if (inv) {
+          await (client as any)
+            .from('branch_inventory')
+            .update({
+              stock_qty: (inv.stock_qty || 0) - item.qty,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', inv.id)
+        }
+      }
+    }
   }
 
   // Loyalty bookkeeping is best-effort: stock + payment are already committed above,

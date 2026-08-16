@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
 import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
@@ -83,6 +84,7 @@ interface CompletedSale {
 
 export function POSTab() {
   const { org, user } = useAuth()
+  const { activeBranch } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
 
@@ -607,6 +609,7 @@ export function POSTab() {
         ...paymentFields,
         gst_context: gstContext,
         created_by: user.id,
+        branch_id: activeBranch?.id,
         invoice_template: (org as any)?.invoice_template,
         order_discount_type: resolvedOrderDiscountValue > 0 ? orderDiscountType : undefined,
         order_discount_value: resolvedOrderDiscountValue > 0 ? resolvedOrderDiscountValue : undefined,
