@@ -10,6 +10,8 @@ interface OrgInfo {
   state_code: string
   gstin?: string
   address?: string
+  city?: string
+  pincode?: string
   phone?: string
   email?: string
   pan?: string
@@ -152,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const [orgResult, settingsResult] = await Promise.all([
-        supabase.from('organizations').select('id,name,state_code,gstin,address,phone,email,pan,business_type,website').eq('id', orgId).single(),
+        supabase.from('organizations').select('id,name,state_code,gstin,address,city,pincode,phone,email,pan,business_type,website').eq('id', orgId).single(),
         supabase.from('org_settings').select('branding,feature_flags,invoice_template').eq('organization_id', orgId).single(),
       ])
 
@@ -162,6 +164,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         state_code: orgResult.data?.state_code ?? 'TN',
         gstin: orgResult.data?.gstin ?? undefined,
         address: orgResult.data?.address ?? undefined,
+        city: orgResult.data?.city ?? undefined,
+        pincode: orgResult.data?.pincode ?? undefined,
         phone: orgResult.data?.phone ?? undefined,
         email: orgResult.data?.email ?? undefined,
         pan: orgResult.data?.pan ?? undefined,

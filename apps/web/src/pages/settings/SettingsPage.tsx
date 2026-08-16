@@ -43,6 +43,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
 import { UnitsSettingsPanel } from '@/components/settings/UnitsSettingsPanel'
+import QRCode from 'qrcode'
+import JsBarcode from 'jsbarcode'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@billscape/core'
 import { Button } from '@/components/ui/button'
@@ -140,18 +142,47 @@ const COLOR_PRESETS = [
 const ROLES: UserRole[] = ['owner', 'manager', 'cashier']
 
 const shopInfoSchema = z.object({
-  name: z.string().min(1, 'Shop name required'),
+  name: z.string().min(1, 'Company / Shop name is required'),
   gstin: z.string().optional().or(z.literal('')),
-  state_code: z.string().length(2),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  pincode: z.string().optional(),
-  phone: z.string().regex(/^[0-9+\-\s]{7,15}$/, 'Invalid phone number').optional().or(z.literal('')),
-  email: z.string().email('Invalid email').optional().or(z.literal('')),
-  pan: z.string().optional().or(z.literal('')),
-  business_type: z.string().optional(),
-  website: z.string().optional().or(z.literal('')),
-  financial_year_start: z.string().optional(),
+  state_code: z.string().length(2, 'Please select a state'),
+  address: z.string().optional().or(z.literal('')),
+  city: z.string().optional().or(z.literal('')),
+  pincode: z
+    .string()
+    .refine((val) => !val || /^[0-9]{6}$/.test(val.trim()), {
+      message: 'Pincode must be 6 digits (e.g. 600001)',
+    })
+    .optional()
+    .or(z.literal('')),
+  phone: z
+    .string()
+    .refine((val) => !val || /^[\+]?[0-9\s\-]{7,16}$/.test(val.trim()), {
+      message: 'Enter a valid phone number (e.g. 98765 43210 or +91 98765 43210)',
+    })
+    .optional()
+    .or(z.literal('')),
+  email: z
+    .string()
+    .refine((val) => !val || z.string().email().safeParse(val.trim()).success, {
+      message: 'Please enter a valid email address (e.g. shop@example.com)',
+    })
+    .optional()
+    .or(z.literal('')),
+  pan: z
+    .string()
+    .refine((val) => !val || /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test(val.trim()), {
+      message: 'Invalid PAN format (e.g. ABCDE1234F)',
+    })
+    .optional()
+    .or(z.literal('')),
+  business_type: z.string().optional().or(z.literal('')),
+  website: z
+    .string()
+    .refine((val) => !val || /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i.test(val.trim()), {
+      message: 'Please enter a valid website (e.g. www.myshop.com or https://myshop.com)',
+    })
+    .optional()
+    .or(z.literal('')),
 })
 
 const routineTemplateSchema = z.object({
@@ -265,6 +296,68 @@ function LiveTaxCalculator({
 }
 
 function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: string }) {
+  const [qrDataUrl, setQrDataUrl] = useState<string>('')
+  const svgRef = React.useRef<SVGSVGElement | null>(null)
+
+  React.useEffect(() => {
+    if (type === 'qr') {
+      QRCode.toDataURL('https://billscape.app/item/8901234567890', {
+        width: 140,
+        margin: 1,
+        color: { dark: '#09090b', light: '#ffffff' },
+        errorCorrectionLevel: 'M',
+      })
+        .then((url) => setQrDataUrl(url))
+        .catch((err) => console.error(err))
+    } else if (svgRef.current) {
+      try {
+        let value = '8901234567890'
+        let format = 'CODE128'
+
+        if (type === 'ean13') {
+          value = '8901234567890'
+          format = 'EAN13'
+        } else if (type === 'code39') {
+          value = 'BILL-ITEM-01'
+          format = 'CODE39'
+        }
+
+        JsBarcode(svgRef.current, value, {
+          format: format,
+          width: type === 'code39' ? 1.3 : 1.6,
+          height: 38,
+          displayValue: true,
+          fontSize: 11,
+          font: 'monospace',
+          textMargin: 2,
+          margin: 0,
+          background: 'transparent',
+          lineColor: '#09090b',
+        })
+      } catch (err) {
+        console.error('Barcode render error:', err)
+      }
+    }
+  }, [type, labelSize])
+
+  // Dynamic label styling based on labelSize
+  const getLabelDimensions = () => {
+    switch (labelSize) {
+      case '3x2cm':
+        return 'w-[220px] min-h-[120px] p-2.5 text-[9px]'
+      case '4x2.5cm':
+        return 'w-[260px] min-h-[140px] p-3 text-[10px]'
+      case '5x3cm':
+        return 'w-[300px] min-h-[160px] p-3.5 text-xs'
+      case '6x4cm':
+        return 'w-[340px] min-h-[180px] p-4 text-xs'
+      case 'A4 Sheet':
+        return 'w-[380px] min-h-[200px] p-4 text-xs border-dashed'
+      default:
+        return 'w-[300px] min-h-[160px] p-3.5 text-xs'
+    }
+  }
+
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -274,39 +367,27 @@ function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: stri
         <Badge variant="outline" className="text-[11px] font-mono">{labelSize}</Badge>
       </div>
 
-      <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-white text-zinc-950 shadow-inner">
-        <p className="text-[10px] font-bold tracking-widest uppercase mb-1">BILLSCAPE SAMPLE ITEM</p>
+      <div className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
+        <div className={cn('flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300', getLabelDimensions())}>
+          <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[11px]">BILLSCAPE SAMPLE ITEM</p>
+          <p className="text-[9px] text-zinc-500 font-mono">SKU: SHIRT-COTTON-001</p>
 
-        {type === 'qr' ? (
-          <div className="p-2 border-2 border-zinc-900 rounded bg-white my-1">
-            <div className="grid grid-cols-5 gap-1 w-16 h-16">
-              {Array.from({ length: 25 }).map((_, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    'rounded-sm',
-                    (i % 2 === 0 || i % 7 === 0 || i === 0 || i === 4 || i === 20 || i === 24)
-                      ? 'bg-zinc-950'
-                      : 'bg-transparent'
-                  )}
-                />
-              ))}
+          {type === 'qr' ? (
+            <div className="my-1.5 flex items-center justify-center">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="QR Code" className="h-20 w-20 object-contain rounded" />
+              ) : (
+                <div className="h-20 w-20 bg-zinc-100 flex items-center justify-center text-[10px] text-zinc-400">Loading QR...</div>
+              )}
             </div>
-          </div>
-        ) : (
-          <div className="flex items-end justify-center h-12 w-48 gap-[2px] my-1">
-            {[3, 1, 2, 4, 1, 3, 2, 1, 4, 2, 1, 3, 2, 4, 1, 2, 3, 1, 4, 2, 1, 3, 2, 1, 4, 1, 3, 2].map((w, i) => (
-              <div
-                key={i}
-                className="bg-zinc-950 h-full"
-                style={{ width: `${w * 1.3}px` }}
-              />
-            ))}
-          </div>
-        )}
+          ) : (
+            <div className="my-1 flex items-center justify-center overflow-hidden max-w-full">
+              <svg ref={svgRef} className="max-w-full h-auto" />
+            </div>
+          )}
 
-        <p className="text-[10px] font-mono font-bold tracking-wider mt-1">8901234567890</p>
-        <p className="text-[9px] font-medium text-zinc-600">MRP: ₹499.00 (Incl. of all taxes)</p>
+          <p className="text-[10px] font-semibold text-zinc-900 mt-0.5">MRP: ₹499.00 <span className="text-[9px] font-normal text-zinc-500">(Incl. Taxes)</span></p>
+        </div>
       </div>
     </div>
   )
@@ -439,6 +520,7 @@ function LivePrintBillPreview({
   showSignatureOutline,
   showPartyDetails,
   fontFamily,
+  fontSize = 'Medium',
 }: {
   paperSize: string
   showLogo: boolean
@@ -506,29 +588,152 @@ function LivePrintBillPreview({
   showSignatureOutline?: boolean
   showPartyDetails?: boolean
   fontFamily?: string
+  fontSize?: string
 }) {
   const isThermal = paperSize.startsWith('thermal')
   const is2Inch = paperSize === 'thermal_2inch'
   
-  // Choose font family
-  const getFontFamily = () => {
-    if (fontFamily === 'Roboto') return 'font-sans' // Tailwind default sans is basically roboto/inter
-    if (fontFamily === 'Courier') return 'font-mono'
-    return 'font-sans' // Inter
+  // Choose font family style
+  const getFontFamilyStyle = () => {
+    if (fontFamily === 'Roboto') return { fontFamily: "'Roboto', sans-serif" }
+    if (fontFamily === 'Courier') return { fontFamily: "'Courier Prime', 'Courier New', monospace" }
+    return { fontFamily: "'Inter', sans-serif" }
+  }
+
+  // Choose font size scaling
+  const getFontSizeClass = () => {
+    if (fontSize === 'Small') {
+      return is2Inch ? 'text-[9px]' : isThermal ? 'text-[10px]' : 'text-[11px]'
+    }
+    if (fontSize === 'Large') {
+      return is2Inch ? 'text-[11px]' : isThermal ? 'text-[12px]' : 'text-sm'
+    }
+    return is2Inch ? 'text-[10px]' : isThermal ? 'text-[11px]' : 'text-xs'
+  }
+
+  const handleTestPrint = () => {
+    const elem = document.getElementById('live-print-bill-sheet')
+    if (!elem) {
+      window.print()
+      return
+    }
+
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document
+    if (!doc) {
+      window.print()
+      return
+    }
+
+    let styles = ''
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+      styles += node.outerHTML
+    })
+
+    const isThermalPaper = isThermal || is2Inch
+
+    doc.open()
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Invoice - ${shopName || 'BillScape'}</title>
+          ${styles}
+          <style>
+            @page {
+              size: ${is2Inch ? '58mm auto' : isThermal ? '80mm auto' : paperSize === 'a5' ? 'A5 portrait' : 'A4 portrait'};
+              margin: ${isThermalPaper ? '0mm' : '10mm 12mm'};
+            }
+            html, body {
+              margin: 0 !important;
+              padding: ${is2Inch ? '1mm' : isThermal ? '2mm' : '0mm'} !important;
+              background: #ffffff !important;
+              color: #000000 !important;
+              width: 100% !important;
+              display: block !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            #print-container {
+              width: 100% !important;
+              max-width: ${is2Inch ? '54mm' : isThermal ? '74mm' : '100%'} !important;
+              margin: ${isThermalPaper ? '0 auto' : '0'} !important;
+            }
+            #print-container #live-print-bill-sheet {
+              box-shadow: none !important;
+              border-radius: 0 !important;
+              border: none !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              font-size: ${is2Inch ? '9.5px' : isThermal ? '10.5px' : paperSize === 'a5' ? '11px' : '12px'} !important;
+            }
+            #print-container table {
+              width: 100% !important;
+            }
+          </style>
+        </head>
+        <body>
+          <div id="print-container">
+            ${elem.outerHTML}
+          </div>
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.frameElement?.remove();
+                }, 1000);
+              }, 250);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    doc.close()
   }
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3 w-full">
+      <div className="flex items-center justify-between pb-1 border-b border-border/50">
+        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+          <Printer className="h-4 w-4 text-primary" /> Live Document Preview
+          <Badge variant="outline" className="text-[10px] uppercase font-mono">{paperSize}</Badge>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={handleTestPrint}
+          className="h-7 text-xs gap-1.5 border-primary/40 hover:bg-primary/10 hover:text-primary transition-all cursor-pointer"
+        >
+          <Printer className="h-3.5 w-3.5" />
+          Test Print
+        </Button>
+      </div>
+
       <div className="flex justify-center p-3 bg-zinc-950/80 rounded-xl overflow-x-auto">
         <div
+          id="live-print-bill-sheet"
+          style={getFontFamilyStyle()}
           className={cn(
             'bg-white text-zinc-900 shadow-2xl transition-all duration-300',
-            getFontFamily(),
+            getFontSizeClass(),
             is2Inch
-              ? 'w-[260px] p-3 text-[10px] font-mono'
+              ? 'w-[260px] p-3 font-mono'
               : isThermal
-                ? 'w-[320px] p-4 text-[11px] font-mono'
-                : 'w-full max-w-[520px] p-6 text-xs rounded-sm'
+                ? 'w-[320px] p-4 font-mono'
+                : 'w-full max-w-[520px] p-6 rounded-sm'
           )}
         >
           {/* Header */}
@@ -834,6 +1039,7 @@ export function SettingsPage() {
   const [enableFyNumberReset, setEnableFyNumberReset] = useState(org?.invoice_template?.enable_fy_number_reset ?? false)
 
   // Regional tab
+  const [financialYearStart, setFinancialYearStart] = useState<string>((org?.branding as any)?.financial_year_start ?? 'April - March (Indian FY)')
   const [currency, setCurrency] = useState(org?.branding?.currency ?? '₹')
   const [dateFormat, setDateFormat] = useState(org?.branding?.date_format ?? 'DD/MM/YYYY')
   const [timezone, setTimezone] = useState(org?.branding?.timezone ?? 'Asia/Kolkata')
@@ -1001,16 +1207,36 @@ export function SettingsPage() {
       gstin: org?.gstin ?? '',
       state_code: org?.state_code ?? 'TN',
       address: org?.address ?? '',
-      city: (org as any)?.city ?? '',
-      pincode: (org as any)?.pincode ?? '',
-      phone: (org as any)?.phone ?? '',
-      email: (org as any)?.email ?? '',
-      pan: (org as any)?.pan ?? '',
-      business_type: (org as any)?.business_type ?? '',
-      website: (org as any)?.website ?? '',
-      financial_year_start: (org?.branding as any)?.financial_year_start ?? 'April - March (Indian FY)',
+      city: org?.city ?? '',
+      pincode: org?.pincode ?? '',
+      phone: org?.phone ?? '',
+      email: org?.email ?? '',
+      pan: org?.pan ?? '',
+      business_type: org?.business_type ?? '',
+      website: org?.website ?? '',
     },
   })
+
+  React.useEffect(() => {
+    if (org) {
+      shopForm.reset({
+        name: org.name || '',
+        gstin: org.gstin || '',
+        state_code: org.state_code || 'TN',
+        address: org.address || '',
+        city: org.city || '',
+        pincode: org.pincode || '',
+        phone: org.phone || '',
+        email: org.email || '',
+        pan: org.pan || '',
+        business_type: org.business_type || '',
+        website: org.website || '',
+      })
+      if ((org?.branding as any)?.financial_year_start) {
+        setFinancialYearStart((org.branding as any).financial_year_start)
+      }
+    }
+  }, [org])
 
   const inviteForm = useForm<InviteValues>({
     resolver: zodResolver(inviteSchema),
@@ -1192,17 +1418,17 @@ export function SettingsPage() {
       const { error: orgErr } = await supabase
         .from('organizations')
         .update({
-          name: values.name,
-          gstin: values.gstin || null,
+          name: values.name.trim(),
+          gstin: values.gstin?.trim() || null,
           state_code: values.state_code,
-          address: values.address || null,
-          city: values.city || null,
-          pincode: values.pincode || null,
-          phone: values.phone || null,
-          email: values.email || null,
-          pan: values.pan ? values.pan.toUpperCase() : null,
+          address: values.address?.trim() || null,
+          city: values.city?.trim() || null,
+          pincode: values.pincode?.trim() || null,
+          phone: values.phone?.trim() || null,
+          email: values.email?.trim() || null,
+          pan: values.pan ? values.pan.trim().toUpperCase() : null,
           business_type: values.business_type || null,
-          website: values.website || null,
+          website: values.website?.trim() || null,
         })
         .eq('id', orgId!)
       if (orgErr) throw orgErr
@@ -1219,7 +1445,7 @@ export function SettingsPage() {
         }
       }
 
-      // 3. Save Regional Settings & Branding in Shop Info
+      // 3. Save Branding
       const existing = org?.branding ?? {}
       const { error: brandErr } = await supabase
         .from('org_settings')
@@ -1227,7 +1453,6 @@ export function SettingsPage() {
           organization_id: orgId!,
           branding: {
             ...existing,
-            financial_year_start: values.financial_year_start,
             logo_url: logoUrl,
             primary_color: primaryColor,
           },
@@ -1237,7 +1462,6 @@ export function SettingsPage() {
     onSuccess: async () => {
       await refreshOrg()
       toast.success('Shop Info saved successfully')
-      window.location.reload()
     },
     onError: (err: Error) => toast.error('Save failed', err.message),
   })
@@ -1307,7 +1531,7 @@ export function SettingsPage() {
       const existing = org?.branding ?? {}
       const { error } = await supabase.from('org_settings').upsert({
         organization_id: orgId!,
-        branding: { ...existing, currency, date_format: dateFormat, timezone },
+        branding: { ...existing, currency, date_format: dateFormat, timezone, financial_year_start: financialYearStart },
       }, { onConflict: 'organization_id' })
       if (error) throw error
     },
@@ -1703,7 +1927,7 @@ export function SettingsPage() {
 
       <Tabs defaultValue="shop" className="flex flex-col lg:flex-row gap-4 xl:gap-6 items-start">
         {/* Left Side Settings Navigation Sidebar */}
-        <aside className="w-full lg:w-56 shrink-0 rounded-2xl border border-border bg-card p-3 shadow-sm space-y-4">
+        <aside className="w-full lg:w-56 shrink-0 rounded-2xl border border-border bg-card p-3 shadow-sm space-y-4 lg:sticky lg:top-4 self-start">
           <div>
             <p className="text-[11px] font-semibold text-muted-foreground uppercase px-3 py-1 tracking-wider">General</p>
             <TabsList className="flex flex-col w-full h-auto bg-transparent p-0 gap-1 items-stretch">
@@ -1796,16 +2020,25 @@ export function SettingsPage() {
         <div className="flex-1 w-full min-w-0">
           {/* Company Settings (Shop Info) */}
           <TabsContent value="shop" className="mt-0">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-                  <Store className="h-6 w-6 text-primary" /> Shop Info
-                </h2>
-                <p className="text-sm text-muted-foreground mt-1">Manage your business information and branding</p>
+            <form onSubmit={shopForm.handleSubmit((v) => saveShopMutation.mutate(v))} className="space-y-6 pb-12">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
+                    <Store className="h-6 w-6 text-primary" /> Shop Info
+                  </h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">Manage your business information and branding</p>
+                </div>
+                <Button type="submit" disabled={saveShopMutation.isPending} size="sm" className="gap-1.5 shadow-sm">
+                  {saveShopMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </Button>
               </div>
-            </div>
-
-            <form onSubmit={shopForm.handleSubmit((v) => saveShopMutation.mutate(v))} className="space-y-6 pb-24">
               {/* Card 1: Business Identity */}
               <div className="rounded-lg border border-border bg-card overflow-hidden">
                 <div className="px-6 py-4 border-b border-border bg-secondary/20">
@@ -1966,19 +2199,19 @@ export function SettingsPage() {
                 <div className="p-6 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                     <div className="space-y-1.5">
-                      <Label htmlFor="shop-phone">Phone</Label>
-                      <Input id="shop-phone" placeholder="Phone Number" {...shopForm.register('phone')} />
+                      <Label htmlFor="shop-phone">Phone Number <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Input id="shop-phone" placeholder="e.g. 98765 43210 or +91 98765 43210" {...shopForm.register('phone')} />
                       {shopForm.formState.errors.phone && <p className="text-xs text-red-400">{shopForm.formState.errors.phone.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="shop-email">Email <span className="text-red-500">*</span></Label>
-                      <Input id="shop-email" type="email" placeholder="Email Address" {...shopForm.register('email')} />
+                      <Label htmlFor="shop-email">Email Address <span className="text-red-500">*</span></Label>
+                      <Input id="shop-email" type="email" placeholder="contact@yourcompany.com" {...shopForm.register('email')} />
                       {shopForm.formState.errors.email && <p className="text-xs text-red-400">{shopForm.formState.errors.email.message}</p>}
                     </div>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="shop-website">Website <span className="text-muted-foreground font-normal">(optional)</span></Label>
-                    <Input id="shop-website" placeholder="https://yourcompany.com" {...shopForm.register('website')} />
+                    <Input id="shop-website" placeholder="www.yourcompany.com or https://yourcompany.com" {...shopForm.register('website')} />
                     {shopForm.formState.errors.website && <p className="text-xs text-red-400">{shopForm.formState.errors.website.message}</p>}
                   </div>
                 </div>
@@ -1991,64 +2224,38 @@ export function SettingsPage() {
                 </div>
                 <div className="p-6 space-y-6">
                   <div className="space-y-1.5">
-                    <Label htmlFor="shop-address">Address</Label>
+                    <Label htmlFor="shop-address">Street Address</Label>
                     <textarea
                       id="shop-address"
                       className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      placeholder="Address details"
+                      placeholder="Shop No., Street Name, Area"
                       {...shopForm.register('address')}
                     />
+                    {shopForm.formState.errors.address && <p className="text-xs text-red-400">{shopForm.formState.errors.address.message}</p>}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                     <div className="space-y-1.5">
                       <Label htmlFor="shop-city">City</Label>
-                      <Input id="shop-city" placeholder="City" {...shopForm.register('city')} />
+                      <Input id="shop-city" placeholder="City / Town" {...shopForm.register('city')} />
+                      {shopForm.formState.errors.city && <p className="text-xs text-red-400">{shopForm.formState.errors.city.message}</p>}
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="shop-state">State <span className="text-red-500">*</span></Label>
                       <select id="shop-state" className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" {...shopForm.register('state_code')}>
                         {INDIAN_STATES.map((s) => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
                       </select>
+                      {shopForm.formState.errors.state_code && <p className="text-xs text-red-400">{shopForm.formState.errors.state_code.message}</p>}
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="shop-pincode">Pincode</Label>
-                      <Input id="shop-pincode" placeholder="Pincode" {...shopForm.register('pincode')} />
+                      <Input id="shop-pincode" placeholder="6-digit Pincode" maxLength={6} {...shopForm.register('pincode')} />
+                      {shopForm.formState.errors.pincode && <p className="text-xs text-red-400">{shopForm.formState.errors.pincode.message}</p>}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Card 5: Regional Settings */}
-              <div className="rounded-lg border border-border bg-card overflow-hidden">
-                <div className="px-6 py-4 border-b border-border bg-secondary/20">
-                  <h3 className="font-semibold text-foreground">Regional Settings</h3>
-                </div>
-                <div className="p-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="shop-fy">Financial Year Start</Label>
-                      <select id="shop-fy" className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" {...shopForm.register('financial_year_start')}>
-                        <option value="April - March (Indian FY)">April - March (Indian FY)</option>
-                        <option value="January - December">January - December</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Currency</Label>
-                      <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" disabled>
-                        <option>₹ INR (Indian Rupee)</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Timezone</Label>
-                      <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" disabled>
-                        <option>Asia/Kolkata (IST)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Card 6: Account Security */}
+              {/* Card 5: Account Security */}
               <div className="rounded-lg border border-border bg-card overflow-hidden">
                 <div className="px-6 py-4 border-b border-border bg-secondary/20">
                   <h3 className="font-semibold text-foreground">Account Security</h3>
@@ -2139,20 +2346,6 @@ export function SettingsPage() {
                     </Dialog>
                   </div>
                 </div>
-              </div>
-
-              {/* Sticky Save Button */}
-              <div className="fixed bottom-0 left-0 right-0 lg:left-64 p-4 bg-background/80 backdrop-blur-md border-t border-border flex justify-end px-8 z-10">
-                <Button type="submit" disabled={saveShopMutation.isPending}>
-                  {saveShopMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      Saving...
-                    </>
-                  ) : (
-                    'Save Changes'
-                  )}
-                </Button>
               </div>
             </form>
           </TabsContent>
@@ -2680,7 +2873,18 @@ export function SettingsPage() {
             <div className="rounded-lg border border-border bg-card p-6 space-y-5">
               <h2 className="text-base font-semibold text-foreground">Regional Settings</h2>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Financial Year Start</Label>
+                  <select
+                    value={financialYearStart}
+                    onChange={(e) => setFinancialYearStart(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="April - March (Indian FY)">April - March (Indian FY)</option>
+                    <option value="January - December (Calendar Year)">January - December (Calendar Year)</option>
+                  </select>
+                </div>
                 <div className="space-y-1.5">
                   <Label>Currency Symbol</Label>
                   <select value={currency} onChange={(e) => setCurrency(e.target.value)}
@@ -3703,6 +3907,7 @@ export function SettingsPage() {
                         showSignatureOutline={printShowSignatureOutline}
                         showPartyDetails={printShowPartyDetails}
                         fontFamily={printFontFamily}
+                        fontSize={printFontSize}
                      />
                    </div>
                  </div>
