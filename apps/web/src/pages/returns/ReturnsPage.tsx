@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Loader2, RotateCcw, Search, Eye } from 'lucide-react'
+import { Plus, Loader2, RotateCcw, Search, Eye, X } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -252,7 +252,17 @@ export function ReturnsPage() {
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
         <div className="relative max-w-sm w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search by invoice no..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder="Search by invoice no..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 pr-9" />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <div className="inline-flex rounded-lg border border-border bg-secondary/30 p-0.5 shrink-0">
           {(['all', 'sale', 'purchase'] as const).map((t) => (

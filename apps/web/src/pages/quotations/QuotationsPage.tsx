@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Loader2, FileText, Eye, Trash2, CheckCircle2 } from 'lucide-react'
+import { Plus, Loader2, FileText, Eye, Trash2, CheckCircle2, Search, X } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR, formatDocumentNumber } from '@billscape/core'
@@ -53,6 +53,7 @@ export function QuotationsPage() {
 
   const [showDialog, setShowDialog] = useState(false)
   const [viewQuote, setViewQuote] = useState<Quotation & { items_detail?: QuoteItem[] } | null>(null)
+  const [search, setSearch] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
   const [validUntil, setValidUntil] = useState('')
@@ -204,6 +205,17 @@ export function QuotationsPage() {
 
   const today = new Date().toISOString().split('T')[0]
 
+  const filteredQuotations = search.trim()
+    ? quotations.filter((q) => {
+        const t = search.trim().toLowerCase()
+        return (
+          q.quote_no.toLowerCase().includes(t) ||
+          q.customer_name.toLowerCase().includes(t) ||
+          (q.customer_phone ?? '').toLowerCase().includes(t)
+        )
+      })
+    : quotations
+
   return (
     <div className="p-4 lg:p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -226,14 +238,37 @@ export function QuotationsPage() {
         ))}
       </div>
 
+      {/* Search */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Search quote no, customer name or phone..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9 pr-9"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            aria-label="Clear search"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
       {/* Table */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center h-32"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-        ) : quotations.length === 0 ? (
+        ) : filteredQuotations.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32">
             <FileText className="h-8 w-8 text-zinc-600 mb-2" />
-            <p className="text-sm text-muted-foreground">No quotations yet</p>
+            <p className="text-sm text-muted-foreground">
+              {quotations.length > 0 ? 'No quotations match your search.' : 'No quotations yet'}
+            </p>
           </div>
         ) : (
           <Table>
@@ -249,7 +284,7 @@ export function QuotationsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {quotations.map((q) => {
+              {filteredQuotations.map((q) => {
                 const isExpired = q.valid_until && q.valid_until < today && q.status !== 'accepted'
                 return (
                   <TableRow key={q.id} className="group">
