@@ -38,6 +38,7 @@ export function SaleViewPage() {
 
   const totals: InvoiceTotals | null = sale
     ? (() => {
+        const taxInclusive = org?.branding?.tax_inclusive ?? false
         const cgstTotal = items.reduce((sum, it) => sum + Number(it.cgst_amount ?? 0), 0)
         const sgstTotal = items.reduce((sum, it) => sum + Number(it.sgst_amount ?? 0), 0)
         const igstTotal = items.reduce((sum, it) => sum + Number(it.igst_amount ?? 0), 0)
@@ -46,7 +47,11 @@ export function SaleViewPage() {
         const breakupMap = new Map<number, { tax_rate: number; taxable_amount: number; cgst: number; sgst: number; igst: number }>()
         for (const it of items) {
           const lineDiscount = it.discount_type === 'flat' ? Number(it.discount_amount ?? 0) : (Number(it.unit_price) * Number(it.qty)) * (Number(it.discount_pct) / 100)
-          const lineTaxable = Number(it.unit_price) * Number(it.qty) - lineDiscount
+          const grossLine = Number(it.unit_price) * Number(it.qty) - lineDiscount
+          const lineTax = Number(it.cgst_amount ?? 0) + Number(it.sgst_amount ?? 0) + Number(it.igst_amount ?? 0)
+          // When prices are tax-inclusive, unit_price already contains tax, so the taxable
+          // base is the gross line total minus the tax already computed for it at sale time.
+          const lineTaxable = taxInclusive ? grossLine - lineTax : grossLine
           const existing = breakupMap.get(it.tax_rate)
           if (existing) {
             existing.taxable_amount += lineTaxable
@@ -64,11 +69,14 @@ export function SaleViewPage() {
           }
         }
 
+        const breakupValues = Array.from(breakupMap.values())
+        const taxableAmount = breakupValues.reduce((sum, b) => sum + b.taxable_amount, 0)
+
         return {
           subtotal: sale.subtotal,
           discount_total: sale.discount_total,
-          taxable_amount: sale.subtotal - sale.discount_total,
-          tax_breakup: Array.from(breakupMap.values()) as InvoiceTotals['tax_breakup'],
+          taxable_amount: taxableAmount,
+          tax_breakup: breakupValues as InvoiceTotals['tax_breakup'],
           cgst_total: cgstTotal,
           sgst_total: sgstTotal,
           igst_total: igstTotal,

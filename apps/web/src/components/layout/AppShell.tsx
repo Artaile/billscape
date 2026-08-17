@@ -77,6 +77,10 @@ interface NavItem {
   /** Sub-paths that must NOT count as a match, even though they share this item's path prefix
    *  (e.g. Products shouldn't stay active on /products/categories once Categories has its own entry). */
   excludeSubpaths?: string[]
+  /** When set, this item still counts as active if the disambiguating query key from matchHref
+   *  is entirely absent from the current URL (e.g. bare /returns falls back to "Sales Returns"
+   *  rather than leaving the whole group unhighlighted). */
+  defaultWhenAbsent?: boolean
 }
 
 interface NavGroup {
@@ -96,10 +100,10 @@ const NAV_ENTRIES: NavEntry[] = [
       label: 'Sales',
       icon: ShoppingCart,
       items: [
-        { label: 'Billing (POS)', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing', matchHref: '/billing' },
+        { label: 'Billing (POS)', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing', matchHref: '/billing', excludeSubpaths: ['/billing/sales'] },
         { label: 'Sales History', href: '/billing?tab=history', icon: Receipt, permissionKey: 'billing', matchHref: '/billing' },
         { label: 'Quotations', href: '/quotations', icon: FileText, permissionKey: 'quotations' },
-        { label: 'Sales Returns', href: '/returns?type=sale', icon: RotateCcw, permissionKey: 'returns', matchHref: '/returns' },
+        { label: 'Sales Returns', href: '/returns?type=sale', icon: RotateCcw, permissionKey: 'returns', matchHref: '/returns', defaultWhenAbsent: true },
       ],
     },
   },
@@ -150,18 +154,17 @@ function isNavItemActive(item: NavItem, pathname: string, search: string) {
   // A path-prefix match must land on a route boundary, not mid-segment
   // (e.g. '/products' must not match '/productsomething').
   if (pathname.length > targetPath.length && pathname[targetPath.length] !== '/') return false
-  if (!item.matchHref) {
-    // Path-only items (no sibling disambiguation) still need to yield to a sibling
-    // that owns a more specific sub-path, e.g. Products vs. Products > Categories.
-    if (targetPath !== pathname && item.excludeSubpaths?.some((p) => pathname.startsWith(p))) return false
-    return true
-  }
+  // Yield to a sibling that owns a more specific sub-path, e.g. Products vs. Products >
+  // Categories, or Billing (POS) vs. a sale-detail page that isn't really "POS" or "History".
+  if (targetPath !== pathname && item.excludeSubpaths?.some((p) => pathname.startsWith(p))) return false
+  if (!item.matchHref) return true
   // Disambiguate sub-items that share a base path (e.g. /billing vs /billing?tab=history):
   // every query key this item's href sets (or, if it sets none, every key any of its siblings
   // set — read from currentQuery) must match exactly, so "no tab param" and "tab=history" are
   // treated as distinct states rather than the bare-path item matching both.
   const itemQuery = new URLSearchParams(item.href.split('?')[1] ?? '')
   const currentQuery = new URLSearchParams(search)
+  if (item.defaultWhenAbsent && [...itemQuery.keys()].every((k) => !currentQuery.has(k))) return true
   const keysToCheck = new Set([...itemQuery.keys(), ...currentQuery.keys()])
   for (const key of keysToCheck) {
     if ((itemQuery.get(key) ?? null) !== (currentQuery.get(key) ?? null)) return false
@@ -264,13 +267,26 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     return initial
   })
 
-  // Auto-expand the group containing the active route (does not collapse a manually-opened group)
+  // Auto-expand a group the moment its route becomes active, but only on that transition —
+  // navigating between siblings within an already-active group must not re-force it open after
+  // the user has manually collapsed it (previouslyActiveGroups tracks what was active last render
+  // so a group already active on both the previous and current location is left alone).
+  const previouslyActiveGroupsRef = React.useRef<Set<string>>(new Set())
   useEffect(() => {
+    const currentlyActive = new Set<string>()
     for (const entry of NAV_ENTRIES) {
       if (entry.kind === 'group' && isGroupActive(entry.group)) {
-        setOpenGroups((prev) => (prev[entry.group.label] ? prev : { ...prev, [entry.group.label]: true }))
+        currentlyActive.add(entry.group.label)
+        if (!previouslyActiveGroupsRef.current.has(entry.group.label)) {
+          setOpenGroups((prev) => {
+            const next = { ...prev, [entry.group.label]: true }
+            localStorage.setItem('billscape_nav_groups', JSON.stringify(next))
+            return next
+          })
+        }
       }
     }
+    previouslyActiveGroupsRef.current = currentlyActive
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname, location.search])
 
@@ -713,14 +729,22 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
                     <QuickAddLink icon={FileText} label="New Quotation" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/quotations')) }} />
                     <QuickAddLink icon={RotateCcw} label="New Return" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/returns')) }} />
 
-                    <div className="mt-1 border-t border-border px-3 pt-2 pb-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Purchases &amp; Expenses</div>
-                    <QuickAddLink icon={ShoppingBag} label="New Purchase" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/purchases/new')) }} />
-                    <QuickAddLink icon={Receipt} label="New Expense" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/expenses')) }} />
+                    {(!permissions || permissions['purchases'] !== false) && (
+                      <>
+                        <div className="mt-1 border-t border-border px-3 pt-2 pb-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Purchases &amp; Expenses</div>
+                        <QuickAddLink icon={ShoppingBag} label="New Purchase" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/purchases/new')) }} />
+                        <QuickAddLink icon={Receipt} label="New Expense" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/expenses')) }} />
+                      </>
+                    )}
 
                     <div className="mt-1 border-t border-border px-3 pt-2 pb-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Masters</div>
-                    <QuickAddLink icon={Package} label="New Product" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/products/new')) }} />
+                    {(!permissions || permissions['products'] !== false) && (
+                      <QuickAddLink icon={Package} label="New Product" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/products/new')) }} />
+                    )}
                     <QuickAddLink icon={Users} label="New Customer" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/customers')) }} />
-                    <QuickAddLink icon={Truck} label="New Supplier" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/suppliers')) }} />
+                    {(!permissions || permissions['suppliers'] !== false) && (
+                      <QuickAddLink icon={Truck} label="New Supplier" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/suppliers')) }} />
+                    )}
                   </div>
                 </>
               )}

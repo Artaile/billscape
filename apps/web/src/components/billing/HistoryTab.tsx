@@ -59,10 +59,22 @@ export function HistoryTab() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
+  // Search/date filters persist to sessionStorage so navigating to a sale's full-page
+  // View/Reprint and back (which unmounts this component) doesn't reset what the user typed.
   const [view, setView] = useState<'list' | 'bin'>('list')
-  const [search, setSearch] = useState('')
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const [search, setSearch] = useState(() => sessionStorage.getItem('billscape_history_search') ?? '')
+  const [fromDate, setFromDate] = useState(() => sessionStorage.getItem('billscape_history_from') ?? '')
+  const [toDate, setToDate] = useState(() => sessionStorage.getItem('billscape_history_to') ?? '')
+
+  useEffect(() => {
+    sessionStorage.setItem('billscape_history_search', search)
+  }, [search])
+  useEffect(() => {
+    sessionStorage.setItem('billscape_history_from', fromDate)
+  }, [fromDate])
+  useEffect(() => {
+    sessionStorage.setItem('billscape_history_to', toDate)
+  }, [toDate])
 
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null)
   const [deletingSale, setDeletingSale] = useState<SaleRow | null>(null)

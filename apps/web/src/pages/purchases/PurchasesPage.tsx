@@ -44,6 +44,7 @@ interface Purchase {
   total_amount: number
   notes: string | null
   created_at: string
+  supplier_id: string | null
   suppliers: { name: string } | null
   purchase_items: { id: string }[]
 }
@@ -163,7 +164,7 @@ export function PurchasesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('purchases')
-        .select('id, purchase_no, invoice_no, total_amount, notes, created_at, suppliers(name), purchase_items(id)')
+        .select('id, purchase_no, invoice_no, total_amount, notes, created_at, supplier_id, suppliers(name), purchase_items(id)')
         .eq('organization_id', orgId!)
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -189,9 +190,9 @@ export function PurchasesPage() {
         (p.suppliers?.name ?? '').toLowerCase().includes(q)
       if (!matchesSearch) return false
     }
-    if (supplierFilter && p.suppliers?.name !== supplierFilter) return false
-    if (dateFrom && p.created_at < dateFrom) return false
-    if (dateTo && p.created_at > `${dateTo}T23:59:59`) return false
+    if (supplierFilter && p.supplier_id !== supplierFilter) return false
+    if (dateFrom && new Date(p.created_at) < new Date(dateFrom)) return false
+    if (dateTo && new Date(p.created_at) >= new Date(new Date(dateTo).getTime() + 86400000)) return false
     return true
   })
 
@@ -398,7 +399,7 @@ export function PurchasesPage() {
         >
           <option value="">All Suppliers</option>
           {suppliers?.map((s) => (
-            <option key={s.id} value={s.name}>{s.name}</option>
+            <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
         <Input

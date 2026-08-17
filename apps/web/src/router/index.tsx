@@ -127,11 +127,11 @@ export function AppRouter() {
                   <Route path="dashboard" element={<DashboardPage />} />
                   <Route path="billing" element={<BillingPage />} />
                   <Route path="billing/sales/:id" element={<SaleViewPage />} />
-                  <Route path="products" element={<ProductsPage />} />
-                  <Route path="products/categories" element={<CategoriesPage />} />
-                  <Route path="products/new" element={<ProductFormPage />} />
-                  <Route path="products/:id/edit" element={<ProductFormPage />} />
-                  <Route path="inventory" element={<InventoryPage />} />
+                  <Route path="products" element={<RequireRole roles={['owner', 'manager']}><ProductsPage /></RequireRole>} />
+                  <Route path="products/categories" element={<RequireRole roles={['owner', 'manager']}><CategoriesPage /></RequireRole>} />
+                  <Route path="products/new" element={<RequireRole roles={['owner', 'manager']}><ProductFormPage /></RequireRole>} />
+                  <Route path="products/:id/edit" element={<RequireRole roles={['owner', 'manager']}><ProductFormPage /></RequireRole>} />
+                  <Route path="inventory" element={<RequireRole roles={['owner', 'manager']}><InventoryPage /></RequireRole>} />
                   <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
                   <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
                   <Route path="purchases/:id/edit" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
