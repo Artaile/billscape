@@ -74,6 +74,9 @@ interface NavItem {
   permissionKey?: string
   /** Path used to test "is this item (or its group) active" when it differs from href (e.g. query-param deep links). */
   matchHref?: string
+  /** Sub-paths that must NOT count as a match, even though they share this item's path prefix
+   *  (e.g. Products shouldn't stay active on /products/categories once Categories has its own entry). */
+  excludeSubpaths?: string[]
 }
 
 interface NavGroup {
@@ -117,8 +120,8 @@ const NAV_ENTRIES: NavEntry[] = [
       label: 'Inventory',
       icon: Boxes,
       items: [
-        { label: 'Products', href: '/products', icon: Package, permissionKey: 'products' },
-        { label: 'Categories', href: '/products?openCategories=true', icon: Tags, permissionKey: 'products', matchHref: '/products' },
+        { label: 'Products', href: '/products', icon: Package, permissionKey: 'products', excludeSubpaths: ['/products/categories'] },
+        { label: 'Categories', href: '/products/categories', icon: Tags, permissionKey: 'products' },
         { label: 'Stock & Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory' },
       ],
     },
@@ -144,7 +147,15 @@ function isNavItemActive(item: NavItem, pathname: string, search: string) {
     return pathname === '/dashboard' || pathname === '/'
   }
   if (!pathname.startsWith(targetPath)) return false
-  if (!item.matchHref) return true
+  // A path-prefix match must land on a route boundary, not mid-segment
+  // (e.g. '/products' must not match '/productsomething').
+  if (pathname.length > targetPath.length && pathname[targetPath.length] !== '/') return false
+  if (!item.matchHref) {
+    // Path-only items (no sibling disambiguation) still need to yield to a sibling
+    // that owns a more specific sub-path, e.g. Products vs. Products > Categories.
+    if (targetPath !== pathname && item.excludeSubpaths?.some((p) => pathname.startsWith(p))) return false
+    return true
+  }
   // Disambiguate sub-items that share a base path (e.g. /billing vs /billing?tab=history):
   // every query key this item's href sets (or, if it sets none, every key any of its siblings
   // set — read from currentQuery) must match exactly, so "no tab param" and "tab=history" are
@@ -659,7 +670,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
           </div>
 
           {/* Quick action shortcuts */}
-          <div className="hidden md:flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-2 ml-auto">
             {(!permissions || permissions['purchases'] !== false) && (
               <Button
                 variant="outline"

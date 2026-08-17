@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import React, { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -32,7 +32,6 @@ import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import type { Product } from '@billscape/core'
 import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
-import { ManageCategoriesDialog } from '@/components/products/ManageCategoriesDialog'
 
 import { logActivity } from '@/lib/activityLog'
 
@@ -93,26 +92,12 @@ export function ProductsPage() {
   const queryClient = useQueryClient()
   const { org } = useAuth()
   const orgId = org?.id
-  const [searchParams, setSearchParams] = useSearchParams()
 
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ProductWithInventory | null>(null)
   const [printTarget, setPrintTarget] = useState<ProductWithInventory | null>(null)
   const [importing, setImporting] = useState(false)
-  const [showManageCategories, setShowManageCategories] = useState(false)
-
-  useEffect(() => {
-    if (searchParams.get('openCategories') === 'true') {
-      setShowManageCategories(true)
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete('openCategories')
-        return next
-      }, { replace: true })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams.get('openCategories')])
 
   const debouncedSearch = useDebounce(search, 300)
 
@@ -359,7 +344,7 @@ export function ProductsPage() {
           </button>
         ))}
         <button
-          onClick={() => setShowManageCategories(true)}
+          onClick={() => navigate('/products/categories')}
           className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium border border-dashed border-zinc-700 text-zinc-500 hover:text-zinc-200 hover:border-zinc-500 transition-colors ml-auto"
         >
           <Tags className="h-3.5 w-3.5" />
@@ -464,9 +449,6 @@ export function ProductsPage() {
           <EmptyState hasSearch={!!debouncedSearch || !!categoryFilter} />
         )}
       </div>
-
-      {/* Manage categories dialog */}
-      <ManageCategoriesDialog open={showManageCategories} onOpenChange={setShowManageCategories} />
 
       {/* Barcode label print dialog */}
       {printTarget && (

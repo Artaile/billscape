@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Truck, Phone, Mail } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Phone, Mail, Search } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Table,
   TableHeader,
@@ -38,6 +39,7 @@ export function SuppliersPage() {
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<Supplier | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Supplier | null>(null)
+  const [search, setSearch] = useState('')
 
   const { data: suppliers, isLoading } = useQuery({
     queryKey: ['suppliers', orgId],
@@ -51,6 +53,16 @@ export function SuppliersPage() {
       if (error) throw error
       return (data ?? []) as Supplier[]
     },
+  })
+
+  const filteredSuppliers = (suppliers ?? []).filter((s) => {
+    if (!search.trim()) return true
+    const q = search.trim().toLowerCase()
+    return (
+      s.name.toLowerCase().includes(q) ||
+      (s.phone ?? '').toLowerCase().includes(q) ||
+      (s.gstin ?? '').toLowerCase().includes(q)
+    )
   })
 
   function openAdd() {
@@ -119,6 +131,16 @@ export function SuppliersPage() {
         </Button>
       </div>
 
+      <div className="relative max-w-sm mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Search name, phone or GSTIN..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
@@ -141,8 +163,8 @@ export function SuppliersPage() {
                   ))}
                 </TableRow>
               ))
-            ) : suppliers && suppliers.length > 0 ? (
-              suppliers.map((s) => (
+            ) : filteredSuppliers.length > 0 ? (
+              filteredSuppliers.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell>
                     <div className="flex items-center gap-2.5">
@@ -215,7 +237,11 @@ export function SuppliersPage() {
                 <TableCell colSpan={5} className="text-center py-16">
                   <div className="flex flex-col items-center gap-3 text-zinc-500">
                     <Truck className="h-10 w-10 text-zinc-700" />
-                    <p className="text-sm">No suppliers yet. Add one to start recording purchases.</p>
+                    <p className="text-sm">
+                      {suppliers && suppliers.length > 0
+                        ? 'No suppliers match your search.'
+                        : 'No suppliers yet. Add one to start recording purchases.'}
+                    </p>
                   </div>
                 </TableCell>
               </TableRow>

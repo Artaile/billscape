@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Search,
@@ -32,7 +33,6 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { InvoicePrint } from '@/components/billing/InvoicePrint'
 import { DateRangeFilter } from '@/components/ui/date-range-filter'
 import { toast } from '@/hooks/use-toast'
 import { formatDateTime, cn } from '@/lib/utils'
@@ -57,13 +57,13 @@ export function HistoryTab() {
   const { org, user, role } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
   const [view, setView] = useState<'list' | 'bin'>('list')
   const [search, setSearch] = useState('')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
 
-  const [viewingSaleId, setViewingSaleId] = useState<string | null>(null)
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null)
   const [deletingSale, setDeletingSale] = useState<SaleRow | null>(null)
   const [voidReason, setVoidReason] = useState('')
@@ -222,7 +222,7 @@ export function HistoryTab() {
             </TableHeader>
             <TableBody>
               {filteredSales.map((sale) => (
-                <TableRow key={sale.id}>
+                <TableRow key={sale.id} className="group">
                   <TableCell className="font-medium">{sale.invoice_no}</TableCell>
                   <TableCell className="text-xs text-zinc-400">{formatDateTime(sale.created_at)}</TableCell>
                   <TableCell className="text-xs">
@@ -241,10 +241,14 @@ export function HistoryTab() {
                     </TableCell>
                   )}
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="View / Reprint"
-                        onClick={() => setViewingSaleId(sale.id)}>
+                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="View"
+                        onClick={() => navigate(`/billing/sales/${sale.id}`)}>
                         <Eye className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Reprint"
+                        onClick={() => navigate(`/billing/sales/${sale.id}`)}>
+                        <Printer className="h-3.5 w-3.5" />
                       </Button>
                       {view === 'list' && allowManage && (
                         <>
@@ -282,9 +286,6 @@ export function HistoryTab() {
           </Table>
         )}
       </div>
-
-      {/* View / Reprint dialog */}
-      <ViewSaleDialog saleId={viewingSaleId} onClose={() => setViewingSaleId(null)} />
 
       {/* Edit dialog */}
       {editingSaleId && (
@@ -329,112 +330,6 @@ export function HistoryTab() {
         </DialogContent>
       </Dialog>
     </div>
-  )
-}
-
-// ─── View / Reprint ────────────────────────────────────────────────────────
-function ViewSaleDialog({ saleId, onClose }: { saleId: string | null; onClose: () => void }) {
-  const { org } = useAuth()
-  const orgId = org?.id
-
-  const { data } = useQuery({
-    queryKey: ['sale-detail', orgId, saleId],
-    enabled: !!orgId && !!saleId,
-    queryFn: async () => getSaleWithItems(supabase as Parameters<typeof getSaleWithItems>[0], orgId!, saleId!),
-  })
-
-  const sale = data?.sale as any
-  const items = (data?.items ?? []) as any[]
-
-  const cartItems: CartItem[] = items.map((it) => ({
-    product_id: it.product_id,
-    product_name: it.product_name,
-    hsn_code: it.hsn_code ?? undefined,
-    tax_rate: it.tax_rate,
-    unit_price: it.unit_price,
-    qty: it.qty,
-    discount_pct: it.discount_pct,
-    discount_type: it.discount_type,
-    discount_amount: it.discount_amount,
-  }))
-
-  const totals: InvoiceTotals | null = sale
-    ? (() => {
-        const cgstTotal = items.reduce((sum, it) => sum + Number(it.cgst_amount ?? 0), 0)
-        const sgstTotal = items.reduce((sum, it) => sum + Number(it.sgst_amount ?? 0), 0)
-        const igstTotal = items.reduce((sum, it) => sum + Number(it.igst_amount ?? 0), 0)
-        const isInterstate = igstTotal > 0
-
-        const breakupMap = new Map<number, { tax_rate: number; taxable_amount: number; cgst: number; sgst: number; igst: number }>()
-        for (const it of items) {
-          const lineDiscount = it.discount_type === 'flat' ? Number(it.discount_amount ?? 0) : (Number(it.unit_price) * Number(it.qty)) * (Number(it.discount_pct) / 100)
-          const lineTaxable = Number(it.unit_price) * Number(it.qty) - lineDiscount
-          const existing = breakupMap.get(it.tax_rate)
-          if (existing) {
-            existing.taxable_amount += lineTaxable
-            existing.cgst += Number(it.cgst_amount ?? 0)
-            existing.sgst += Number(it.sgst_amount ?? 0)
-            existing.igst += Number(it.igst_amount ?? 0)
-          } else {
-            breakupMap.set(it.tax_rate, {
-              tax_rate: it.tax_rate,
-              taxable_amount: lineTaxable,
-              cgst: Number(it.cgst_amount ?? 0),
-              sgst: Number(it.sgst_amount ?? 0),
-              igst: Number(it.igst_amount ?? 0),
-            })
-          }
-        }
-
-        return {
-          subtotal: sale.subtotal,
-          discount_total: sale.discount_total,
-          taxable_amount: sale.subtotal - sale.discount_total,
-          tax_breakup: Array.from(breakupMap.values()) as InvoiceTotals['tax_breakup'],
-          cgst_total: cgstTotal,
-          sgst_total: sgstTotal,
-          igst_total: igstTotal,
-          tax_total: sale.tax_total,
-          grand_total: sale.grand_total,
-          is_interstate: isInterstate,
-          order_discount_amount: sale.order_discount_amount ?? 0,
-          loyalty_redeem_amount: sale.loyalty_redeem_amount ?? 0,
-          net_payable: sale.net_payable ?? sale.grand_total,
-        }
-      })()
-    : null
-
-  return (
-    <Dialog open={!!saleId} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Printer className="h-4 w-4" /> {sale?.invoice_no}
-            {sale?.voided_at && <Badge variant="destructive">Voided</Badge>}
-          </DialogTitle>
-        </DialogHeader>
-        {sale && totals && (
-          <InvoicePrint
-            invoiceNo={sale.invoice_no}
-            date={sale.created_at}
-            shopName={org?.name ?? 'BillScape Shop'}
-            shopAddress={org?.address}
-            shopGstin={org?.gstin}
-            shopLogoUrl={org?.branding?.logo_url}
-            shopPhone={org?.phone}
-            shopEmail={org?.email}
-            customerName={sale.customers?.name}
-            customerPhone={sale.customers?.phone ?? undefined}
-            customerGstin={sale.customers?.gstin ?? undefined}
-            items={cartItems}
-            totals={totals}
-            paymentMode={sale.payment_mode}
-            branding={org?.branding}
-            invoiceTemplate={(org as any)?.invoice_template}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
   )
 }
 

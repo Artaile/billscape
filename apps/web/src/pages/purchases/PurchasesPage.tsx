@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Eye, ShoppingBag, Trash2, Loader2, Pencil, Printer,
   Upload, Download, FileSpreadsheet, AlertCircle, FileClock, Play, X,
-  CreditCard, CheckCircle2, TrendingUp, Clock,
+  CreditCard, CheckCircle2, TrendingUp, Clock, Search,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -143,6 +143,12 @@ export function PurchasesPage() {
   const [drafts, setDrafts] = useState<PurchaseDraft[]>(() => getPurchaseDrafts())
   const [showDrafts, setShowDrafts] = useState(false)
 
+  // Search + filters
+  const [search, setSearch] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
   function deleteDraft(id: string) {
     const next = drafts.filter((d) => d.id !== id)
     savePurchaseDrafts(next)
@@ -172,6 +178,21 @@ export function PurchasesPage() {
       const { data } = await supabase.from('suppliers').select('id, name, phone, gstin').eq('organization_id', orgId!).order('name')
       return (data ?? []) as Supplier[]
     },
+  })
+
+  const filteredPurchases = (purchases ?? []).filter((p) => {
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      const matchesSearch =
+        (p.purchase_no ?? '').toLowerCase().includes(q) ||
+        (p.invoice_no ?? '').toLowerCase().includes(q) ||
+        (p.suppliers?.name ?? '').toLowerCase().includes(q)
+      if (!matchesSearch) return false
+    }
+    if (supplierFilter && p.suppliers?.name !== supplierFilter) return false
+    if (dateFrom && p.created_at < dateFrom) return false
+    if (dateTo && p.created_at > `${dateTo}T23:59:59`) return false
+    return true
   })
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -359,6 +380,50 @@ export function PurchasesPage() {
         </div>
       </div>
 
+      {/* ── Search + Filters ── */}
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+        <div className="relative max-w-sm w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search purchase no, invoice no, supplier..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <select
+          value={supplierFilter}
+          onChange={(e) => setSupplierFilter(e.target.value)}
+          className="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="">All Suppliers</option>
+          {suppliers?.map((s) => (
+            <option key={s.id} value={s.name}>{s.name}</option>
+          ))}
+        </select>
+        <Input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          className="w-full sm:w-40"
+        />
+        <Input
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          className="w-full sm:w-40"
+        />
+        {(search || supplierFilter || dateFrom || dateTo) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setSearch(''); setSupplierFilter(''); setDateFrom(''); setDateTo('') }}
+          >
+            <X className="h-3.5 w-3.5 mr-1" />Clear
+          </Button>
+        )}
+      </div>
+
       {/* ── Table ── */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
@@ -377,10 +442,10 @@ export function PurchasesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {purchases && purchases.length > 0 ? purchases.map((p) => {
+              {filteredPurchases.length > 0 ? filteredPurchases.map((p) => {
                 const pay = parsePurchasePayment(p)
                 return (
-                  <TableRow key={p.id}>
+                  <TableRow key={p.id} className="group">
                     <TableCell className="font-mono text-xs text-indigo-300 whitespace-nowrap">
                       {p.purchase_no ?? <span className="text-zinc-600">—</span>}
                     </TableCell>
@@ -420,15 +485,17 @@ export function PurchasesPage() {
                             <CreditCard className="h-3.5 w-3.5 mr-1" />Pay
                           </Button>
                         )}
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => handleViewPurchase(p)}>
-                          <Eye className="h-3.5 w-3.5 mr-1" />View
-                        </Button>
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => navigate(`/purchases/${p.id}/edit`)}>
-                          <Pencil className="h-3.5 w-3.5 mr-1" />Edit
-                        </Button>
-                        <button onClick={() => setDeleteConfirmId(p.id)} className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => handleViewPurchase(p)}>
+                            <Eye className="h-3.5 w-3.5 mr-1" />View
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => navigate(`/purchases/${p.id}/edit`)}>
+                            <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+                          </Button>
+                          <button onClick={() => setDeleteConfirmId(p.id)} className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -438,7 +505,11 @@ export function PurchasesPage() {
                   <TableCell colSpan={7} className="text-center py-16">
                     <div className="flex flex-col items-center gap-3 text-zinc-500">
                       <ShoppingBag className="h-10 w-10 text-zinc-700" />
-                      <p className="text-sm">No purchases yet. Click New Purchase to record stock received.</p>
+                      <p className="text-sm">
+                        {purchases && purchases.length > 0
+                          ? 'No purchases match your search or filters.'
+                          : 'No purchases yet. Click New Purchase to record stock received.'}
+                      </p>
                     </div>
                   </TableCell>
                 </TableRow>

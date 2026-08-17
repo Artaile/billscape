@@ -17,8 +17,10 @@ import { PlatformUsagePage } from '@/pages/platform/PlatformUsagePage'
 import { PlatformSettingsPage } from '@/pages/platform/PlatformSettingsPage'
 import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { BillingPage } from '@/pages/billing/BillingPage'
+import { SaleViewPage } from '@/pages/billing/SaleViewPage'
 import { ProductsPage } from '@/pages/products/ProductsPage'
 import { ProductFormPage } from '@/pages/products/ProductFormPage'
+import { CategoriesPage } from '@/pages/products/CategoriesPage'
 import { InventoryPage } from '@/pages/inventory/InventoryPage'
 import { CustomersPage } from '@/pages/customers/CustomersPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
@@ -124,7 +126,9 @@ export function AppRouter() {
                   <Route index element={<Navigate to="/dashboard" replace />} />
                   <Route path="dashboard" element={<DashboardPage />} />
                   <Route path="billing" element={<BillingPage />} />
+                  <Route path="billing/sales/:id" element={<SaleViewPage />} />
                   <Route path="products" element={<ProductsPage />} />
+                  <Route path="products/categories" element={<CategoriesPage />} />
                   <Route path="products/new" element={<ProductFormPage />} />
                   <Route path="products/:id/edit" element={<ProductFormPage />} />
                   <Route path="inventory" element={<InventoryPage />} />

@@ -34,6 +34,48 @@ export async function getCategoriesWithProductCount(client: TypedSupabaseClient,
   }
 }
 
+export async function getCategoriesWithStock(client: TypedSupabaseClient, orgId: string) {
+  const { data, error } = await client
+    .from('categories')
+    .select('*, products(id, cost_price, price, inventory(stock_qty))')
+    .eq('organization_id', orgId)
+    .order('name')
+
+  if (error) return { data: null, error }
+
+  type ProductRow = {
+    id: string
+    cost_price: number | null
+    price: number
+    inventory: { stock_qty: number }[] | { stock_qty: number } | null
+  }
+  const rows = (data ?? []) as Array<Database['public']['Tables']['categories']['Row'] & {
+    products: ProductRow[]
+  }>
+
+  return {
+    data: rows.map((row) => {
+      const products = row.products ?? []
+      let totalStock = 0
+      let stockValue = 0
+      for (const p of products) {
+        const inv = Array.isArray(p.inventory) ? p.inventory[0] : p.inventory
+        const qty = inv?.stock_qty ?? 0
+        const unitCost = p.cost_price ?? p.price ?? 0
+        totalStock += qty
+        stockValue += qty * unitCost
+      }
+      return {
+        ...row,
+        product_count: products.length,
+        total_stock: totalStock,
+        stock_value: stockValue,
+      }
+    }),
+    error: null,
+  }
+}
+
 export async function createCategory(
   client: TypedSupabaseClient,
   category: CategoryInsert,
