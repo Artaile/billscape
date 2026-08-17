@@ -58,8 +58,10 @@ Supabase project ID: bzvbkscspzdschskbqtd
 | /activity | ActivityPage | Audit log; owner + manager only |
 | /shifts | ShiftsPage | Shift open/close/summary; owner + manager only |
 | /ledger | LedgerPage | Double-entry accounting (accounts + vouchers); owner + manager only |
-| /reports | ReportsPage | owner + manager only |
-| /settings | SettingsPage | 8 tabs: Shop Info, Branding, Appearance, Team, Billing, Invoice, Regional, Backup |
+| /reports | ReportsPage | owner + manager only; 8 tabs: Sales Summary, Profit & Loss, Balance Sheet, Trial Balance, Cash Flow, Item-wise, Stock Report, GST Summary (P&L/Balance Sheet/Trial Balance/Cash Flow added 2026-08-17 — presentation layer over Ledger's accounts/vouchers data; GST Summary is still a flat tax-rate breakup, NOT a GSTR-1/2/3B/9-shaped return — see LIVE_AUDIT_2026-08_BY_FEATURE.md §1) |
+| /settings | SettingsPage | owner only; 14-item categorized sidebar (not 8 tabs — doc was stale): GENERAL (Shop Info, Regional), SALES & TAX (Tax & GST, Invoice & UPI, Print & Layout, Units), OPERATIONS (Inventory, Barcode, Custom Fields, Routine Works), ACCOUNT & SYSTEM (Notifications, Dashboard Users, Billing, Backup & Export) |
+| /platform/login | PlatformLoginPage | Super Admin portal login — separate dark theme ("Master Admin Portal"), gated on memberships.role = 'super_admin', correctly rejects non-super-admins with a clean error (verified live 2026-08-17) |
+| /platform/* | Platform*Page (7 pages) | Super Admin portal — Dashboard, Tenants, TenantDetail, Plans, Subscriptions, Usage, Settings. Built and routed; internals NOT YET live-verified (no super_admin test account available as of 2026-08-17) — see Super Admin portal section below |
 
 ## Auth flows
 - Email/password login only (Phone OTP tab removed)
@@ -522,10 +524,26 @@ Activity → Shifts → Ledger → Reports → Settings
 - owner + manager: Products, Inventory, Purchases, Suppliers, Employees, Expenses, Promotions, Activity, Shifts, Ledger, Reports
 - owner only: Roles, Settings
 
-## Super Admin portal (NOT YET BUILT — next sprint)
-- Planned route: /platform/login (separate dark-themed login)
-- memberships.role enum already has 'super_admin' — use this as guard
-- Planned pages: /platform (dashboard), /platform/tenants, /platform/plans, /platform/subscriptions, /platform/usage, /platform/settings
-- DB needed: plans table, org_plans table
+## Super Admin portal (BUILT — routes live, internals unverified)
+- **Correction (2026-08-17): this section previously said "NOT YET BUILT — next sprint," which was
+  stale.** The portal exists in the router and was live-tested end to end for the login/gate layer
+  — see LIVE_AUDIT_2026-08_BY_FEATURE.md §12 for the verification session.
+- /platform/login is live: separate dark theme, "Master Admin Portal" branding, gated on
+  memberships.role = 'super_admin'. Logging in with a non-super-admin account correctly shows
+  "Access denied. This portal is for Super Admins only." — no crash, no silent redirect. Confirmed
+  live 2026-08-17.
+- 7 inner pages exist and are routed: /platform (dashboard), /platform/tenants,
+  /platform/tenants/:id, /platform/plans, /platform/subscriptions, /platform/usage,
+  /platform/settings — but **none of the 7 have been live-verified**, since no super_admin
+  membership row exists for the test account used in this session. Before trusting any behavior
+  described in COMPETITOR_GAP_PLAN.md's "Super Admin Portal — Full Analysis" section as current,
+  provision a real super_admin account and re-run that verification.
 - organizations.status (active/suspended) already exists — suspend works today via SQL
-- See COMPETITOR_GAP_PLAN.md for full Super Admin spec
+- Plan/Feature sync (Super Admin's Plan Management driving what a tenant dashboard gates) is
+  NOT built — this is the actual reason Settings → Billing's "Upgrade to Pro" button is currently a
+  dead click. Deliberately deprioritized to LAST in the current punch list — needs a research spike
+  (5 open questions incl. whether `plans`/`org_plans` tables exist yet) before any code is written.
+  See LIVE_AUDIT_2026-08_BY_FEATURE.md §2 for the full writeup — do not patch the button in
+  isolation from this.
+- See COMPETITOR_GAP_PLAN.md for the original full Super Admin spec (route/DB architecture still
+  the reference design; treat its live-behavior claims as unverified per the note above)

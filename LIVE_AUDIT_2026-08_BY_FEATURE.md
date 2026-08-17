@@ -36,16 +36,54 @@ picked up since the P&L report they depend on has landed.
 
 ---
 
-## 2. Settings → Billing (Subscription/Plan)
+## 2. Settings → Billing (Subscription/Plan) — reclassified, moved to LAST priority
+
+**Reclassified 2026-08-17 (user decision):** originally flagged 🔴 Critical as a simple "dead
+button" bug. On reflection this is not a small fix — the *right* version of "Upgrade to Pro" only
+makes sense once Super Admin's Plan Management (`/platform/plans`, see §12) actually drives what
+features a tenant dashboard shows/gates. Wiring the button before that exists would mean either
+(a) a fake button that still doesn't do anything real, or (b) a one-off tenant-side flag disconnected
+from Super Admin — both create more cleanup later. **Deliberately moved to LAST priority**, after
+every other remaining feature in this audit ships, specifically so it can be researched and built
+properly as one Super Admin ↔ Tenant system instead of patched twice.
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🔴 Critical | ❌ **STILL BROKEN** — "Upgrade to Pro" button is a dead click | Re-checked 2026-08-17: Settings → Billing shows Free/Pro plan cards with an "Upgrade to Pro ₹499/mo" CTA. The button now renders visually muted/disabled-looking rather than a bright active CTA, but clicking it still produces no modal, no navigation, no toast, no console error — functionally unchanged. Same class of bug the old competitor doc flagged as a *competitor* weakness ("Create Plan button non-functional") — BillScape still has its own version, on a customer-facing upgrade path. |
-| 🔵 Low/Watch | **Pricing page vs in-app gate consistency** | Not urgent until BillScape ships paid tiers for real — but the Free/Pro cards already existing means this is now closer than it looked in the last audit. Decide the tiering plan intentionally rather than drifting into it half-wired. |
+| 🔵 Low — LAST priority (deliberate) | ❌ **STILL BROKEN, not scheduled yet** — "Upgrade to Pro" button is a dead click | Re-checked 2026-08-17: Settings → Billing shows Free/Pro plan cards with an "Upgrade to Pro ₹499/mo" CTA. The button now renders visually muted/disabled-looking rather than a bright active CTA, but clicking it still produces no modal, no navigation, no toast, no console error — functionally unchanged. Same class of bug the old competitor doc flagged as a *competitor* weakness ("Create Plan button non-functional") — BillScape still has its own version, on a customer-facing upgrade path. |
+| 🔵 Low/Watch | **Pricing page vs in-app gate consistency** | Same dependency as above — not urgent until the Super Admin ↔ Tenant plan sync (below) is designed and built. Decide the tiering plan intentionally rather than drifting into it half-wired. |
 
-**Suggested split:** Either wire the Upgrade CTA to a real flow (payment provider / contact-sales
-form / waitlist) or hide the button until that flow exists — a visible, dead button is worse than
-no button.
+**What "done" actually requires — research before building:**
+
+The real feature is: Super Admin picks which features are included in a plan (Free/Pro/Enterprise)
+→ that selection is the single source of truth → every tenant dashboard reads its org's current
+plan and gates/unlocks features accordingly, live, without a redeploy. Concretely, before writing
+any code, research and answer:
+
+1. **Where does plan truth live?** CLAUDE.md's Super Admin section already sketches `plans` (id,
+   name, price, billing_period, `limits` jsonb, `features` jsonb, is_active) and `org_plans`
+   (org_id, plan_id, start_date, expiry_date, status) — confirm these tables exist yet (they were
+   only "needed" as of the last Super Admin spec, not confirmed built) and if not, that's the
+   schema to add.
+2. **How does a tenant page know what's gated?** Needs a shared read path — e.g. a
+   `useOrgFeatures()` hook in the web app that reads the org's active plan's `features` jsonb once
+   per session (or via Realtime subscription so an admin-side plan change reflects without a
+   tenant logout/login). This is the actual sync mechanism the button depends on.
+3. **What does Super Admin's Plan Management page need to do?** `/platform/plans` already exists
+   per the router (per earlier audit) — verify whether it can actually create/edit a plan's
+   `features` jsonb today, or whether it's still list-only. This is the other half of the sync.
+4. **What happens on downgrade/expiry?** If a tenant's Pro plan lapses, does the UI need to
+   gracefully hide Pro-only features, or block access outright? Needs a decision before the gate
+   logic is written, not after.
+5. **What does the button actually do for a real merchant?** Payment collection is a separate,
+   larger question (payment gateway integration) — out of scope for "does the button work," but
+   worth deciding whether v1 is "talk to sales" / a waitlist form rather than real self-serve
+   checkout, so the button has *something* real to do without building billing infrastructure
+   first.
+
+**Suggested split:** One research spike first (answer the 5 questions above against actual current
+DB/router state, not assumptions) → then a single ticket spanning both Super Admin (Plan Management
+CRUD on `features` jsonb) and tenant-side (`useOrgFeatures()` gate + wire the real Upgrade flow).
+Do not patch the button in isolation — that was the mistake being corrected by this reclassification.
 
 ---
 
@@ -197,7 +235,7 @@ them:
 
 | Tier | Count | Fixed | Partially fixed | Still open |
 |------|-------|-------|------------------|------------|
-| 🔴 Critical | 4 | 0 | 0 | 4 (GSTR-1 not re-checked this pass, Upgrade CTA + duplicate roles confirmed still broken, form-validation audit not started) |
+| 🔴 Critical | 3 | 0 | 0 | 3 (GSTR-1 not re-checked this pass, duplicate roles confirmed still broken, form-validation audit not started) — Upgrade CTA moved out of Critical, see below |
 | 🟠 High | 7 | 5 | 2 | 0 |
 | 🟡 Medium | 4 | 0 | 0 | 4 (unchanged, not part of this re-check pass) |
 | 🔵 Low/Watch | 1 | — | — | unchanged |
@@ -206,10 +244,12 @@ them:
 
 **Remaining open work, in priority order:**
 1. 🔴 GSTR-1/2/3B/9-shaped report (§1) — not touched, biggest remaining item
-2. 🔴 "Upgrade to Pro" dead button (§2) — confirmed still broken today
-3. 🔴 Duplicate System roles (§3) — confirmed still broken today
-4. 🔴 Required-field validation audit (§11) — not started
-5. ⚠️ Activity Log Actor column showing generic "System / Admin" instead of real user (§4)
-6. ⚠️ Payment-In/Payment-Out — balance-due visibility is done, but no actual "Record Payment" action exists yet (§6)
-7. 🟡 All four Medium items (§1 Expense Direct/Indirect + party-wise P&L — now unblocked since P&L shipped; §10 stale shift warning) — untouched this pass
-8. Super Admin portal internals (§12) — still unverified, blocked on getting a real super_admin account
+2. 🔴 Duplicate System roles (§3) — confirmed still broken today, small data-cleanup fix
+3. 🔴 Required-field validation audit (§11) — not started
+4. ⚠️ Activity Log Actor column showing generic "System / Admin" instead of real user (§4)
+5. ⚠️ Payment-In/Payment-Out — balance-due visibility is done, but no actual "Record Payment" action exists yet (§6)
+6. 🟡 All four Medium items (§1 Expense Direct/Indirect + party-wise P&L — now unblocked since P&L shipped; §10 stale shift warning) — untouched this pass
+7. Super Admin portal internals (§12) — still unverified, blocked on getting a real super_admin account
+8. 🔵 **LAST, deliberate** — Super Admin ↔ Tenant plan sync + "Upgrade to Pro" (§2) — reclassified
+   today from Critical to last priority. Do not build until every item above ships; needs a research
+   spike first (see §2's 5 questions), not a quick button fix.
