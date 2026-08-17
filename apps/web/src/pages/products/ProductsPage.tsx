@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useCallback, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -93,6 +93,7 @@ export function ProductsPage() {
   const queryClient = useQueryClient()
   const { org } = useAuth()
   const orgId = org?.id
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -100,6 +101,18 @@ export function ProductsPage() {
   const [printTarget, setPrintTarget] = useState<ProductWithInventory | null>(null)
   const [importing, setImporting] = useState(false)
   const [showManageCategories, setShowManageCategories] = useState(false)
+
+  useEffect(() => {
+    if (searchParams.get('openCategories') === 'true') {
+      setShowManageCategories(true)
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('openCategories')
+        return next
+      }, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const debouncedSearch = useDebounce(search, 300)
 

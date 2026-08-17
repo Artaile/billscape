@@ -17,6 +17,23 @@ import {
   ArrowRight,
   Sparkles,
   Command,
+  Store,
+  Globe,
+  Calculator,
+  Printer,
+  Ruler,
+  Barcode,
+  Layers,
+  CalendarClock,
+  Bell,
+  CreditCard,
+  Download,
+  UserCog,
+  Shield,
+  Tag,
+  Star,
+  Clock,
+  BookOpen,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -33,8 +50,20 @@ interface GlobalSearchDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-const QUICK_NAV = [
+interface QuickNavEntry {
+  label: string
+  path: string
+  icon: React.ElementType
+  group: string
+  badge?: string
+  /** Extra search terms this entry should match on, beyond its label. */
+  keywords?: string[]
+}
+
+const QUICK_NAV: QuickNavEntry[] = [
+  // Core pages
   { label: 'POS Billing', path: '/billing', icon: ShoppingCart, group: 'Navigation', badge: 'POS' },
+  { label: 'Sales History', path: '/billing?tab=history', icon: Receipt, group: 'Navigation' },
   { label: 'Products Catalog', path: '/products', icon: Package, group: 'Navigation' },
   { label: 'Stock & Inventory', path: '/inventory', icon: Boxes, group: 'Navigation' },
   { label: 'Purchase Bills', path: '/purchases', icon: Receipt, group: 'Navigation' },
@@ -42,9 +71,47 @@ const QUICK_NAV = [
   { label: 'Customers Directory', path: '/customers', icon: Users, group: 'Navigation' },
   { label: 'Returns & Credit Notes', path: '/returns', icon: RotateCcw, group: 'Navigation' },
   { label: 'Quotations & Estimates', path: '/quotations', icon: FileText, group: 'Navigation' },
-  { label: 'Financial Reports', path: '/reports', icon: BarChart3, group: 'Navigation' },
+  { label: 'Loyalty Program', path: '/loyalty', icon: Star, group: 'Navigation' },
+  { label: 'Employees', path: '/employees', icon: UserCog, group: 'Navigation', keywords: ['staff', 'payroll', 'salary'] },
+  { label: 'Roles & Permissions', path: '/roles', icon: Shield, group: 'Navigation' },
+  { label: 'Expenses', path: '/expenses', icon: Receipt, group: 'Navigation' },
+  { label: 'Promotions & Coupons', path: '/promotions', icon: Tag, group: 'Navigation', keywords: ['discount', 'coupon code'] },
   { label: 'Audit Activity Log', path: '/activity', icon: Activity, group: 'Navigation' },
-  { label: 'Shop Settings', path: '/settings', icon: Settings, group: 'Navigation' },
+  { label: 'Shifts', path: '/shifts', icon: Clock, group: 'Navigation', keywords: ['cash drawer', 'opening cash', 'closing cash'] },
+  { label: 'Ledger (Accounts & Vouchers)', path: '/ledger', icon: BookOpen, group: 'Navigation' },
+  { label: 'Financial Reports', path: '/reports', icon: BarChart3, group: 'Navigation' },
+
+  // Reports tabs
+  { label: 'Sales Summary Report', path: '/reports?tab=sales', icon: BarChart3, group: 'Reports' },
+  { label: 'Profit & Loss Report', path: '/reports?tab=pnl', icon: BarChart3, group: 'Reports', keywords: ['p&l', 'profit', 'loss'] },
+  { label: 'Balance Sheet', path: '/reports?tab=balance-sheet', icon: BarChart3, group: 'Reports' },
+  { label: 'Trial Balance', path: '/reports?tab=trial-balance', icon: BarChart3, group: 'Reports' },
+  { label: 'Cash Flow Report', path: '/reports?tab=cash-flow', icon: BarChart3, group: 'Reports' },
+  { label: 'Item-wise Report', path: '/reports?tab=items', icon: BarChart3, group: 'Reports' },
+  { label: 'Stock Report', path: '/reports?tab=stock', icon: BarChart3, group: 'Reports' },
+  { label: 'GST Summary Report', path: '/reports?tab=gst', icon: BarChart3, group: 'Reports', keywords: ['gst', 'tax summary', 'gstr'] },
+
+  // Inventory tabs
+  { label: 'Stock List', path: '/inventory?tab=stock-list', icon: Boxes, group: 'Inventory' },
+  { label: 'Stock Ledger & History', path: '/inventory?tab=movements', icon: Boxes, group: 'Inventory' },
+  { label: 'Stock Adjustments', path: '/inventory?tab=adjustments', icon: Boxes, group: 'Inventory' },
+  { label: 'Opening Stock', path: '/inventory?tab=opening', icon: Boxes, group: 'Inventory' },
+
+  // Settings — 14 categorized items
+  { label: 'Settings: Shop Info', path: '/settings?section=shop', icon: Store, group: 'Settings' },
+  { label: 'Settings: Regional', path: '/settings?section=regional', icon: Globe, group: 'Settings' },
+  { label: 'Settings: Tax & GST', path: '/settings?section=tax', icon: Calculator, group: 'Settings', keywords: ['gst', 'cgst', 'sgst', 'igst', 'composition scheme'] },
+  { label: 'Settings: Invoice & UPI', path: '/settings?section=invoice', icon: FileText, group: 'Settings', keywords: ['upi', 'invoice prefix', 'bank details'] },
+  { label: 'Settings: Print & Layout', path: '/settings?section=print', icon: Printer, group: 'Settings', keywords: ['pdf', 'print template'] },
+  { label: 'Settings: Units', path: '/settings?section=units', icon: Ruler, group: 'Settings' },
+  { label: 'Settings: Inventory', path: '/settings?section=inventory', icon: Package, group: 'Settings' },
+  { label: 'Settings: Barcode', path: '/settings?section=barcode', icon: Barcode, group: 'Settings', keywords: ['qr code', 'barcode label'] },
+  { label: 'Settings: Custom Fields', path: '/settings?section=custom_fields', icon: Layers, group: 'Settings' },
+  { label: 'Settings: Routine Works', path: '/settings?section=routine', icon: CalendarClock, group: 'Settings', keywords: ['recurring', 'payroll', 'salary'] },
+  { label: 'Settings: Notifications', path: '/settings?section=notifications', icon: Bell, group: 'Settings' },
+  { label: 'Settings: Dashboard Users', path: '/settings?section=team', icon: Users, group: 'Settings', keywords: ['team', 'invite user'] },
+  { label: 'Settings: Billing (Plan)', path: '/settings?section=billing', icon: CreditCard, group: 'Settings', keywords: ['plan', 'upgrade', 'subscription'] },
+  { label: 'Settings: Backup & Export', path: '/settings?section=backup', icon: Download, group: 'Settings' },
 ]
 
 export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogProps) {
@@ -139,9 +206,13 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
     },
   })
 
-  // Filter Quick Nav
+  // Filter Quick Nav (matches label or any keyword)
   const navResults = cleanQuery
-    ? QUICK_NAV.filter((n) => n.label.toLowerCase().includes(cleanQuery))
+    ? QUICK_NAV.filter(
+        (n) =>
+          n.label.toLowerCase().includes(cleanQuery) ||
+          n.keywords?.some((k) => k.toLowerCase().includes(cleanQuery))
+      ).slice(0, 8)
     : QUICK_NAV.slice(0, 6)
 
   // Aggregate results for keyboard navigation
@@ -453,7 +524,7 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
             <div className="py-2">
               <div className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                 <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                <span>Quick Pages</span>
+                <span>Pages &amp; Settings</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1">
                 {navResults.map((n) => {

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Loader2, RotateCcw, Search, Eye } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -45,6 +46,18 @@ export function ReturnsPage() {
   const orgId = org?.id
   const queryClient = useQueryClient()
 
+  const [searchParams, setSearchParams] = useSearchParams()
+  const typeParam = searchParams.get('type')
+  const typeFilter = typeParam === 'sale' || typeParam === 'purchase' ? typeParam : 'all'
+  const setTypeFilter = (value: 'all' | 'sale' | 'purchase') => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value === 'all') next.delete('type')
+      else next.set('type', value)
+      return next
+    }, { replace: true })
+  }
+
   const [showDialog, setShowDialog] = useState(false)
   const [viewReturn, setViewReturn] = useState<Return & { return_items_detail?: ReturnItem[] } | null>(null)
   const [returnType, setReturnType] = useState<'sale' | 'purchase'>('sale')
@@ -73,9 +86,9 @@ export function ReturnsPage() {
     },
   })
 
-  const filtered = search.trim()
-    ? returns.filter((r) => r.original_invoice_no.toLowerCase().includes(search.toLowerCase()))
-    : returns
+  const filtered = returns
+    .filter((r) => typeFilter === 'all' || r.return_type === typeFilter)
+    .filter((r) => !search.trim() || r.original_invoice_no.toLowerCase().includes(search.toLowerCase()))
 
   function updateItem(index: number, patch: Partial<ReturnItem>) {
     setItems((prev) => {
@@ -88,7 +101,7 @@ export function ReturnsPage() {
   }
 
   function resetForm() {
-    setReturnType('sale')
+    setReturnType(typeFilter === 'purchase' ? 'purchase' : 'sale')
     setInvoiceNo(''); setPurchaseRef(''); setReason(REASONS[0]); setRefundMode('Cash'); setNotes('')
     setItems([{ product_name: '', qty: 1, unit_price: 0, line_total: 0 }])
     setRestockInventory(true)
@@ -235,10 +248,26 @@ export function ReturnsPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Search by invoice no..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      {/* Search + Type filter */}
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+        <div className="relative max-w-sm w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search by invoice no..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        <div className="inline-flex rounded-lg border border-border bg-secondary/30 p-0.5 shrink-0">
+          {(['all', 'sale', 'purchase'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTypeFilter(t)}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+                typeFilter === t ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t === 'all' ? 'All' : t === 'sale' ? 'Sales' : 'Purchase'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table */}

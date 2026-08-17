@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -51,10 +52,23 @@ interface InventoryRow {
   } | null
 }
 
+const INVENTORY_TAB_VALUES = ['stock-list', 'movements', 'adjustments', 'opening'] as const
+
 export function InventoryPage() {
   const { org, user } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const activeInventoryTab = INVENTORY_TAB_VALUES.includes(tabParam as any) ? tabParam! : 'stock-list'
+  const handleInventoryTabChange = (value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', value)
+      return next
+    }, { replace: true })
+  }
 
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<StockFilter>('all')
@@ -288,7 +302,7 @@ export function InventoryPage() {
         </div>
       )}
 
-      <Tabs defaultValue="stock-list">
+      <Tabs value={activeInventoryTab} onValueChange={handleInventoryTabChange}>
         <TabsList>
           <TabsTrigger value="stock-list">Stock List</TabsTrigger>
           <TabsTrigger value="movements">Ledger & History</TabsTrigger>

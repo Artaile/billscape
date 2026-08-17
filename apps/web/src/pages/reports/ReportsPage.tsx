@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Download,
@@ -49,10 +50,23 @@ function getDateRange(days: number) {
   }
 }
 
+const REPORTS_TAB_VALUES = ['sales', 'pnl', 'balance-sheet', 'trial-balance', 'cash-flow', 'items', 'stock', 'gst'] as const
+
 export function ReportsPage() {
   const { org, role } = useAuth()
   const orgId = org?.id
   const isOwner = role === 'owner'
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const activeReportTab = REPORTS_TAB_VALUES.includes(tabParam as any) ? tabParam! : 'sales'
+  const handleReportTabChange = (value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', value)
+      return next
+    }, { replace: true })
+  }
 
   const [dateFrom, setDateFrom] = useState(getDateRange(30).from)
   const [dateTo, setDateTo] = useState(getDateRange(0).to)
@@ -534,7 +548,7 @@ export function ReportsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="sales" className="space-y-4">
+      <Tabs value={activeReportTab} onValueChange={handleReportTabChange} className="space-y-4">
         <TabsList className="flex flex-wrap h-auto gap-1 bg-card border border-border p-1">
           <TabsTrigger value="sales">Sales Summary</TabsTrigger>
           <TabsTrigger value="pnl" className="flex items-center gap-1.5">

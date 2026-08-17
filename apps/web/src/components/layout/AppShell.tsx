@@ -34,6 +34,9 @@ import {
   EyeOff,
   Eye,
   Search,
+  ChevronRight,
+  Plus,
+  Tags,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -68,31 +71,154 @@ interface NavItem {
   href: string
   icon: React.ElementType
   badge?: string
-  group?: string
   permissionKey?: string
+  /** Path used to test "is this item (or its group) active" when it differs from href (e.g. query-param deep links). */
+  matchHref?: string
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' },
-  { label: 'Billing', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing' },
-  { label: 'Products', href: '/products', icon: Package, permissionKey: 'products' },
-  { label: 'Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory' },
-  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, permissionKey: 'purchases' },
-  { label: 'Suppliers', href: '/suppliers', icon: Truck, permissionKey: 'suppliers' },
-  { label: 'Customers', href: '/customers', icon: Users, permissionKey: 'customers' },
-  { label: 'Returns', href: '/returns', icon: RotateCcw, permissionKey: 'returns' },
-  { label: 'Quotations', href: '/quotations', icon: FileText, permissionKey: 'quotations' },
-  { label: 'Loyalty', href: '/loyalty', icon: Star, permissionKey: 'loyalty' },
-  { label: 'Employees', href: '/employees', icon: UserCog, permissionKey: 'employees' },
-  { label: 'Roles', href: '/roles', icon: Shield, permissionKey: 'roles' },
-  { label: 'Expenses', href: '/expenses', icon: Receipt, permissionKey: 'expenses' },
-  { label: 'Promotions', href: '/promotions', icon: Tag, permissionKey: 'promotions' },
-  { label: 'Activity', href: '/activity', icon: Activity, permissionKey: 'activity' },
-  { label: 'Shifts', href: '/shifts', icon: Clock, permissionKey: 'shifts' },
-  { label: 'Ledger', href: '/ledger', icon: BookOpen, permissionKey: 'ledger' },
-  { label: 'Reports', href: '/reports', icon: BarChart3, permissionKey: 'reports' },
-  { label: 'Settings', href: '/settings', icon: Settings, permissionKey: 'settings' },
+interface NavGroup {
+  label: string
+  icon: React.ElementType
+  items: NavItem[]
+  /** Any nav item's permissionKey in this group being enabled is enough to show the group. */
+}
+
+type NavEntry = { kind: 'item'; item: NavItem } | { kind: 'group'; group: NavGroup }
+
+const NAV_ENTRIES: NavEntry[] = [
+  { kind: 'item', item: { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' } },
+  {
+    kind: 'group',
+    group: {
+      label: 'Sales',
+      icon: ShoppingCart,
+      items: [
+        { label: 'Billing (POS)', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing' },
+        { label: 'Sales History', href: '/billing?tab=history', icon: Receipt, permissionKey: 'billing', matchHref: '/billing' },
+        { label: 'Quotations', href: '/quotations', icon: FileText, permissionKey: 'quotations' },
+        { label: 'Sales Returns', href: '/returns?type=sale', icon: RotateCcw, permissionKey: 'returns', matchHref: '/returns' },
+      ],
+    },
+  },
+  {
+    kind: 'group',
+    group: {
+      label: 'Purchase',
+      icon: ShoppingBag,
+      items: [
+        { label: 'Purchases', href: '/purchases', icon: ShoppingBag, permissionKey: 'purchases' },
+        { label: 'Purchase Returns', href: '/returns?type=purchase', icon: RotateCcw, permissionKey: 'returns', matchHref: '/returns' },
+      ],
+    },
+  },
+  {
+    kind: 'group',
+    group: {
+      label: 'Inventory',
+      icon: Boxes,
+      items: [
+        { label: 'Products', href: '/products', icon: Package, permissionKey: 'products' },
+        { label: 'Categories', href: '/products?openCategories=true', icon: Tags, permissionKey: 'products', matchHref: '/products' },
+        { label: 'Stock & Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory' },
+      ],
+    },
+  },
+  { kind: 'item', item: { label: 'Suppliers', href: '/suppliers', icon: Truck, permissionKey: 'suppliers' } },
+  { kind: 'item', item: { label: 'Customers', href: '/customers', icon: Users, permissionKey: 'customers' } },
+  { kind: 'item', item: { label: 'Loyalty', href: '/loyalty', icon: Star, permissionKey: 'loyalty' } },
+  { kind: 'item', item: { label: 'Employees', href: '/employees', icon: UserCog, permissionKey: 'employees' } },
+  { kind: 'item', item: { label: 'Roles', href: '/roles', icon: Shield, permissionKey: 'roles' } },
+  { kind: 'item', item: { label: 'Expenses', href: '/expenses', icon: Receipt, permissionKey: 'expenses' } },
+  { kind: 'item', item: { label: 'Promotions', href: '/promotions', icon: Tag, permissionKey: 'promotions' } },
+  { kind: 'item', item: { label: 'Activity', href: '/activity', icon: Activity, permissionKey: 'activity' } },
+  { kind: 'item', item: { label: 'Shifts', href: '/shifts', icon: Clock, permissionKey: 'shifts' } },
+  { kind: 'item', item: { label: 'Ledger', href: '/ledger', icon: BookOpen, permissionKey: 'ledger' } },
+  { kind: 'item', item: { label: 'Reports', href: '/reports', icon: BarChart3, permissionKey: 'reports' } },
+  { kind: 'item', item: { label: 'Settings', href: '/settings', icon: Settings, permissionKey: 'settings' } },
 ]
+
+function isNavItemActive(item: NavItem, pathname: string, search: string) {
+  const target = item.matchHref ?? item.href
+  const targetPath = target.split('?')[0]
+  if (targetPath === '/dashboard') {
+    return pathname === '/dashboard' || pathname === '/'
+  }
+  if (!pathname.startsWith(targetPath)) return false
+  if (!item.matchHref) return true
+  // Disambiguate sub-items that share a base path (e.g. /billing vs /billing?tab=history)
+  const itemQuery = new URLSearchParams(item.href.split('?')[1] ?? '')
+  const currentQuery = new URLSearchParams(search)
+  for (const [key, value] of itemQuery.entries()) {
+    if (currentQuery.get(key) !== value) return false
+  }
+  return true
+}
+
+function NavLinkItem({
+  item,
+  isActive,
+  brandColor,
+  onNavigate,
+  compact,
+}: {
+  item: NavItem
+  isActive: boolean
+  brandColor: string
+  onNavigate: (href: string) => void
+  compact?: boolean
+}) {
+  const Icon = item.icon
+  return (
+    <li>
+      <Link
+        to={item.href}
+        onClick={(e) => {
+          e.preventDefault()
+          onNavigate(item.href)
+        }}
+        className={cn(
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+          compact && 'py-1.5 text-[13px]',
+          isActive
+            ? 'text-white shadow-sm'
+            : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+        )}
+        style={isActive ? { backgroundColor: brandColor } : undefined}
+      >
+        <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-3.5 w-3.5')} />
+        <span>{item.label}</span>
+        {item.badge && (
+          <span
+            className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+            style={{ backgroundColor: `${brandColor}30`, color: brandColor }}
+          >
+            {item.badge}
+          </span>
+        )}
+      </Link>
+    </li>
+  )
+}
+
+function QuickAddLink({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ElementType
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+    >
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      {label}
+    </button>
+  )
+}
 
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
@@ -102,6 +228,44 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
+
+  const isGroupActive = (group: NavGroup) =>
+    group.items.some((item) => isNavItemActive(item, location.pathname, location.search))
+
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    let stored: Record<string, boolean> = {}
+    try {
+      stored = JSON.parse(localStorage.getItem('billscape_nav_groups') ?? '{}')
+    } catch {
+      stored = {}
+    }
+    const initial: Record<string, boolean> = {}
+    for (const entry of NAV_ENTRIES) {
+      if (entry.kind === 'group') {
+        initial[entry.group.label] = entry.group.label in stored ? stored[entry.group.label] : isGroupActive(entry.group)
+      }
+    }
+    return initial
+  })
+
+  // Auto-expand the group containing the active route (does not collapse a manually-opened group)
+  useEffect(() => {
+    for (const entry of NAV_ENTRIES) {
+      if (entry.kind === 'group' && isGroupActive(entry.group)) {
+        setOpenGroups((prev) => (prev[entry.group.label] ? prev : { ...prev, [entry.group.label]: true }))
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.search])
+
+  const toggleGroup = (label: string) => {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [label]: !prev[label] }
+      localStorage.setItem('billscape_nav_groups', JSON.stringify(next))
+      return next
+    })
+  }
 
   const brandColor = org?.branding?.primary_color ?? '#6366f1'
 
@@ -350,48 +514,73 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
 
       <nav className="flex-1 overflow-y-auto py-4 px-2">
         <ul className="space-y-0.5">
-          {NAV_ITEMS.filter((item) =>
-            !item.permissionKey || permissions?.[item.permissionKey] !== false
-          ).map((item) => {
-            const isActive =
-              item.href === '/dashboard'
-                ? location.pathname === '/dashboard' || location.pathname === '/'
-                : location.pathname.startsWith(item.href)
-            const Icon = item.icon
-            return (
-              <li key={item.href}>
-                <Link
-                  to={item.href}
-                  onClick={(e) => {
-                    if (location.pathname.startsWith(item.href)) {
+          {NAV_ENTRIES.map((entry) => {
+            if (entry.kind === 'item') {
+              if (entry.item.permissionKey && permissions?.[entry.item.permissionKey] === false) return null
+              return (
+                <NavLinkItem
+                  key={entry.item.href}
+                  item={entry.item}
+                  isActive={isNavItemActive(entry.item, location.pathname, location.search)}
+                  brandColor={brandColor}
+                  onNavigate={(href) => {
+                    if (isNavItemActive(entry.item, location.pathname, location.search)) {
                       setSidebarOpen(false)
                       return
                     }
-                    e.preventDefault()
                     requestNavigation(() => {
                       setSidebarOpen(false)
-                      navigate(item.href)
+                      navigate(href)
                     })
                   }}
+                />
+              )
+            }
+
+            const visibleItems = entry.group.items.filter(
+              (item) => !item.permissionKey || permissions?.[item.permissionKey] !== false
+            )
+            if (visibleItems.length === 0) return null
+            const GroupIcon = entry.group.icon
+            const isOpen = openGroups[entry.group.label] ?? false
+            const groupActive = isGroupActive(entry.group)
+
+            return (
+              <li key={entry.group.label}>
+                <button
+                  onClick={() => toggleGroup(entry.group.label)}
                   className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
-                    isActive
-                      ? 'text-white shadow-sm'
-                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+                    groupActive ? 'text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
                   )}
-                  style={isActive ? { backgroundColor: brandColor } : undefined}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span>{item.label}</span>
-                  {item.badge && (
-                    <span
-                      className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-                      style={{ backgroundColor: `${brandColor}30`, color: brandColor }}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </Link>
+                  <GroupIcon className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-left">{entry.group.label}</span>
+                  <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')} />
+                </button>
+                {isOpen && (
+                  <ul className="mt-0.5 space-y-0.5 border-l border-border ml-5 pl-2">
+                    {visibleItems.map((item) => (
+                      <NavLinkItem
+                        key={item.href}
+                        item={item}
+                        isActive={isNavItemActive(item, location.pathname, location.search)}
+                        brandColor={brandColor}
+                        compact
+                        onNavigate={(href) => {
+                          if (isNavItemActive(item, location.pathname, location.search)) {
+                            setSidebarOpen(false)
+                            return
+                          }
+                          requestNavigation(() => {
+                            setSidebarOpen(false)
+                            navigate(href)
+                          })
+                        }}
+                      />
+                    ))}
+                  </ul>
+                )}
               </li>
             )
           })}
@@ -465,8 +654,64 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             </button>
           </div>
 
-          
-          
+          {/* Quick action shortcuts */}
+          <div className="hidden md:flex items-center gap-2">
+            {(!permissions || permissions['purchases'] !== false) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs h-8"
+                onClick={() => requestNavigation(() => navigate('/purchases/new'))}
+              >
+                <ShoppingBag className="h-3.5 w-3.5" />
+                New Purchase
+              </Button>
+            )}
+            {(!permissions || permissions['billing'] !== false) && (
+              <Button
+                size="sm"
+                className="gap-1.5 text-xs h-8"
+                onClick={() => requestNavigation(() => navigate('/billing'))}
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                POS
+              </Button>
+            )}
+
+            {/* Quick-add dropdown */}
+            <div className="relative">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setQuickAddOpen((prev) => !prev)}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+
+              {quickAddOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setQuickAddOpen(false)} />
+                  <div className="absolute right-0 top-full z-40 mt-1 w-64 rounded-lg border border-border bg-card shadow-xl overflow-hidden py-1">
+                    <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sales</div>
+                    <QuickAddLink icon={ShoppingCart} label="New Sale (POS)" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/billing')) }} />
+                    <QuickAddLink icon={FileText} label="New Quotation" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/quotations')) }} />
+                    <QuickAddLink icon={RotateCcw} label="New Return" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/returns')) }} />
+
+                    <div className="mt-1 border-t border-border px-3 pt-2 pb-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Purchases &amp; Expenses</div>
+                    <QuickAddLink icon={ShoppingBag} label="New Purchase" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/purchases/new')) }} />
+                    <QuickAddLink icon={Receipt} label="New Expense" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/expenses')) }} />
+
+                    <div className="mt-1 border-t border-border px-3 pt-2 pb-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Masters</div>
+                    <QuickAddLink icon={Package} label="New Product" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/products/new')) }} />
+                    <QuickAddLink icon={Users} label="New Customer" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/customers')) }} />
+                    <QuickAddLink icon={Truck} label="New Supplier" onClick={() => { setQuickAddOpen(false); requestNavigation(() => navigate('/suppliers')) }} />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
           {/* System Notifications */}
           <div className="relative">
             <button

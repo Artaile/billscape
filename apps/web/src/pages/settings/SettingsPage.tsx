@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -1122,11 +1123,28 @@ function LivePrintBillPreview({
   )
 }
 
+const SETTINGS_SECTION_VALUES = [
+  'shop', 'regional', 'tax', 'invoice', 'print', 'units',
+  'inventory', 'barcode', 'custom_fields', 'routine',
+  'notifications', 'team', 'billing', 'backup',
+] as const
+
 export function SettingsPage() {
   const { org, user, refreshOrg } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const orgId = org?.id
   const queryClient = useQueryClient()
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sectionParam = searchParams.get('section')
+  const activeSection = SETTINGS_SECTION_VALUES.includes(sectionParam as any) ? sectionParam! : 'shop'
+  const handleSectionChange = (value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('section', value)
+      return next
+    }, { replace: true })
+  }
 
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(org?.branding?.logo_url ?? null)
@@ -2070,7 +2088,7 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground mt-0.5">Configure your business identity, tax rules, billing, inventory, and notifications.</p>
       </div>
 
-      <Tabs defaultValue="shop" className="flex flex-col lg:flex-row gap-4 xl:gap-6 items-start">
+      <Tabs value={activeSection} onValueChange={handleSectionChange} className="flex flex-col lg:flex-row gap-4 xl:gap-6 items-start">
         {/* Left Side Settings Navigation Sidebar */}
         <aside className="w-full lg:w-56 shrink-0 rounded-2xl border border-border bg-card p-3 shadow-sm space-y-4 lg:sticky lg:top-4 self-start">
           <div>
