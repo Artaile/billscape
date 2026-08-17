@@ -28,6 +28,7 @@ import { ProductSchema, type ProductInput, formatINR } from '@billscape/core'
 import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { logActivity } from '@/lib/activityLog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -419,9 +420,24 @@ export function ProductFormPage() {
           )
         }
       }
+
+      await logActivity({
+        organizationId: orgId!,
+        action: isEdit ? 'updated' : 'created',
+        entity: 'product',
+        entityId: productId,
+        metadata: {
+          name: values.name,
+          sku: values.sku,
+          price: values.price,
+          barcode: values.barcode_value,
+          stock: values.initialStock,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success(isEdit ? 'Product updated' : 'Product created')
       navigate('/products')
     },

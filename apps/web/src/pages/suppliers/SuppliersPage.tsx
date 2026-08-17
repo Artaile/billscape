@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 
 interface Supplier extends SupplierOption {
@@ -80,9 +81,22 @@ export function SuppliersPage() {
         .eq('id', supplier.id)
         .eq('organization_id', orgId!)
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'deleted',
+        entity: 'supplier',
+        entityId: supplier.id,
+        metadata: {
+          name: supplier.name,
+          phone: supplier.phone,
+          gstin: supplier.gstin,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Supplier deleted')
       setDeleteTarget(null)
     },

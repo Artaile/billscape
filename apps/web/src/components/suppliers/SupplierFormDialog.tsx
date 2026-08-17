@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
 
 export interface SupplierOption {
   id: string
@@ -30,6 +31,8 @@ interface SupplierFormState {
   bankAccount: string
   bankIfsc: string
   upiId: string
+  openingBalance: string
+  balanceType: 'to_pay' | 'advance_paid'
 }
 
 function emptyForm(initialName?: string): SupplierFormState {
@@ -43,6 +46,8 @@ function emptyForm(initialName?: string): SupplierFormState {
     bankAccount: '',
     bankIfsc: '',
     upiId: '',
+    openingBalance: '',
+    balanceType: 'to_pay',
   }
 }
 
@@ -89,6 +94,8 @@ export function SupplierFormDialog({
         bankAccount: editTarget.bank_account ?? '',
         bankIfsc: editTarget.bank_ifsc ?? '',
         upiId: editTarget.upi_id ?? '',
+        openingBalance: '',
+        balanceType: 'to_pay',
       })
     } else {
       setForm(emptyForm(initialName))
@@ -151,6 +158,20 @@ export function SupplierFormDialog({
       toast.error(editTarget ? 'Failed to update supplier' : 'Failed to add supplier', result.error?.message)
       return
     }
+
+    await logActivity({
+      organizationId: orgId,
+      action: editTarget ? 'updated' : 'created',
+      entity: 'supplier',
+      entityId: result.data.id,
+      metadata: {
+        name: form.name.trim(),
+        phone: rawPhoneDigits || null,
+        gstin: form.gstin.trim() || null,
+        opening_balance: form.openingBalance ? parseFloat(form.openingBalance) : 0,
+        balance_type: form.balanceType,
+      },
+    })
 
     toast.success(editTarget ? 'Supplier updated' : 'Supplier added')
     onSaved(result.data as SupplierOption)
@@ -231,6 +252,34 @@ export function SupplierFormDialog({
             />
             {addressError && <p className="text-xs text-red-400">{addressError}</p>}
           </div>
+
+          {!editTarget && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="sup-op-bal">Opening Balance (₹)</Label>
+                <Input
+                  id="sup-op-bal"
+                  type="number"
+                  step="any"
+                  placeholder="0.00"
+                  value={form.openingBalance}
+                  onChange={(e) => setField('openingBalance', e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="sup-op-type">Balance Type</Label>
+                <select
+                  id="sup-op-type"
+                  value={form.balanceType}
+                  onChange={(e) => setField('balanceType', e.target.value as any)}
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="to_pay">To Pay / Outstanding (Cr)</option>
+                  <option value="advance_paid">Advance Paid (Dr)</option>
+                </select>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2.5 rounded-lg border border-zinc-800 p-3">
             <p className="text-xs font-medium text-zinc-400">Bank Details (for payments)</p>

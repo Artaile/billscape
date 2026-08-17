@@ -2,6 +2,15 @@ import type { TypedSupabaseClient } from './client'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
 import { applyLoyaltyRedemption, applyOrderDiscount, applyRoundOff, computeGST, computeLineTax, formatDocumentNumber } from '@billscape/core'
 
+async function getActorName(client: TypedSupabaseClient, userId: string): Promise<string> {
+  if (!userId) return 'User'
+  try {
+    const { data } = await client.from('employees').select('full_name').eq('auth_user_id', userId).maybeSingle()
+    if (data?.full_name) return data.full_name
+  } catch {}
+  return 'User'
+}
+
 interface CreateSaleInput {
   organization_id: string
   customer_id?: string
@@ -197,6 +206,22 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
     }
   }
 
+  const actorName = await getActorName(client, input.created_by)
+  await client.from('activity_log').insert({
+    organization_id: input.organization_id,
+    actor_id: input.created_by,
+    actor_name: actorName,
+    action: 'sale_created',
+    entity: 'sales',
+    entity_id: sale.id,
+    metadata: {
+      invoice_no: sale.invoice_no,
+      grand_total: totals.grand_total,
+      payment_mode: sale.payment_mode,
+      item_count: input.items.length,
+    },
+  })
+
   return { data: { sale, totals }, error: null }
 }
 
@@ -242,7 +267,7 @@ export async function updateSale(
       qty_change: item.qty,
       reason: 'adjustment',
       reference_id: saleId,
-      note: 'Bill edited — original quantity reversed',
+      note: 'Sale edited — stock restored before item update',
       created_by: input.updated_by,
     })
   }
@@ -253,12 +278,11 @@ export async function updateSale(
     : baseTotals
   const interstate = totals.is_interstate
 
-  const { error: deleteError } = await client.from('sale_items').delete().eq('sale_id', saleId)
-  if (deleteError) return { data: null, error: deleteError }
+  await client.from('sale_items').delete().eq('sale_id', saleId)
 
   const newItems = buildSaleItemRows(saleId, orgId, input.items, interstate)
-  const { error: insertError } = await client.from('sale_items').insert(newItems)
-  if (insertError) return { data: null, error: insertError }
+  const { error: insertItemsError } = await client.from('sale_items').insert(newItems)
+  if (insertItemsError) return { data: null, error: insertItemsError }
 
   const { data: sale, error: saleError } = await client
     .from('sales')
@@ -285,13 +309,19 @@ export async function updateSale(
 
   if (saleError || !sale) return { data: null, error: saleError }
 
+  const actorName = await getActorName(client, input.updated_by)
   await client.from('activity_log').insert({
     organization_id: orgId,
     actor_id: input.updated_by,
-    actor_name: '',
+    actor_name: actorName,
     action: 'sale_edited',
     entity: 'sales',
     entity_id: saleId,
+    metadata: {
+      invoice_no: sale.invoice_no,
+      grand_total: totals.grand_total,
+      item_count: input.items.length,
+    },
   })
 
   return { data: { sale, totals }, error: null }
@@ -348,14 +378,15 @@ export async function voidSale(
 
   if (saleError || !sale) return { data: null, error: saleError }
 
+  const actorName = await getActorName(client, userId)
   await client.from('activity_log').insert({
     organization_id: orgId,
     actor_id: userId,
-    actor_name: '',
+    actor_name: actorName,
     action: 'sale_voided',
     entity: 'sales',
     entity_id: saleId,
-    metadata: { reason },
+    metadata: { invoice_no: sale.invoice_no, reason },
   })
 
   return { data: sale, error: null }
@@ -398,20 +429,24 @@ export async function restoreSale(client: TypedSupabaseClient, orgId: string, sa
 
   if (saleError || !sale) return { data: null, error: saleError }
 
+  const actorName = await getActorName(client, userId)
   await client.from('activity_log').insert({
     organization_id: orgId,
     actor_id: userId,
-    actor_name: '',
+    actor_name: actorName,
     action: 'sale_restored',
     entity: 'sales',
     entity_id: saleId,
+    metadata: { invoice_no: sale.invoice_no },
   })
 
   return { data: sale, error: null }
 }
 
 // Permanent delete from bin.
-export async function purgeSale(client: TypedSupabaseClient, orgId: string, saleId: string) {
+export async function purgeSale(client: TypedSupabaseClient, orgId: string, saleId: string, userId?: string) {
+  const { data: sale } = await client.from('sales').select('invoice_no').eq('id', saleId).maybeSingle()
+
   const { error: itemsError } = await client.from('sale_items').delete().eq('sale_id', saleId)
   if (itemsError) return { error: itemsError }
 
@@ -420,6 +455,19 @@ export async function purgeSale(client: TypedSupabaseClient, orgId: string, sale
     .delete()
     .eq('id', saleId)
     .eq('organization_id', orgId)
+
+  if (!saleError && userId) {
+    const actorName = await getActorName(client, userId)
+    await client.from('activity_log').insert({
+      organization_id: orgId,
+      actor_id: userId,
+      actor_name: actorName,
+      action: 'sale_deleted',
+      entity: 'sales',
+      entity_id: saleId,
+      metadata: { invoice_no: sale?.invoice_no },
+    })
+  }
 
   return { error: saleError }
 }

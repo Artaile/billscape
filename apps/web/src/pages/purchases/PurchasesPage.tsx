@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Eye, ShoppingBag, Trash2, Loader2, Pencil, Printer,
   Upload, Download, FileSpreadsheet, AlertCircle, FileClock, Play, X,
+  CreditCard, CheckCircle2, TrendingUp, Clock,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -12,8 +13,11 @@ import { getPurchaseWithItems } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
+import { logActivity } from '@/lib/activityLog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
@@ -42,6 +46,38 @@ interface Purchase {
   created_at: string
   suppliers: { name: string } | null
   purchase_items: { id: string }[]
+}
+
+export interface PaymentRecord {
+  amount: number
+  mode: string
+  date: string
+  ref?: string
+}
+
+export function parsePurchasePayment(p: Purchase): {
+  paidAmount: number
+  balanceDue: number
+  status: 'paid' | 'partial' | 'pending'
+  payments: PaymentRecord[]
+} {
+  try {
+    if (p.notes && p.notes.includes('[PAYMENT:')) {
+      const match = p.notes.match(/\[PAYMENT:\s*(\{.*?\})\s*\]/)
+      if (match && match[1]) {
+        const parsed = JSON.parse(match[1])
+        const paid = Number(parsed.paid) || 0
+        const payments = (parsed.history as PaymentRecord[]) || []
+        const total = p.total_amount || 0
+        const due = Math.max(0, total - paid)
+        const status = due <= 0 ? 'paid' : paid > 0 ? 'partial' : 'pending'
+        return { paidAmount: paid, balanceDue: due, status, payments }
+      }
+    }
+  } catch {}
+
+  // Fallback: fully paid
+  return { paidAmount: p.total_amount || 0, balanceDue: 0, status: 'paid', payments: [] }
 }
 
 interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
@@ -90,6 +126,13 @@ export function PurchasesPage() {
   const [viewPurchase, setViewPurchase] = useState<ViewPurchase | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+
+  // Payment Recording State
+  const [paymentTarget, setPaymentTarget] = useState<Purchase | null>(null)
+  const [payAmount, setPayAmount] = useState('')
+  const [payMode, setPayMode] = useState('bank_transfer')
+  const [payRef, setPayRef] = useState('')
+  const [payNotes, setPayNotes] = useState('')
 
   // Import state
   const [showImport, setShowImport] = useState(false)
@@ -149,7 +192,68 @@ export function PurchasesPage() {
     onError: (err: Error) => toast.error('Delete failed', err.message),
   })
 
-  // ── View loader ───────────────────────────────────────────────────────────
+  const recordPaymentMutation = useMutation({
+    mutationFn: async ({
+      purchase,
+      amount,
+      mode,
+      reference,
+      notes,
+    }: {
+      purchase: Purchase
+      amount: number
+      mode: string
+      reference?: string
+      notes?: string
+    }) => {
+      const current = parsePurchasePayment(purchase)
+      const newPaid = current.paidAmount + amount
+      const newPayment: PaymentRecord = {
+        amount,
+        mode,
+        date: new Date().toISOString(),
+        ref: reference || undefined,
+      }
+      const updatedPayments = [...current.payments, newPayment]
+
+      const cleanUserNotes = (purchase.notes || '').replace(/\[PAYMENT:\s*\{.*?\}\s*\]/g, '').trim()
+      const paymentTag = `[PAYMENT: ${JSON.stringify({ paid: newPaid, history: updatedPayments })}]`
+      const updatedNotes = cleanUserNotes ? `${cleanUserNotes}\n${paymentTag}` : paymentTag
+
+      const { error } = await supabase
+        .from('purchases')
+        .update({ notes: updatedNotes })
+        .eq('id', purchase.id)
+        .eq('organization_id', orgId!)
+
+      if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'payment_out',
+        entity: 'purchase',
+        entityId: purchase.id,
+        metadata: {
+          purchase_no: purchase.purchase_no,
+          supplier: purchase.suppliers?.name,
+          amount_paid: amount,
+          total_paid: newPaid,
+          mode,
+          reference,
+        },
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
+      toast.success('Payment recorded successfully')
+      setPaymentTarget(null)
+      setPayAmount('')
+      setPayRef('')
+      setPayNotes('')
+    },
+    onError: (err: Error) => toast.error('Failed to record payment', err.message),
+  })
 
   async function handleViewPurchase(purchase: Purchase) {
     if (!orgId) return
@@ -183,12 +287,27 @@ export function PurchasesPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  // ── Totals Calculation ──
+  const summary = (purchases ?? []).reduce(
+    (acc, p) => {
+      const pay = parsePurchasePayment(p)
+      acc.totalAmount += p.total_amount || 0
+      acc.totalPaid += pay.paidAmount
+      acc.totalDue += pay.balanceDue
+      if (pay.status === 'paid') acc.paidCount++
+      else if (pay.status === 'partial') acc.partialCount++
+      else acc.pendingCount++
+      return acc
+    },
+    { totalAmount: 0, totalPaid: 0, totalDue: 0, paidCount: 0, partialCount: 0, pendingCount: 0 },
+  )
+
   return (
-    <div className="p-4 lg:p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 lg:p-6 space-y-6">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">Purchases</h1>
-          <p className="text-sm text-zinc-400 mt-0.5">{purchases?.length ?? 0} records</p>
+          <p className="text-sm text-zinc-400 mt-0.5">{purchases?.length ?? 0} bills recorded</p>
         </div>
         <div className="flex gap-2">
           {drafts.length > 0 && (
@@ -210,6 +329,36 @@ export function PurchasesPage() {
         </div>
       </div>
 
+      {/* ── KPI Summary Cards ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <ShoppingBag className="h-4 w-4 text-indigo-400" />
+            <span className="text-xs text-muted-foreground">Total Purchases</span>
+          </div>
+          <p className="text-2xl font-bold text-white">{formatINR(summary.totalAmount)}</p>
+          <p className="text-xs text-muted-foreground mt-1">{purchases?.length ?? 0} total bills</p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <span className="text-xs text-muted-foreground">Total Paid (Settled)</span>
+          </div>
+          <p className="text-2xl font-bold text-emerald-400">{formatINR(summary.totalPaid)}</p>
+          <p className="text-xs text-muted-foreground mt-1">{summary.paidCount} bills fully settled</p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock className="h-4 w-4 text-amber-400" />
+            <span className="text-xs text-muted-foreground">Balance Due (Payable)</span>
+          </div>
+          <p className="text-2xl font-bold text-amber-400">{formatINR(summary.totalDue)}</p>
+          <p className="text-xs text-muted-foreground mt-1">{summary.pendingCount + summary.partialCount} pending/partial bills</p>
+        </div>
+      </div>
+
       {/* ── Table ── */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
@@ -222,39 +371,69 @@ export function PurchasesPage() {
                 <TableHead>Date</TableHead>
                 <TableHead>Supplier</TableHead>
                 <TableHead>Invoice No</TableHead>
-                <TableHead className="text-right">Items</TableHead>
                 <TableHead className="text-right">Total Amount</TableHead>
+                <TableHead>Payment Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {purchases && purchases.length > 0 ? purchases.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="font-mono text-xs text-indigo-300 whitespace-nowrap">
-                    {p.purchase_no ?? <span className="text-zinc-600">—</span>}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 text-sm whitespace-nowrap">{formatDate(p.created_at)}</TableCell>
-                  <TableCell className="font-medium text-zinc-100">
-                    {p.suppliers?.name ?? <span className="text-zinc-500 italic">No supplier</span>}
-                  </TableCell>
-                  <TableCell className="font-mono text-sm text-zinc-300">{p.invoice_no ?? <span className="text-zinc-600">—</span>}</TableCell>
-                  <TableCell className="text-right text-zinc-400">{p.purchase_items.length}</TableCell>
-                  <TableCell className="text-right font-semibold text-white">{formatINR(p.total_amount)}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => handleViewPurchase(p)}>
-                        <Eye className="h-3.5 w-3.5 mr-1" />View
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => navigate(`/purchases/${p.id}/edit`)}>
-                        <Pencil className="h-3.5 w-3.5 mr-1" />Edit
-                      </Button>
-                      <button onClick={() => setDeleteConfirmId(p.id)} className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )) : (
+              {purchases && purchases.length > 0 ? purchases.map((p) => {
+                const pay = parsePurchasePayment(p)
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-mono text-xs text-indigo-300 whitespace-nowrap">
+                      {p.purchase_no ?? <span className="text-zinc-600">—</span>}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-sm whitespace-nowrap">{formatDate(p.created_at)}</TableCell>
+                    <TableCell className="font-medium text-zinc-100">
+                      {p.suppliers?.name ?? <span className="text-zinc-500 italic">No supplier</span>}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm text-zinc-300">{p.invoice_no ?? <span className="text-zinc-600">—</span>}</TableCell>
+                    <TableCell className="text-right font-semibold text-white">{formatINR(p.total_amount)}</TableCell>
+                    <TableCell>
+                      {pay.status === 'paid' ? (
+                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                          <CheckCircle2 className="h-3 w-3 mr-1" /> Paid
+                        </Badge>
+                      ) : pay.status === 'partial' ? (
+                        <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
+                          Due: {formatINR(pay.balanceDue)}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
+                          Due: {formatINR(pay.balanceDue)}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {pay.balanceDue > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                            onClick={() => {
+                              setPaymentTarget(p)
+                              setPayAmount(String(pay.balanceDue))
+                            }}
+                          >
+                            <CreditCard className="h-3.5 w-3.5 mr-1" />Pay
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => handleViewPurchase(p)}>
+                          <Eye className="h-3.5 w-3.5 mr-1" />View
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => navigate(`/purchases/${p.id}/edit`)}>
+                          <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+                        </Button>
+                        <button onClick={() => setDeleteConfirmId(p.id)} className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              }) : (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-16">
                     <div className="flex flex-col items-center gap-3 text-zinc-500">
@@ -515,6 +694,142 @@ export function PurchasesPage() {
             <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Cancel</Button>
             <Button variant="destructive" disabled={deleteMutation.isPending} onClick={() => deleteConfirmId && deleteMutation.mutate(deleteConfirmId)}>
               {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Deleting...</> : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Record Payment Dialog ── */}
+      <Dialog open={!!paymentTarget} onOpenChange={(o) => { if (!o) setPaymentTarget(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-amber-400" />
+              Record Outward Payment
+            </DialogTitle>
+          </DialogHeader>
+          {paymentTarget && (() => {
+            const pay = parsePurchasePayment(paymentTarget)
+            return (
+              <div className="space-y-4 py-2">
+                {/* Bill Summary */}
+                <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Purchase Bill:</span>
+                    <span className="font-semibold text-foreground">{paymentTarget.purchase_no || paymentTarget.invoice_no || 'Bill'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Supplier:</span>
+                    <span className="font-medium text-foreground">{paymentTarget.suppliers?.name || '—'}</span>
+                  </div>
+                  <Separator className="my-1" />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Total Bill Amount:</span>
+                    <span className="font-medium text-foreground">{formatINR(paymentTarget.total_amount)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Already Paid:</span>
+                    <span className="font-medium text-emerald-400">{formatINR(pay.paidAmount)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold">
+                    <span className="text-amber-400">Balance Due:</span>
+                    <span className="text-amber-400">{formatINR(pay.balanceDue)}</span>
+                  </div>
+                </div>
+
+                {/* Payment Form */}
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="pay-amt">Payment Amount (₹) *</Label>
+                    <Input
+                      id="pay-amt"
+                      type="number"
+                      step="any"
+                      placeholder="0.00"
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="pay-mode">Payment Mode</Label>
+                      <select
+                        id="pay-mode"
+                        value={payMode}
+                        onChange={(e) => setPayMode(e.target.value)}
+                        className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="bank_transfer">Bank Transfer / NEFT</option>
+                        <option value="upi">UPI / QR</option>
+                        <option value="cash">Cash</option>
+                        <option value="card">Debit / Credit Card</option>
+                        <option value="cheque">Cheque</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="pay-ref">Reference No</Label>
+                      <Input
+                        id="pay-ref"
+                        placeholder="UTR / Txn ID"
+                        value={payRef}
+                        onChange={(e) => setPayRef(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="pay-notes">Notes</Label>
+                    <Input
+                      id="pay-notes"
+                      placeholder="Optional remarks"
+                      value={payNotes}
+                      onChange={(e) => setPayNotes(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Previous Payments List */}
+                {pay.payments.length > 0 && (
+                  <div className="space-y-1.5 pt-2 border-t border-border">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Payment History ({pay.payments.length})</p>
+                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                      {pay.payments.map((p, idx) => (
+                        <div key={idx} className="flex justify-between text-xs text-zinc-400 py-0.5">
+                          <span>{new Date(p.date).toLocaleDateString('en-IN')} • {p.mode.toUpperCase()} {p.ref ? `(${p.ref})` : ''}</span>
+                          <span className="font-semibold text-emerald-400">{formatINR(p.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPaymentTarget(null)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                const amt = parseFloat(payAmount)
+                if (isNaN(amt) || amt <= 0) {
+                  toast.error('Invalid amount', 'Please enter a valid positive payment amount')
+                  return
+                }
+                if (paymentTarget) {
+                  recordPaymentMutation.mutate({
+                    purchase: paymentTarget,
+                    amount: amt,
+                    mode: payMode,
+                    reference: payRef.trim(),
+                    notes: payNotes.trim(),
+                  })
+                }
+              }}
+              disabled={recordPaymentMutation.isPending}
+            >
+              {recordPaymentMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Recording...</> : 'Record Payment'}
             </Button>
           </DialogFooter>
         </DialogContent>

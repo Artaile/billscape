@@ -24,6 +24,7 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
 import { formatDateTime } from '@/lib/utils'
 
 const CATEGORIES = [
@@ -96,18 +97,32 @@ export function ExpensesPage() {
       if (!description.trim()) throw new Error('Description required')
       if (isNaN(amt) || amt <= 0) throw new Error('Enter a valid amount')
 
-      const { error } = await supabase.from('expenses').insert({
+      const { data: exp, error } = await supabase.from('expenses').insert({
         organization_id: orgId!,
         description: description.trim(),
         amount: amt,
         category,
         expense_date: expenseDate,
         notes: notes.trim() || null,
-      })
+      }).select().single()
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'created',
+        entity: 'expense',
+        entityId: exp?.id,
+        metadata: {
+          description: description.trim(),
+          amount: amt,
+          category,
+          date: expenseDate,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Expense added')
       resetForm()
       setShowDialog(false)
@@ -116,12 +131,25 @@ export function ExpensesPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('expenses').delete().eq('id', id).eq('organization_id', orgId!)
+    mutationFn: async (expense: Expense) => {
+      const { error } = await supabase.from('expenses').delete().eq('id', expense.id).eq('organization_id', orgId!)
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'deleted',
+        entity: 'expense',
+        entityId: expense.id,
+        metadata: {
+          description: expense.description,
+          amount: expense.amount,
+          category: expense.category,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Expense deleted')
     },
     onError: (err: Error) => toast.error('Delete failed', err.message),
@@ -269,7 +297,7 @@ export function ExpensesPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <button
-                      onClick={() => deleteMutation.mutate(exp.id)}
+                      onClick={() => deleteMutation.mutate(exp)}
                       className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
                     >
                       <Trash2 className="h-3.5 w-3.5" />

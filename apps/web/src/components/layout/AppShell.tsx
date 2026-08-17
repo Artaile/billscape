@@ -32,11 +32,13 @@ import {
   Loader2,
   ClipboardList,
   EyeOff,
-  Eye
+  Eye,
+  Search,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotifications } from '@/hooks/useNotifications'
+import { GlobalSearchDialog } from '@/components/search/GlobalSearchDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { UserRole } from '@billscape/core'
@@ -99,6 +101,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const { user, org, role, permissions, signOut } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
 
   const brandColor = org?.branding?.primary_color ?? '#6366f1'
 
@@ -447,10 +450,19 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className="flex-1">
-            <h1 className="text-sm font-semibold text-foreground lg:hidden">
-              {org?.name ?? 'BillScape'}
-            </h1>
+          <div className="flex-1 max-w-sm lg:max-w-md">
+            <button
+              onClick={() => setGlobalSearchOpen(true)}
+              className="flex w-full items-center justify-between rounded-lg border border-border bg-secondary/40 px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground hover:border-border/80 transition-colors shadow-sm"
+            >
+              <div className="flex items-center gap-2 truncate">
+                <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="truncate">Search products, parties, bills...</span>
+              </div>
+              <kbd className="pointer-events-none hidden sm:inline-flex h-5 select-none items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground shrink-0">
+                <span className="text-[11px]">⌘</span>K
+              </kbd>
+            </button>
           </div>
 
           
@@ -773,6 +785,9 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Global Command & Search Dialog */}
+      <GlobalSearchDialog open={globalSearchOpen} onOpenChange={setGlobalSearchOpen} />
     </div>
   )
 }

@@ -14,6 +14,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
 import { cn } from '@/lib/utils'
 
 interface Quotation {
@@ -128,9 +129,22 @@ export function QuotationsPage() {
         }))
       )
       if (itemsErr) throw itemsErr
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'created',
+        entity: 'quotation',
+        entityId: quote.id,
+        metadata: {
+          quote_no: quoteNo,
+          customer_name: customerName,
+          total_amount: total,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotations', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Quotation created')
       resetForm(); setShowDialog(false)
     },
@@ -141,19 +155,43 @@ export function QuotationsPage() {
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       const { error } = await supabase.from('quotations').update({ status }).eq('id', id).eq('organization_id', orgId!)
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'updated',
+        entity: 'quotation',
+        entityId: id,
+        metadata: { status },
+      })
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quotations', orgId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
+    },
     onError: (err: Error) => toast.error('Update failed', err.message),
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await supabase.from('quotation_items').delete().eq('quotation_id', id)
-      const { error } = await supabase.from('quotations').delete().eq('id', id).eq('organization_id', orgId!)
+    mutationFn: async (quote: Quotation) => {
+      await supabase.from('quotation_items').delete().eq('quotation_id', quote.id)
+      const { error } = await supabase.from('quotations').delete().eq('id', quote.id).eq('organization_id', orgId!)
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'deleted',
+        entity: 'quotation',
+        entityId: quote.id,
+        metadata: {
+          quote_no: quote.quote_no,
+          customer_name: quote.customer_name,
+          total_amount: quote.total_amount,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotations', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Quotation deleted')
     },
     onError: (err: Error) => toast.error('Delete failed', err.message),
@@ -241,7 +279,7 @@ export function QuotationsPage() {
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => handleView(q)}>
                           <Eye className="h-3.5 w-3.5 mr-1" /> View
                         </Button>
-                        <button onClick={() => deleteMutation.mutate(q.id)}
+                        <button onClick={() => deleteMutation.mutate(q)}
                           className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>

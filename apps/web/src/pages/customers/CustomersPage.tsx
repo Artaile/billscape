@@ -4,7 +4,7 @@ import { Search, Plus, ChevronRight, Phone, Mail, CreditCard, X } from 'lucide-r
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
-import { formatDate } from '@/lib/utils'
+import { formatDate, cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,6 +25,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
 import type { Customer } from '@billscape/core'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -68,6 +69,8 @@ const customerSchema = z.object({
     .or(z.literal('')),
   state_code: z.string().optional(),
   address: z.string().optional(),
+  opening_balance: z.coerce.number().min(0, 'Must be positive').optional().default(0),
+  opening_balance_type: z.enum(['to_collect', 'to_pay']).default('to_collect'),
 })
 
 type CustomerFormValues = z.infer<typeof customerSchema>
@@ -91,7 +94,7 @@ export function CustomersPage() {
     reset,
     formState: { errors, isSubmitting },
   } = useForm<CustomerFormValues>({
-    resolver: zodResolver(customerSchema),
+    resolver: zodResolver(customerSchema) as any,
   })
 
   const { data: customers, isLoading } = useQuery({
@@ -131,7 +134,10 @@ export function CustomersPage() {
 
   const createMutation = useMutation({
     mutationFn: async (values: CustomerFormValues) => {
-      const { error } = await supabase.from('customers').insert({
+      const openBal = Number(values.opening_balance) || 0
+      const initialBalance = values.opening_balance_type === 'to_pay' ? -openBal : openBal
+
+      const { data: customer, error } = await supabase.from('customers').insert({
         organization_id: orgId!,
         name: values.name,
         phone: values.phone || null,
@@ -139,12 +145,27 @@ export function CustomersPage() {
         gstin: values.gstin || null,
         state_code: values.state_code || null,
         address: values.address || null,
-        balance: 0,
-      })
+        balance: initialBalance,
+      }).select().single()
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'created',
+        entity: 'customer',
+        entityId: customer?.id,
+        metadata: {
+          name: values.name,
+          phone: values.phone,
+          email: values.email,
+          opening_balance: openBal,
+          balance_type: values.opening_balance_type,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customers', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Customer added')
       reset()
       setShowForm(false)
@@ -243,13 +264,20 @@ export function CustomersPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <span
-                      className={
-                        (customer.balance ?? 0) < 0
-                          ? 'text-red-400 font-semibold'
-                          : 'text-zinc-400'
-                      }
+                      className={cn(
+                        'text-xs font-semibold px-2 py-0.5 rounded-full border',
+                        (customer.balance ?? 0) > 0
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                          : (customer.balance ?? 0) < 0
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          : 'text-zinc-500 border-transparent',
+                      )}
                     >
-                      {formatINR(customer.balance ?? 0)}
+                      {(customer.balance ?? 0) > 0
+                        ? `Due: ${formatINR(customer.balance ?? 0)} (Dr)`
+                        : (customer.balance ?? 0) < 0
+                        ? `Adv: ${formatINR(Math.abs(customer.balance ?? 0))} (Cr)`
+                        : 'Nil'}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -279,7 +307,7 @@ export function CustomersPage() {
           <DialogHeader>
             <DialogTitle>Add Customer</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-4">
+          <form onSubmit={handleSubmit((v: any) => createMutation.mutate(v))} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="cust-name">Name *</Label>
               <Input id="cust-name" placeholder="Customer name" {...register('name')} />
@@ -325,6 +353,29 @@ export function CustomersPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="cust-op-bal">Opening Balance (₹)</Label>
+                <Input
+                  id="cust-op-bal"
+                  type="number"
+                  step="any"
+                  placeholder="0.00"
+                  {...register('opening_balance')}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="cust-op-type">Balance Type</Label>
+                <select
+                  id="cust-op-type"
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  {...register('opening_balance_type')}
+                >
+                  <option value="to_collect">To Collect / Receivable (Dr)</option>
+                  <option value="to_pay">To Pay / Advance (Cr)</option>
+                </select>
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cust-address">Address</Label>

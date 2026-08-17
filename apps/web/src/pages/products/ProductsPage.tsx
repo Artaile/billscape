@@ -34,6 +34,8 @@ import type { Product } from '@billscape/core'
 import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
 import { ManageCategoriesDialog } from '@/components/products/ManageCategoriesDialog'
 
+import { logActivity } from '@/lib/activityLog'
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = React.useState(value)
   React.useEffect(() => {
@@ -138,16 +140,30 @@ export function ProductsPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (productId: string) => {
+    mutationFn: async (product: ProductWithInventory) => {
       const { error } = await supabase
         .from('products')
         .update({ is_active: false })
-        .eq('id', productId)
+        .eq('id', product.id)
         .eq('organization_id', orgId!)
       if (error) throw error
+
+      await logActivity({
+        organizationId: orgId!,
+        action: 'deleted',
+        entity: 'product',
+        entityId: product.id,
+        metadata: {
+          name: product.name,
+          sku: product.sku,
+          price: product.price,
+          barcode: product.barcode_value,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Product deleted')
       setDeleteTarget(null)
     },
@@ -466,7 +482,7 @@ export function ProductsPage() {
             </Button>
             <Button
               variant="destructive"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}

@@ -14,6 +14,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
 import { cn } from '@/lib/utils'
 
 interface Return {
@@ -53,6 +54,7 @@ export function ReturnsPage() {
   const [refundMode, setRefundMode] = useState('Cash')
   const [notes, setNotes] = useState('')
   const [items, setItems] = useState<ReturnItem[]>([{ product_name: '', qty: 1, unit_price: 0, line_total: 0 }])
+  const [restockInventory, setRestockInventory] = useState<boolean>(true)
   const [search, setSearch] = useState('')
 
   const totalRefund = items.reduce((s, i) => s + i.line_total, 0)
@@ -89,6 +91,7 @@ export function ReturnsPage() {
     setReturnType('sale')
     setInvoiceNo(''); setPurchaseRef(''); setReason(REASONS[0]); setRefundMode('Cash'); setNotes('')
     setItems([{ product_name: '', qty: 1, unit_price: 0, line_total: 0 }])
+    setRestockInventory(true)
   }
 
   const saveMutation = useMutation({
@@ -106,7 +109,7 @@ export function ReturnsPage() {
           return_type: returnType,
           original_invoice_no: returnType === 'sale' ? invoiceNo.trim().toUpperCase() : (purchaseRef.trim().toUpperCase()),
           purchase_ref: returnType === 'purchase' ? purchaseRef.trim().toUpperCase() : null,
-          reason,
+          reason: `${reason}${!restockInventory ? ' (Without Stock Movement)' : ''}`,
           refund_mode: refundMode,
           refund_amount: totalRefund,
           notes: notes.trim() || null,
@@ -128,42 +131,60 @@ export function ReturnsPage() {
       )
       if (itemsErr) throw itemsErr
 
-      // Auto-adjust stock: for sale returns, add stock back; for purchase returns, deduct stock
-      const stockMovements = validItems
-        .filter((i) => i.product_name.trim())
-        .map(async (item) => {
-          const { data: product } = await supabase
-            .from('products')
-            .select('id')
-            .eq('organization_id', orgId!)
-            .ilike('name', item.product_name.trim())
-            .maybeSingle()
+      // Auto-adjust stock only if restockInventory is true
+      if (restockInventory) {
+        const stockMovements = validItems
+          .filter((i) => i.product_name.trim())
+          .map(async (item) => {
+            const { data: product } = await supabase
+              .from('products')
+              .select('id')
+              .eq('organization_id', orgId!)
+              .ilike('name', item.product_name.trim())
+              .maybeSingle()
 
-          if (!product) return
+            if (!product) return
 
-          const qtyChange = returnType === 'sale' ? item.qty : -item.qty
+            const qtyChange = returnType === 'sale' ? item.qty : -item.qty
 
-          await supabase.from('stock_movements').insert({
-            organization_id: orgId!,
-            product_id: product.id,
-            qty_change: qtyChange,
-            reason: 'return',
-            reference_id: ret.id,
-            note: `${returnType === 'sale' ? 'Sale' : 'Purchase'} return — ${reason}`,
-            created_by: user.id,
+            await supabase.from('stock_movements').insert({
+              organization_id: orgId!,
+              product_id: product.id,
+              qty_change: qtyChange,
+              reason: 'return',
+              reference_id: ret.id,
+              note: `${returnType === 'sale' ? 'Sale' : 'Purchase'} return — ${reason}`,
+              created_by: user.id,
+            })
+
+            await supabase.rpc('increment_inventory', {
+              p_org_id: orgId!,
+              p_product_id: product.id,
+              p_qty: qtyChange,
+            }).maybeSingle()
           })
 
-          await supabase.rpc('increment_inventory', {
-            p_org_id: orgId!,
-            p_product_id: product.id,
-            p_qty: qtyChange,
-          }).maybeSingle()
-        })
+        await Promise.allSettled(stockMovements)
+      }
 
-      await Promise.allSettled(stockMovements)
+      await logActivity({
+        organizationId: orgId!,
+        action: 'return',
+        entity: 'return',
+        entityId: ret.id,
+        metadata: {
+          type: returnType,
+          invoice_no: returnType === 'sale' ? invoiceNo.trim().toUpperCase() : purchaseRef.trim().toUpperCase(),
+          amount: totalRefund,
+          mode: refundMode,
+          reason,
+          restock: restockInventory,
+        },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['returns', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Return processed successfully')
       resetForm()
       setShowDialog(false)
@@ -339,6 +360,53 @@ export function ReturnsPage() {
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
                 {REASONS.map((r) => <option key={r}>{r}</option>)}
               </select>
+            </div>
+
+            {/* Inventory Movement Mode Toggle */}
+            <div className="rounded-lg border border-border p-3 space-y-2 bg-secondary/20">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label className="font-semibold text-foreground">Inventory Stock Movement</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {restockInventory
+                      ? returnType === 'sale'
+                        ? 'Goods will be returned to inventory stock'
+                        : 'Goods will be deducted from inventory stock'
+                      : 'Value-only credit / Damaged item — No inventory movement'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={restockInventory}
+                  onClick={() => setRestockInventory(!restockInventory)}
+                  className={cn(
+                    'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 cursor-pointer',
+                    restockInventory ? 'bg-primary' : 'bg-zinc-600'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+                      restockInventory ? 'translate-x-4' : 'translate-x-0'
+                    )}
+                  />
+                </button>
+              </div>
+
+              <div className={cn(
+                'rounded-md p-2 text-xs flex items-center gap-2 border transition-all',
+                restockInventory
+                  ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                  : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+              )}>
+                <span className="font-bold">Mode:</span>
+                <span>
+                  {restockInventory
+                    ? '✓ Physical stock inventory will be automatically updated.'
+                    : '⚠ Only financial refund/credit is recorded. Stock quantity will NOT be modified.'}
+                </span>
+              </div>
             </div>
 
             {/* Return Items */}
