@@ -112,7 +112,7 @@ export function ProductsPage() {
       }, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams.get('openCategories')])
 
   const debouncedSearch = useDebounce(search, 300)
 

@@ -93,7 +93,7 @@ const NAV_ENTRIES: NavEntry[] = [
       label: 'Sales',
       icon: ShoppingCart,
       items: [
-        { label: 'Billing (POS)', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing' },
+        { label: 'Billing (POS)', href: '/billing', icon: ShoppingCart, badge: 'POS', permissionKey: 'billing', matchHref: '/billing' },
         { label: 'Sales History', href: '/billing?tab=history', icon: Receipt, permissionKey: 'billing', matchHref: '/billing' },
         { label: 'Quotations', href: '/quotations', icon: FileText, permissionKey: 'quotations' },
         { label: 'Sales Returns', href: '/returns?type=sale', icon: RotateCcw, permissionKey: 'returns', matchHref: '/returns' },
@@ -145,11 +145,15 @@ function isNavItemActive(item: NavItem, pathname: string, search: string) {
   }
   if (!pathname.startsWith(targetPath)) return false
   if (!item.matchHref) return true
-  // Disambiguate sub-items that share a base path (e.g. /billing vs /billing?tab=history)
+  // Disambiguate sub-items that share a base path (e.g. /billing vs /billing?tab=history):
+  // every query key this item's href sets (or, if it sets none, every key any of its siblings
+  // set — read from currentQuery) must match exactly, so "no tab param" and "tab=history" are
+  // treated as distinct states rather than the bare-path item matching both.
   const itemQuery = new URLSearchParams(item.href.split('?')[1] ?? '')
   const currentQuery = new URLSearchParams(search)
-  for (const [key, value] of itemQuery.entries()) {
-    if (currentQuery.get(key) !== value) return false
+  const keysToCheck = new Set([...itemQuery.keys(), ...currentQuery.keys()])
+  for (const key of keysToCheck) {
+    if ((itemQuery.get(key) ?? null) !== (currentQuery.get(key) ?? null)) return false
   }
   return true
 }
