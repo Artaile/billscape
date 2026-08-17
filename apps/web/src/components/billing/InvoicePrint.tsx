@@ -25,6 +25,8 @@ export interface InvoicePrintProps {
   paymentDetail?: string
   branding?: OrgBranding
   invoiceTemplate?: OrgInvoiceTemplate
+  /** Hide the built-in "Print Invoice" button — set when the host page provides its own print action. */
+  hidePrintButton?: boolean
 }
 
 export function InvoicePrint({
@@ -46,6 +48,7 @@ export function InvoicePrint({
   paymentDetail,
   branding,
   invoiceTemplate,
+  hidePrintButton,
 }: InvoicePrintProps) {
   const [upiQrDataUrl, setUpiQrDataUrl] = useState<string | null>(null)
 
@@ -104,12 +107,14 @@ export function InvoicePrint({
   return (
     <>
       {/* Print action button - hidden during print */}
-      <div className="no-print flex justify-end mb-4 gap-2">
-        <Button onClick={handlePrint}>
-          <Printer className="h-4 w-4 mr-1.5" />
-          Print Invoice
-        </Button>
-      </div>
+      {!hidePrintButton && (
+        <div className="no-print flex justify-end mb-4 gap-2">
+          <Button onClick={handlePrint}>
+            <Printer className="h-4 w-4 mr-1.5" />
+            Print Invoice
+          </Button>
+        </div>
+      )}
 
       <style>{`
         @media print {

@@ -346,7 +346,7 @@ export function HistoryTab() {
 }
 
 // ─── Edit sale ──────────────────────────────────────────────────────────────
-function EditSaleDialog({
+export function EditSaleDialog({
   saleId,
   onClose,
   onSaved,
