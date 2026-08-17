@@ -1,4 +1,4 @@
-# BillScape — Live Audit, Grouped by Feature (2026-08-17)
+# BillScape — Live Audit, Grouped by Feature (2026-08-17, re-verified 2026-08-17)
 
 _Same findings as `LIVE_AUDIT_2026-08.md`, regrouped by module/feature area so each section can be
 split off as an independent work item. Severity tags (🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low)
@@ -7,6 +7,12 @@ are kept per-item so priority isn't lost in the regrouping._
 _Method: hands-on live testing, logged in as real users on both apps._
 _BillScape: billscape-seven.vercel.app, mdsuhail.designer@gmail.com (org: MD Electronics)_
 _IppoBill: ippobill.com, ironaile1999@gmail.com (Basic plan, trial)_
+
+_**Update 2026-08-17 (same day, QC re-check pass):** all 🟠 High items were reported fixed by the_
+_dev team and re-verified live via a fresh login + QC agent walkthrough. Status per item is now_
+_marked ✅ FIXED / ⚠️ PARTIALLY FIXED / ❌ STILL BROKEN inline below. Net result: 5 of 7 High items_
+_fully fixed, 2 partially fixed. The 2 Critical items spot-checked during this pass (dead Upgrade_
+_button, duplicate System roles) remain unfixed — not yet worked on._
 
 ---
 
@@ -17,16 +23,16 @@ replacing a manual process or IppoBill.
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🔴 Critical | **No GSTR-1/2/3B/9-shaped report** | IppoBill's `/reports/gst` has 5 tabs (GSTR-1, GSTR-2, GSTR-3B, GSTR-9, HSN-wise Summary), B2B vs B2C split, live reconciliation banner ("Tolerance: ₹1.00 • Difference: ₹0.00"). BillScape's Reports has only 4 tabs (Sales Summary, Item-wise, Stock Report, GST Summary); GST Summary is a flat tax-rate breakup, not a return-shaped export. |
-| 🟠 High | **No P&L / Balance Sheet / Trial Balance / Cash Flow report** | IppoBill's Reports has all four as top-level tabs, generated live from the same double-entry data BillScape's Ledger already captures. BillScape's `/ledger` has Chart of Accounts + Vouchers, but nothing in `/reports` surfaces P&L-shaped output. Mostly a presentation layer on data already captured — comparatively cheap to close once prioritized. |
+| 🔴 Critical | **No GSTR-1/2/3B/9-shaped report** | IppoBill's `/reports/gst` has 5 tabs (GSTR-1, GSTR-2, GSTR-3B, GSTR-9, HSN-wise Summary), B2B vs B2C split, live reconciliation banner ("Tolerance: ₹1.00 • Difference: ₹0.00"). BillScape's Reports has only 4 tabs (Sales Summary, Item-wise, Stock Report, GST Summary); GST Summary is a flat tax-rate breakup, not a return-shaped export. **Not re-checked in this pass — still assumed open.** |
+| 🟠 High | ✅ **FIXED** — P&L / Balance Sheet / Trial Balance / Cash Flow report | Re-verified 2026-08-17: `/reports` now has 8 tabs total — Sales Summary, **Profit & Loss**, **Balance Sheet**, **Trial Balance**, **Cash Flow**, Item-wise, Stock Report, GST Summary. All four new reports render live computed data: P&L shows Net Revenue/Gross Profit/Net Profit with a full particulars breakdown; Balance Sheet shows Assets vs Liabilities & Equity and reports "Accounting Equation Balanced"; Trial Balance lists all ledger heads with Debit/Credit columns; Cash Flow shows Operating Inflows/Outflows/Net Cash Flow. Each has Export CSV. |
 | 🟡 Medium | **No Direct/Indirect classification on expense categories** | `/expenses` category pills are fixed (Rent, Salary, Electricity, Water, Internet, Transport, Packaging, Maintenance, Marketing, Miscellaneous) — no Direct/Indirect flag. Needed to feed a correct P&L operating-expense split once P&L exists (depends on the item above). |
 | 🟡 Medium | **No party-wise P&L / profitability report** | Depends on P&L existing first. |
 | 🟡 Medium | **Composition Scheme flag on tax_profile** | Worth checking merchant demand before building. |
 
 **Suggested split:** GSTR-1 report is its own large ticket (schema for B2B/B2C split + HSN summary
-+ reconciliation logic). P&L/Balance Sheet/Trial Balance/Cash Flow is a second ticket (mostly
-presentation on existing Ledger data). Expense Direct/Indirect + party-wise P&L are small
-follow-ons that should wait until the P&L ticket lands.
++ reconciliation logic) — still open, highest remaining priority in this whole audit. P&L/Balance
+Sheet/Trial Balance/Cash Flow is now done. Expense Direct/Indirect + party-wise P&L can now be
+picked up since the P&L report they depend on has landed.
 
 ---
 
@@ -34,7 +40,7 @@ follow-ons that should wait until the P&L ticket lands.
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🔴 Critical | **"Upgrade to Pro" button is a dead click** | Settings → Billing shows Free/Pro plan cards with a real "Upgrade to Pro ₹499/mo" CTA. Clicked live — no modal, no navigation, no toast, no console error. Same class of bug the old competitor doc flagged as a *competitor* weakness ("Create Plan button non-functional") — BillScape now has its own version, on a customer-facing upgrade path. |
+| 🔴 Critical | ❌ **STILL BROKEN** — "Upgrade to Pro" button is a dead click | Re-checked 2026-08-17: Settings → Billing shows Free/Pro plan cards with an "Upgrade to Pro ₹499/mo" CTA. The button now renders visually muted/disabled-looking rather than a bright active CTA, but clicking it still produces no modal, no navigation, no toast, no console error — functionally unchanged. Same class of bug the old competitor doc flagged as a *competitor* weakness ("Create Plan button non-functional") — BillScape still has its own version, on a customer-facing upgrade path. |
 | 🔵 Low/Watch | **Pricing page vs in-app gate consistency** | Not urgent until BillScape ships paid tiers for real — but the Free/Pro cards already existing means this is now closer than it looked in the last audit. Decide the tiering plan intentionally rather than drifting into it half-wired. |
 
 **Suggested split:** Either wire the Upgrade CTA to a real flow (payment provider / contact-sales
@@ -47,7 +53,7 @@ no button.
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🔴 Critical | **Duplicate System roles** | `/roles` shows 7 rows where there should be ~4: two "Owner" (19/19 vs 16/19 permissions), two "Manager" (14/19 vs 13/19), two "Cashier" (3/19 vs 5/19), one "Admin". All marked "System" (non-deletable, Clone-only). Looks like a duplicate seed from a re-run migration. A merchant cloning "Owner" could pick either version and get a different permission set than expected. |
+| 🔴 Critical | ❌ **STILL BROKEN** — Duplicate System roles | Re-checked 2026-08-17, unchanged: `/roles` still shows 7 rows where there should be ~4: two "Owner" (19/19 vs 16/19 permissions), two "Manager" (14/19 vs 13/19), two "Cashier" (3/19 vs 5/19), one "Admin" (17/19). All marked "System" (non-deletable, Clone-only). A merchant cloning "Owner" could pick either version and get a different permission set than expected. |
 
 **Suggested split:** Standalone data-cleanup ticket — identify the duplicate-seeding migration,
 write a one-time cleanup migration (merge or delete the duplicate rows), add a uniqueness
@@ -59,12 +65,12 @@ constraint on `(org_id, name)` for system roles if one doesn't already exist to 
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🟠 High | **Summary KPI counters don't match visible rows** | `/activity` shows Created 0 / Updated 0 / Deleted 0 / Sales 0, while 5 real rows are listed below (Sale_restored, Sale_voided, Sale_edited). The counters appear to bucket only literal `created`/`updated`/`deleted` action strings and miss `voided`/`restored`/`edited`, undercounting real activity at a glance. |
-| 🟠 High | **"Actor" column is blank on every row** | Despite `activity_log.actor_name` being a documented field, no row shows who performed the action. |
+| 🟠 High | ✅ **FIXED** — Summary KPI counters didn't match visible rows | Re-verified 2026-08-17: counters now correctly bucket actions beyond literal created/updated/deleted — Updated/Edited: 3, Deleted/Voided: 2, Sales & Billing: 5 — matches the 5 visible rows (2× Sale Restored, 2× Sale Voided, 1× Sale Edited). |
+| 🟠 High | ⚠️ **PARTIALLY FIXED** — "Actor" column | No longer blank, but every row now shows a generic **"System / Admin"** placeholder instead of the real acting user (e.g. mdsuhail.designer). The original complaint ("can't tell who did this") is only half-resolved — the column renders something, but it's still not useful for a real audit trail. |
 
-**Suggested split:** One ticket — likely the same root cause (action-name mapping / actor_name not
-being populated on write). Worth a quick check of whichever code path inserts `activity_log` rows
-for sale void/restore/edit.
+**Suggested split:** The counter bug is closed. Remaining work is narrower than originally scoped:
+find wherever `activity_log` rows are inserted for sale void/restore/edit and pass the real
+`actor_id`/`actor_name` instead of a hardcoded "System / Admin" placeholder.
 
 ---
 
@@ -72,10 +78,9 @@ for sale void/restore/edit.
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🟠 High | **No "Without Stock" mode** | Opened BillScape's "New Return" dialog live — Sale Return / Purchase Return toggle exists (resolved), Refund Mode dropdown exists, but there is no toggle for whether the return restocks the item. IppoBill shows a live banner swapping between "Only the value will be credited. No stock movement" and "Goods will be returned to inventory" as the Return Type toggle flips. |
+| 🟠 High | ✅ **FIXED** — No "Without Stock" mode | Re-verified 2026-08-17: "New Return" dialog now has an "Inventory Stock Movement" toggle under Reason for Return. Default ON: "Goods will be returned to inventory stock." Toggled OFF: "Value-only credit / Damaged item — No inventory movement" with an amber warning banner ("⚠ Only financial refund/credit is recorded. Stock quantity will NOT be modified."). Confirmed present and working identically on both the Sale Return and Purchase Return tabs. |
 
-**Suggested split:** Small — add a toggle to the existing Process Return dialog, branch the
-existing stock-adjustment logic on it.
+**Suggested split:** Closed — no further work needed on this item.
 
 ---
 
@@ -83,11 +88,14 @@ existing stock-adjustment logic on it.
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🟠 High | **No standalone Payment-In / Payment-Out** | BillScape's Purchases list has no "Balance Due" or payment-status column at all (IppoBill's Purchase Bill list has Paid/Balance Due KPI cards + Pending/Partially Returned status badges per row). No path to record a partial payment against an existing purchase/sale independent of editing it. |
-| 🟡 Medium | **No outstanding-balance breakdown when recording a payment** | Depends on the item above existing first — IppoBill shows Total → minus Returns → minus Prior Payments → Outstanding as a visible mini-ledger. |
+| 🟠 High | ⚠️ **PARTIALLY FIXED** — No standalone Payment-In / Payment-Out | Re-verified 2026-08-17: `/purchases` now has 3 KPI cards (Total Purchases, Total Paid (Settled), Balance Due (Payable)) and a per-row "Payment Status" column with Paid/Pending badges — the visibility gap is closed. **But there is still no "Make Payment"/"Record Payment" action anywhere** — not in row actions (View/Edit/Delete only), not inside the View detail dialog, and no dedicated Payment-In/Payment-Out page in the sidebar. All 16 existing purchases are pre-marked "Paid" with ₹0.00 balance due, so there's no way to actually exercise or verify a partial-payment flow — it doesn't exist yet. |
+| 🟡 Medium | **No outstanding-balance breakdown when recording a payment** | Still blocked on the item above — no payment-recording flow exists yet to show a breakdown inside. |
 
-**Suggested split:** One larger ticket — standalone Payment-In/Out screens, deep-linkable from a
-specific sale/purchase, feeding the balance-due column and the breakdown view together.
+**Suggested split:** The data model/UI (balance-due tracking, status badges) is done. Remaining
+scope is now narrower and clearer: build the actual "Record Payment" action — a dialog reachable
+from the Purchases list (and ideally Sales/Billing too) that lets a user log a partial/full payment
+against a specific bill, decrements Balance Due, and updates the status badge. This is the real
+gap now, not the visibility layer.
 
 ---
 
@@ -95,10 +103,10 @@ specific sale/purchase, feeding the balance-due column and the breakdown view to
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🟠 High | **No opening balance on Supplier/Customer creation** | Suppliers form fields per current docs (Name, Phone, Address, Email, GSTIN, Bank Details) still don't include an opening balance / balance-type field. Merchants migrating from another system need to declare existing dues on day one. |
+| 🟠 High | ✅ **FIXED** — No opening balance on Supplier/Customer creation | Re-verified 2026-08-17: both "Add Supplier" and "Add Customer" dialogs now have "Opening Balance (₹)" + "Balance Type" fields — Supplier defaults to "To Pay / Outstanding (Cr)", Customer defaults to "To Collect / Receivable (Dr)", each with the appropriate two-option dropdown. Customers list also now shows a "Balance" column. |
 
-**Suggested split:** Small — add `opening_balance` + `balance_type` (To Receive/To Pay) fields to
-the supplier/customer form and schema; ties into the Payments ticket above for full effect.
+**Suggested split:** Closed. Note it now feeds directly into the Payments gap (§6) — an opening
+balance is captured on creation but still has no "Record Payment" flow to pay it down against.
 
 ---
 
@@ -106,9 +114,9 @@ the supplier/customer form and schema; ties into the Payments ticket above for f
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🟠 High | **Single invoice_prefix, not per-document-type** | `org_settings.branding.invoice_prefix` is one field. IppoBill's Settings → Invoice & Documents has 9 separate prefix fields (Sale Invoice, Purchase Bill, Estimate, Sale Order, Proforma, Credit Note, Challan, Receipt, Expense). |
+| 🟠 High | ✅ **FIXED** — Single invoice_prefix, not per-document-type | Re-verified 2026-08-17: Settings → Invoice & UPI → "Document Prefixes" now has 9 separate prefix fields — Sale Invoice (INV), Purchase/Bill (BILL), Estimate (EST), Sale Order (SO), Proforma Invoice (PI), Credit Note (CN), Delivery Challan (DC), Payment Receipt (RCP), Expense (EXP). Matches (and slightly exceeds) IppoBill's 9-field parity target. |
 
-**Suggested split:** Schema change (prefix per document type) + Settings UI update — self-contained.
+**Suggested split:** Closed — no further work needed on this item.
 
 ---
 
@@ -116,9 +124,9 @@ the supplier/customer form and schema; ties into the Payments ticket above for f
 
 | Priority | Item | Evidence |
 |---|------|----------|
-| 🟠 High | **No global ⌘K / Cmd-K search** | BillScape has no header search. IppoBill's header search bar (`Search products, parties, invoices... ⌘K`) is present on every page. |
+| 🟠 High | ✅ **FIXED** — No global ⌘K / Cmd-K search | Re-verified 2026-08-17: a "Search products, parties, bills... ⌘K" search bar is now present in the header on every page. Pressing Cmd+K opens a command palette with Quick Pages (POS Billing, Products Catalog, Stock & Inventory, Purchase Bills, Suppliers Directory, Customers Directory) and live search — typing "Boat" returned 3 real product matches (Boat Rockerz 250/99/110) with SKU, barcode, price, and stock count, confirmed working end-to-end. |
 
-**Suggested split:** Standalone feature ticket — command palette searching products/parties/invoices.
+**Suggested split:** Closed — no further work needed on this item.
 
 ---
 
@@ -185,13 +193,23 @@ them:
 
 ---
 
-## Priority scoreboard (unchanged totals, now grouped above by module)
+## Priority scoreboard
 
-| Tier | Count |
-|------|-------|
-| 🔴 Critical | 4 |
-| 🟠 High | 7 |
-| 🟡 Medium | 4 |
-| 🔵 Low/Watch | 1 |
-| Verification only | 1 (Super Admin internals) |
-| Stale-doc corrections | 4 |
+| Tier | Count | Fixed | Partially fixed | Still open |
+|------|-------|-------|------------------|------------|
+| 🔴 Critical | 4 | 0 | 0 | 4 (GSTR-1 not re-checked this pass, Upgrade CTA + duplicate roles confirmed still broken, form-validation audit not started) |
+| 🟠 High | 7 | 5 | 2 | 0 |
+| 🟡 Medium | 4 | 0 | 0 | 4 (unchanged, not part of this re-check pass) |
+| 🔵 Low/Watch | 1 | — | — | unchanged |
+| Verification only | 1 (Super Admin internals) | — | — | still needs a real `super_admin` account |
+| Stale-doc corrections | 4 | — | — | unchanged |
+
+**Remaining open work, in priority order:**
+1. 🔴 GSTR-1/2/3B/9-shaped report (§1) — not touched, biggest remaining item
+2. 🔴 "Upgrade to Pro" dead button (§2) — confirmed still broken today
+3. 🔴 Duplicate System roles (§3) — confirmed still broken today
+4. 🔴 Required-field validation audit (§11) — not started
+5. ⚠️ Activity Log Actor column showing generic "System / Admin" instead of real user (§4)
+6. ⚠️ Payment-In/Payment-Out — balance-due visibility is done, but no actual "Record Payment" action exists yet (§6)
+7. 🟡 All four Medium items (§1 Expense Direct/Indirect + party-wise P&L — now unblocked since P&L shipped; §10 stale shift warning) — untouched this pass
+8. Super Admin portal internals (§12) — still unverified, blocked on getting a real super_admin account
