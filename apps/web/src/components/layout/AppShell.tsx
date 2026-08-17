@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotifications } from '@/hooks/useNotifications'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import type { UserRole } from '@billscape/core'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
@@ -317,19 +318,27 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     onError: (err: Error) => toast.error('Failed to process expense', err.message)
   })
 
-  // --- End Routine Works Logic ---
-
   const SidebarContent = () => (
     <>
-      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-zinc-700/50 dark:border-zinc-700/50">
-        <div
-          className="flex h-8 w-8 items-center justify-center rounded-lg"
-          style={{ backgroundColor: brandColor }}
-        >
-          <Store className="h-4 w-4 text-white" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-bold text-foreground tracking-wide">BillScape</span>
+      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-sidebar-border">
+        {org?.branding?.logo_url ? (
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg overflow-hidden border border-border bg-white dark:bg-zinc-900 p-0.5 shrink-0 shadow-sm">
+            <img
+              src={org.branding.logo_url}
+              alt={org?.name || 'Shop Logo'}
+              className="h-full w-full object-contain"
+            />
+          </div>
+        ) : (
+          <div
+            className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
+            style={{ backgroundColor: brandColor }}
+          >
+            <Store className="h-4 w-4 text-white" />
+          </div>
+        )}
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm font-bold text-foreground tracking-wide truncate">BillScape</span>
           <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
             {org?.name ?? 'Your Shop'}
           </span>
@@ -405,10 +414,12 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
+      {/* Desktop sidebar */}
       <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-sidebar border-r border-border">
         <SidebarContent />
       </aside>
 
+      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div

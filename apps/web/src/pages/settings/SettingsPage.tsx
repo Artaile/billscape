@@ -143,7 +143,13 @@ const ROLES: UserRole[] = ['owner', 'manager', 'cashier']
 
 const shopInfoSchema = z.object({
   name: z.string().min(1, 'Company / Shop name is required'),
-  gstin: z.string().optional().or(z.literal('')),
+  gstin: z
+    .string()
+    .refine((val) => !val || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i.test(val.trim()), {
+      message: 'Invalid GSTIN format (e.g. 33AAAAA0000A1Z5)',
+    })
+    .optional()
+    .or(z.literal('')),
   state_code: z.string().length(2, 'Please select a state'),
   address: z.string().optional().or(z.literal('')),
   city: z.string().optional().or(z.literal('')),
@@ -163,11 +169,10 @@ const shopInfoSchema = z.object({
     .or(z.literal('')),
   email: z
     .string()
-    .refine((val) => !val || z.string().email().safeParse(val.trim()).success, {
+    .min(1, 'Email address is required')
+    .refine((val) => z.string().email().safeParse(val.trim()).success, {
       message: 'Please enter a valid email address (e.g. shop@example.com)',
-    })
-    .optional()
-    .or(z.literal('')),
+    }),
   pan: z
     .string()
     .refine((val) => !val || /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test(val.trim()), {
@@ -295,12 +300,24 @@ function LiveTaxCalculator({
   )
 }
 
-function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: string }) {
+function LiveBarcodePreview({
+  type,
+  labelSize,
+  templateStyle = 'standard',
+  shopName,
+  shopAddress,
+}: {
+  type: string
+  labelSize: string
+  templateStyle?: 'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'
+  shopName?: string
+  shopAddress?: string
+}) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('')
   const svgRef = React.useRef<SVGSVGElement | null>(null)
 
   React.useEffect(() => {
-    if (type === 'qr') {
+    if (type === 'qr' || templateStyle === 'saravana_stores') {
       QRCode.toDataURL('https://billscape.app/item/8901234567890', {
         width: 140,
         margin: 1,
@@ -309,7 +326,9 @@ function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: stri
       })
         .then((url) => setQrDataUrl(url))
         .catch((err) => console.error(err))
-    } else if (svgRef.current) {
+    }
+
+    if (svgRef.current && (type !== 'qr' || templateStyle === 'circular_bottle')) {
       try {
         let value = '8901234567890'
         let format = 'CODE128'
@@ -320,14 +339,17 @@ function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: stri
         } else if (type === 'code39') {
           value = 'BILL-ITEM-01'
           format = 'CODE39'
+        } else if (templateStyle === 'circular_bottle') {
+          value = '1003432492'
+          format = 'CODE128'
         }
 
         JsBarcode(svgRef.current, value, {
           format: format,
-          width: type === 'code39' ? 1.3 : 1.6,
-          height: 38,
-          displayValue: true,
-          fontSize: 11,
+          width: type === 'code39' ? 1.3 : templateStyle === 'circular_bottle' ? 1.4 : 1.6,
+          height: templateStyle === 'circular_bottle' ? 32 : 36,
+          displayValue: templateStyle !== 'circular_bottle',
+          fontSize: 10,
           font: 'monospace',
           textMargin: 2,
           margin: 0,
@@ -338,7 +360,7 @@ function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: stri
         console.error('Barcode render error:', err)
       }
     }
-  }, [type, labelSize])
+  }, [type, labelSize, templateStyle])
 
   // Dynamic label styling based on labelSize
   const getLabelDimensions = () => {
@@ -360,34 +382,127 @@ function LiveBarcodePreview({ type, labelSize }: { type: string; labelSize: stri
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <div className="flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
         <span className="font-semibold text-foreground flex items-center gap-1.5">
-          <Barcode className="h-4 w-4 text-primary" /> Format Preview: {type.toUpperCase()}
+          <Barcode className="h-4 w-4 text-primary" /> Format: {type.toUpperCase()}
+          {templateStyle !== 'standard' && (
+            <Badge variant="secondary" className="text-[10px] ml-1 capitalize">
+              {templateStyle.replace('_', ' ')}
+            </Badge>
+          )}
         </span>
         <Badge variant="outline" className="text-[11px] font-mono">{labelSize}</Badge>
       </div>
 
       <div className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
-        <div className={cn('flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300', getLabelDimensions())}>
-          <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[11px]">BILLSCAPE SAMPLE ITEM</p>
-          <p className="text-[9px] text-zinc-500 font-mono">SKU: SHIRT-COTTON-001</p>
+        {/* Template 1: Circular Round Jar / Bottle Sticker */}
+        {templateStyle === 'circular_bottle' && (
+          <div className="flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 w-52 h-52 p-4 text-center select-none transition-all duration-300">
+            <p className="font-bold tracking-tight uppercase text-[10px] leading-tight max-w-[140px]">
+              {shopName ? `${shopName} JAR` : 'GL CUBICAL JAR'}<br />
+              <span className="font-semibold text-[9px] text-zinc-600">300 ML [GD]</span>
+            </p>
 
-          {type === 'qr' ? (
-            <div className="my-1.5 flex items-center justify-center">
-              {qrDataUrl ? (
-                <img src={qrDataUrl} alt="QR Code" className="h-20 w-20 object-contain rounded" />
-              ) : (
-                <div className="h-20 w-20 bg-zinc-100 flex items-center justify-center text-[10px] text-zinc-400">Loading QR...</div>
-              )}
-            </div>
-          ) : (
-            <div className="my-1 flex items-center justify-center overflow-hidden max-w-full">
+            <div className="my-1 flex items-center justify-center max-w-[140px] overflow-hidden">
               <svg ref={svgRef} className="max-w-full h-auto" />
             </div>
-          )}
 
-          <p className="text-[10px] font-semibold text-zinc-900 mt-0.5">MRP: ₹499.00 <span className="text-[9px] font-normal text-zinc-500">(Incl. Taxes)</span></p>
-        </div>
+            <p className="text-[9px] font-mono font-bold text-zinc-900 tracking-wider">1003432492</p>
+            <p className="text-[8px] text-zinc-600 font-medium leading-tight mt-0.5">MRP RS 70.00 (Incl. all taxes)</p>
+            <p className="text-[11px] font-black text-zinc-950 tracking-tight">SP RS 49.00</p>
+            <p className="text-[8px] font-mono text-zinc-400">122602</p>
+          </div>
+        )}
+
+        {/* Template 2: Saravana Stores / Department Store Side-Ribbon Style */}
+        {templateStyle === 'saravana_stores' && (
+          <div className="flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden w-[330px] min-h-[145px] transition-all duration-300 select-none">
+            <div className="flex-1 p-3 flex flex-col justify-between">
+              <div className="flex justify-between items-start text-[8px] font-mono text-zinc-500">
+                <span className="font-bold">15675</span>
+                <span className="font-bold">F6</span>
+              </div>
+
+              <div className="flex items-center gap-3 my-1">
+                <div className="shrink-0">
+                  {qrDataUrl ? (
+                    <img src={qrDataUrl} alt="QR Code" className="h-16 w-16 object-contain" />
+                  ) : (
+                    <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
+                  )}
+                </div>
+
+                <div className="flex flex-col min-w-0">
+                  <p className="text-[11px] font-black tracking-tight uppercase text-zinc-950 truncate">TIA BUCKET 511</p>
+                  <p className="text-[9px] font-mono text-zinc-600">198411</p>
+                  <p className="text-sm font-black text-zinc-950 tracking-tight mt-0.5">Rs.232.00</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-[7.5px] font-mono text-zinc-500 border-t border-zinc-200 pt-1">
+                <span>BJ:PAA7233/6</span>
+                <span>MAMATMTI</span>
+              </div>
+            </div>
+
+            {/* Vertical Orange Ribbon */}
+            <div className="w-14 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
+              <div className="writing-vertical transform -rotate-90 whitespace-nowrap text-center">
+                <span className="text-[9px] font-black uppercase tracking-wider block">{shopName || 'SARAVANA STORES'}</span>
+                <span className="text-[7px] text-amber-100 tracking-tight block max-w-[120px] truncate">{shopAddress || '129, Usman Road, T.Nagar, Chennai-17'}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Template 3: Compact Jewelry / Tag Style */}
+        {templateStyle === 'compact_jewelry' && (
+          <div className="flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 p-3 w-[290px] min-h-[95px] transition-all duration-300 select-none">
+            <div className="space-y-0.5 min-w-0 flex-1 pr-2">
+              <p className="text-[10px] font-black truncate uppercase text-zinc-900">{shopName || 'KALYAN JEWELLERS'}</p>
+              <p className="text-[9px] font-semibold text-zinc-800 truncate">GOLD RING 22KT</p>
+              <p className="text-[8px] text-zinc-500 font-mono">WT: 4.250g | 916 HUID</p>
+              <p className="text-[11px] font-black text-zinc-950 mt-1">₹28,500.00</p>
+            </div>
+            <div className="shrink-0">
+              {type === 'qr' ? (
+                qrDataUrl ? (
+                  <img src={qrDataUrl} alt="QR Code" className="h-14 w-14 object-contain" />
+                ) : (
+                  <div className="h-14 w-14 bg-zinc-100" />
+                )
+              ) : (
+                <div className="max-w-[110px] overflow-hidden">
+                  <svg ref={svgRef} className="max-w-full h-auto" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Template 4: Standard Retail Label */}
+        {templateStyle === 'standard' && (
+          <div className={cn('flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300 select-none', getLabelDimensions())}>
+            <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[11px]">{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>
+            <p className="text-[9px] text-zinc-500 font-mono">SKU: SHIRT-COTTON-001</p>
+
+            {type === 'qr' ? (
+              <div className="my-1.5 flex items-center justify-center">
+                {qrDataUrl ? (
+                  <img src={qrDataUrl} alt="QR Code" className="h-20 w-20 object-contain rounded" />
+                ) : (
+                  <div className="h-20 w-20 bg-zinc-100 flex items-center justify-center text-[10px] text-zinc-400">Loading QR...</div>
+                )}
+              </div>
+            ) : (
+              <div className="my-1 flex items-center justify-center overflow-hidden max-w-full">
+                <svg ref={svgRef} className="max-w-full h-auto" />
+              </div>
+            )}
+
+            <p className="text-[10px] font-semibold text-zinc-900 mt-0.5">MRP: ₹499.00 <span className="text-[9px] font-normal text-zinc-500">(Incl. Taxes)</span></p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -522,13 +637,13 @@ function LivePrintBillPreview({
   fontFamily,
   fontSize = 'Medium',
 }: {
-  paperSize: string
-  showLogo: boolean
-  showShopName: boolean
-  showAddress: boolean
-  showContact: boolean
-  showGstin: boolean
-  showPan: boolean
+  paperSize: 'a4' | 'a5' | 'thermal_3inch' | 'thermal_2inch'
+  showLogo?: boolean
+  showShopName?: boolean
+  showAddress?: boolean
+  showContact?: boolean
+  showGstin?: boolean
+  showPan?: boolean
   logoUrl?: string | null
   shopName?: string
   address?: string
@@ -536,21 +651,21 @@ function LivePrintBillPreview({
   email?: string
   gstin?: string
   pan?: string
-  showColumnSno: boolean
-  showColumnHsn: boolean
-  showColumnMrp: boolean
-  showColumnUnit: boolean
-  showColumnDiscount: boolean
-  showColumnTaxRate: boolean
-  showBankDetails: boolean
+  showColumnSno?: boolean
+  showColumnHsn?: boolean
+  showColumnMrp?: boolean
+  showColumnUnit?: boolean
+  showColumnDiscount?: boolean
+  showColumnTaxRate?: boolean
+  showBankDetails?: boolean
   bankName?: string
   bankAccount?: string
   bankIfsc?: string
-  showUpiQr: boolean
+  showUpiQr?: boolean
   upiId?: string
-  showTerms: boolean
+  showTerms?: boolean
   terms?: string
-  showSignature: boolean
+  showSignature?: boolean
   signatureUrl?: string | null
   thankYouNote?: string
   currency: string
@@ -592,6 +707,22 @@ function LivePrintBillPreview({
 }) {
   const isThermal = paperSize.startsWith('thermal')
   const is2Inch = paperSize === 'thermal_2inch'
+  const [upiQrUrl, setUpiQrUrl] = useState<string>('')
+
+  React.useEffect(() => {
+    if (showUpiQr) {
+      const activeUpi = upiId?.trim() || 'shop@okhdfcbank'
+      const upiString = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(shopName || 'Shop')}&am=2017.00&cu=INR`
+      QRCode.toDataURL(upiString, {
+        width: isThermal ? 85 : 105,
+        margin: 1,
+        color: { dark: '#09090b', light: '#ffffff' },
+        errorCorrectionLevel: 'M',
+      })
+        .then((url) => setUpiQrUrl(url))
+        .catch((err) => console.error(err))
+    }
+  }, [showUpiQr, upiId, shopName, isThermal])
   
   // Choose font family style
   const getFontFamilyStyle = () => {
@@ -600,15 +731,15 @@ function LivePrintBillPreview({
     return { fontFamily: "'Inter', sans-serif" }
   }
 
-  // Choose font size scaling
-  const getFontSizeClass = () => {
+  // Dynamic base font size scaling
+  const getBaseFontSize = () => {
     if (fontSize === 'Small') {
-      return is2Inch ? 'text-[9px]' : isThermal ? 'text-[10px]' : 'text-[11px]'
+      return is2Inch ? '9px' : isThermal ? '10px' : '10.5px'
     }
     if (fontSize === 'Large') {
-      return is2Inch ? 'text-[11px]' : isThermal ? 'text-[12px]' : 'text-sm'
+      return is2Inch ? '11.5px' : isThermal ? '13px' : '14px'
     }
-    return is2Inch ? 'text-[10px]' : isThermal ? 'text-[11px]' : 'text-xs'
+    return is2Inch ? '10px' : isThermal ? '11.5px' : '12px'
   }
 
   const handleTestPrint = () => {
@@ -675,7 +806,8 @@ function LivePrintBillPreview({
               max-width: 100% !important;
               padding: 0 !important;
               margin: 0 !important;
-              font-size: ${is2Inch ? '9.5px' : isThermal ? '10.5px' : paperSize === 'a5' ? '11px' : '12px'} !important;
+              font-size: ${getBaseFontSize()} !important;
+              line-height: 1.4 !important;
             }
             #print-container table {
               width: 100% !important;
@@ -725,15 +857,18 @@ function LivePrintBillPreview({
       <div className="flex justify-center p-3 bg-zinc-950/80 rounded-xl overflow-x-auto">
         <div
           id="live-print-bill-sheet"
-          style={getFontFamilyStyle()}
+          style={{
+            ...getFontFamilyStyle(),
+            fontSize: getBaseFontSize(),
+            lineHeight: 1.4,
+          }}
           className={cn(
             'bg-white text-zinc-900 shadow-2xl transition-all duration-300',
-            getFontSizeClass(),
             is2Inch
-              ? 'w-[260px] p-3 font-mono'
+              ? 'w-[260px] p-3'
               : isThermal
-                ? 'w-[320px] p-4 font-mono'
-                : 'w-full max-w-[520px] p-6 rounded-sm'
+                ? 'w-[320px] p-4'
+                : 'w-full max-w-[540px] p-6 rounded-sm'
           )}
         >
           {/* Header */}
@@ -744,16 +879,16 @@ function LivePrintBillPreview({
                   <img src={logoUrl} alt="Logo" className={cn('object-contain', isThermal ? 'h-8' : 'h-10')} />
                 </div>
               )}
-              {showShopName && shopName && <h4 className={cn('font-bold text-zinc-950 uppercase tracking-tight', isThermal ? 'text-xs' : 'text-sm')}>{shopName}</h4>}
-              {showAddress && address && <p className="text-[10px] text-zinc-600 leading-tight">{address}</p>}
+              {showShopName && shopName && <h4 className="font-bold text-zinc-950 uppercase tracking-tight text-[1.15em]">{shopName}</h4>}
+              {showAddress && address && <p className="text-[0.9em] text-zinc-600 leading-tight">{address}</p>}
               
-              <div className="text-[10px] text-zinc-600 space-x-1">
+              <div className="text-[0.9em] text-zinc-600 space-x-1">
                 {showContact && phone && <span>Ph: {phone}</span>}
                 {showContact && phone && showEmailWebsite && email && <span>|</span>}
                 {showEmailWebsite && email && <span>{email}</span>}
               </div>
 
-              <div className="text-[10px] font-bold text-zinc-800 space-x-1">
+              <div className="text-[0.9em] font-bold text-zinc-800 space-x-1">
                 {showGstin && gstin && <span>GSTIN: {gstin}</span>} 
                 {showGstin && gstin && showPan && pan && <span>|</span>}
                 {showPan && pan && <span>PAN: {pan}</span>}
@@ -761,8 +896,8 @@ function LivePrintBillPreview({
             </div>
 
             {!isThermal && (
-              <div className="text-right text-[10px] space-y-0.5 shrink-0">
-                <p className="font-bold text-xs uppercase text-zinc-950">TAX INVOICE</p>
+              <div className="text-right text-[0.9em] space-y-0.5 shrink-0">
+                <p className="font-bold text-[1.1em] uppercase text-zinc-950">TAX INVOICE</p>
                 {showDocumentNumber !== false && <p className="text-zinc-600">Inv: <span className="font-bold">INV-001</span></p>}
                 {showDocumentDate !== false && <p className="text-zinc-600">Date: 10/08/2026</p>}
                 {showDueDate && <p className="text-zinc-600">Due: 25/08/2026</p>}
@@ -774,7 +909,7 @@ function LivePrintBillPreview({
           </div>
 
           {isThermal && (showDocumentNumber !== false || showDocumentDate !== false) && (
-            <div className="py-1 text-[10px] flex justify-between text-zinc-600 border-b border-dashed border-zinc-400 flex-wrap gap-1">
+            <div className="py-1 text-[0.9em] flex justify-between text-zinc-600 border-b border-dashed border-zinc-400 flex-wrap gap-1">
               {showDocumentNumber !== false && <span>Inv: INV-001</span>}
               {showDocumentDate !== false && <span>10/08/2026</span>}
               {showDueDate && <span>Due: 25/08/2026</span>}
@@ -784,7 +919,7 @@ function LivePrintBillPreview({
 
           {/* Party Details */}
           {showPartyDetails && (
-            <div className="py-2 border-b border-dashed border-zinc-400 text-[10px]">
+            <div className="py-2 border-b border-dashed border-zinc-400 text-[0.9em]">
               <p className="font-bold text-zinc-800">Billed To:</p>
               <p className="font-medium text-zinc-950">Acme Corporation</p>
               {showCustomerBillingAddress && <p className="text-zinc-600">123 Business St, Chennai</p>}
@@ -799,7 +934,7 @@ function LivePrintBillPreview({
 
           {/* Table Items */}
           <div className="py-2">
-            <table className="w-full text-left text-[10px]">
+            <table className="w-full text-left text-[0.9em]">
               <thead>
                 <tr className="border-b border-zinc-950 font-bold">
                   {showColumnSno && <th className="py-1 pr-1">#</th>}
@@ -852,8 +987,8 @@ function LivePrintBillPreview({
           {/* Tax Summary Table */}
           {showTaxSummary && (
             <div className="py-1.5 border-t border-zinc-200">
-              <p className="font-bold text-[9px] mb-1">Tax Summary</p>
-              <table className="w-full text-left text-[9px] text-zinc-600">
+              <p className="font-bold text-[0.85em] mb-1">Tax Summary</p>
+              <table className="w-full text-left text-[0.85em] text-zinc-600">
                 <thead>
                   <tr className="border-b border-zinc-200">
                     <th>Tax</th>
@@ -884,7 +1019,7 @@ function LivePrintBillPreview({
           )}
 
           {/* Totals */}
-          <div className="border-t border-zinc-950 pt-1.5 text-right space-y-0.5 text-[10px]">
+          <div className="border-t border-zinc-950 pt-1.5 text-right space-y-0.5 text-[0.9em]">
             {showBlockSubtotal !== false && (
               <div className="flex justify-between text-zinc-600">
                 <span>Subtotal:</span>
@@ -910,7 +1045,7 @@ function LivePrintBillPreview({
               </div>
             )}
             {showBlockGrandTotal !== false && (
-              <div className="flex justify-between font-bold text-xs pt-1 border-t border-zinc-400 text-zinc-950">
+              <div className="flex justify-between font-bold text-[1.1em] pt-1 border-t border-zinc-400 text-zinc-950">
                 <span>Grand Total:</span>
                 <span>{currency}2,017.00</span>
               </div>
@@ -932,24 +1067,32 @@ function LivePrintBillPreview({
           {/* Footer Details */}
           <div className="mt-3 pt-2 border-t border-dashed border-zinc-400 space-y-2">
             {showNotes && notes && (
-              <p className="text-[9px] text-zinc-600 leading-tight">{notes}</p>
+              <p className="text-[0.85em] text-zinc-600 leading-tight">{notes}</p>
             )}
 
             {showBankDetails && bankAccount && (
-              <div className="text-[9px] text-zinc-700 bg-zinc-100 p-1.5 rounded">
+              <div className="text-[0.85em] text-zinc-700 bg-zinc-100 p-1.5 rounded">
                 <p className="font-bold">Bank: {bankName || 'HDFC Bank'} | A/C: {bankAccount} | IFSC: {bankIfsc}</p>
               </div>
             )}
 
-            {showUpiQr && upiId && (
-              <div className="flex items-center gap-2 p-1.5 bg-zinc-50 border border-zinc-200 rounded justify-center">
-                <Smartphone className="h-4 w-4 text-zinc-800" />
-                <span className="text-[9px] font-mono font-bold text-zinc-800">Scan & Pay: {upiId}</span>
+            {showUpiQr && (
+              <div className="flex items-center gap-3 p-2 bg-zinc-50 border border-zinc-200 rounded justify-center">
+                {upiQrUrl ? (
+                  <img src={upiQrUrl} alt="UPI QR Code" className="h-16 w-16 object-contain rounded border border-zinc-200 shadow-sm" />
+                ) : (
+                  <Smartphone className="h-5 w-5 text-zinc-800" />
+                )}
+                <div className="text-left space-y-0.5">
+                  <p className="text-[0.85em] font-bold text-zinc-900 uppercase">Scan & Pay via UPI</p>
+                  <p className="text-[0.8em] font-mono font-semibold text-zinc-700">{upiId || 'shop@okhdfcbank'}</p>
+                  <p className="text-[0.75em] text-zinc-500">Google Pay • PhonePe • Paytm</p>
+                </div>
               </div>
             )}
 
             {showTerms && terms && (
-              <p className="text-[9px] text-zinc-500 italic leading-tight">{terms}</p>
+              <p className="text-[0.85em] text-zinc-500 italic leading-tight">{terms}</p>
             )}
 
             {showSignature && (
@@ -960,7 +1103,7 @@ function LivePrintBillPreview({
                   ) : (
                     <div className={cn("h-7 w-full", showSignatureOutline ? "border-b border-dashed border-zinc-300" : "")} />
                   )}
-                  <p className="border-t border-zinc-400 text-[8px] font-bold uppercase text-zinc-800 pt-0.5 mt-1">
+                  <p className="border-t border-zinc-400 text-[0.75em] font-bold uppercase text-zinc-800 pt-0.5 mt-1">
                     Authorized Signatory
                   </p>
                 </div>
@@ -968,7 +1111,7 @@ function LivePrintBillPreview({
             )}
 
             {thankYouNote && (
-              <p className="text-center text-[9px] font-semibold text-zinc-700 pt-1">
+              <p className="text-center text-[0.85em] font-semibold text-zinc-700 pt-1">
                 {thankYouNote}
               </p>
             )}
@@ -1067,6 +1210,7 @@ export function SettingsPage() {
   // Barcode settings
   const [barcodeType, setBarcodeType] = useState<string>(org?.branding?.barcode_type ?? 'code128')
   const [barcodeLabelSize, setBarcodeLabelSize] = useState<string>(org?.branding?.barcode_label_size ?? '5x3cm')
+  const [barcodeTemplateStyle, setBarcodeTemplateStyle] = useState<'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'>((org?.branding as any)?.barcode_template_style ?? 'standard')
   const [autoPrintBarcodeOnPurchase, setAutoPrintBarcodeOnPurchase] = useState<boolean>(org?.branding?.auto_print_barcode_on_purchase ?? false)
 
   // Invoice UPI / payment
@@ -1593,6 +1737,7 @@ export function SettingsPage() {
           ...existing,
           barcode_type: barcodeType,
           barcode_label_size: barcodeLabelSize,
+          barcode_template_style: barcodeTemplateStyle,
           auto_print_barcode_on_purchase: autoPrintBarcodeOnPurchase,
         },
       }, { onConflict: 'organization_id' })
@@ -3422,10 +3567,43 @@ export function SettingsPage() {
                 </div>
               </div>
 
+              <div className="space-y-3">
+                <Label>Label Design Template</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[
+                    { value: 'standard', label: 'Standard Retail', desc: 'Classic rectangular with barcode/QR & MRP' },
+                    { value: 'saravana_stores', label: 'Department Store', desc: 'Saravana Stores style with vertical brand ribbon' },
+                    { value: 'circular_bottle', label: 'Round Jar / Bottle', desc: 'Circular die-cut sticker for jars & bottles' },
+                    { value: 'compact_jewelry', label: 'Compact Tag', desc: 'Slim tag for jewelry, optics & cosmetics' },
+                  ].map((tpl) => (
+                    <button
+                      key={tpl.value}
+                      type="button"
+                      onClick={() => setBarcodeTemplateStyle(tpl.value as any)}
+                      className={cn(
+                        'rounded-xl border-2 p-3.5 text-left transition-all cursor-pointer',
+                        barcodeTemplateStyle === tpl.value
+                          ? 'border-primary bg-primary/10 shadow-sm'
+                          : 'border-border hover:border-primary/50 bg-card'
+                      )}
+                    >
+                      <p className="text-sm font-semibold text-foreground">{tpl.label}</p>
+                      <p className="text-xs text-muted-foreground mt-1 leading-snug">{tpl.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <Separator />
 
               {/* Live Barcode Format Preview */}
-              <LiveBarcodePreview type={barcodeType} labelSize={barcodeLabelSize} />
+              <LiveBarcodePreview
+                type={barcodeType}
+                labelSize={barcodeLabelSize}
+                templateStyle={barcodeTemplateStyle}
+                shopName={shopForm.watch('name')}
+                shopAddress={[shopForm.watch('address'), shopForm.watch('city')].filter(Boolean).join(', ')}
+              />
 
               <div className="flex items-start justify-between gap-4 py-3">
                 <div>
@@ -3848,7 +4026,12 @@ export function SettingsPage() {
                         showPan={printShowPan}
                         logoUrl={logoPreview}
                         shopName={shopForm.watch('name')}
-                        address={shopForm.watch('address')}
+                        address={[
+                          shopForm.watch('address'),
+                          shopForm.watch('city'),
+                          shopForm.watch('state_code') ? INDIAN_STATES.find((s) => s.code === shopForm.watch('state_code'))?.name || shopForm.watch('state_code') : '',
+                          shopForm.watch('pincode') ? `PIN: ${shopForm.watch('pincode')}` : '',
+                        ].filter(Boolean).join(', ')}
                         phone={shopForm.watch('phone')}
                         email={shopForm.watch('email')}
                         gstin={shopForm.watch('gstin')}
