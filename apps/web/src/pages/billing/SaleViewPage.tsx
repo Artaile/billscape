@@ -166,7 +166,7 @@ export function SaleViewPage() {
   }
 
   return (
-    <div className="p-4 lg:p-6 max-w-5xl mx-auto">
+    <div className="p-4 lg:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate('/billing?tab=history')}>

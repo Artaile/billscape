@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Search,
@@ -101,6 +102,31 @@ export function POSTab() {
   const [showHolds, setShowHolds] = useState(false)
   const [holdName, setHoldName] = useState('')
   const [showHoldNameDialog, setShowHoldNameDialog] = useState(false)
+
+  // Auto-resume a held bill written by another page (e.g. QuotationViewPage's "Convert to
+  // Sale") when arriving via /billing?resumeHold=<id> — same held-bill store, just entered
+  // without the user manually opening the Held Bills panel and clicking Resume.
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    const resumeId = searchParams.get('resumeHold')
+    if (!resumeId) return
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('resumeHold')
+      return next
+    }, { replace: true })
+    let stored: HeldBill[] = []
+    try { stored = JSON.parse(sessionStorage.getItem(HELD_BILLS_KEY) ?? '[]') } catch { stored = [] }
+    const bill = stored.find((b) => b.id === resumeId)
+    if (!bill) return
+    setCart(bill.cart)
+    if (bill.customer) setSelectedCustomer(bill.customer)
+    const remaining = stored.filter((b) => b.id !== resumeId)
+    sessionStorage.setItem(HELD_BILLS_KEY, JSON.stringify(remaining))
+    setHeldBills(remaining)
+    toast.success(`Resumed "${bill.name}"`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Order-level discount (applied post-tax, on grand total)
   const [orderDiscountType, setOrderDiscountType] = useState<DiscountType>('percent')

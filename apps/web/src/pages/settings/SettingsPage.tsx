@@ -2082,7 +2082,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="p-4 lg:p-6 max-w-7xl mx-auto">
+    <div className="p-4 lg:p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-foreground tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground mt-0.5">Configure your business identity, tax rules, billing, inventory, and notifications.</p>

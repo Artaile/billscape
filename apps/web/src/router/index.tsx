@@ -33,6 +33,7 @@ import { ExpensesPage } from '@/pages/expenses/ExpensesPage'
 import { PromotionsPage } from '@/pages/promotions/PromotionsPage'
 import { ReturnsPage } from '@/pages/returns/ReturnsPage'
 import { QuotationsPage } from '@/pages/quotations/QuotationsPage'
+import { QuotationViewPage } from '@/pages/quotations/QuotationViewPage'
 import { LoyaltyPage } from '@/pages/loyalty/LoyaltyPage'
 import { ActivityPage } from '@/pages/activity/ActivityPage'
 import { ShiftsPage } from '@/pages/shifts/ShiftsPage'
@@ -143,6 +144,7 @@ export function AppRouter() {
                   <Route path="promotions" element={<RequireRole roles={['owner', 'manager']}><PromotionsPage /></RequireRole>} />
                   <Route path="returns" element={<ReturnsPage />} />
                   <Route path="quotations" element={<QuotationsPage />} />
+                  <Route path="quotations/:id" element={<QuotationViewPage />} />
                   <Route path="loyalty" element={<LoyaltyPage />} />
                   <Route path="employees" element={<RequireRole roles={['owner', 'manager']}><EmployeesPage /></RequireRole>} />
                   <Route path="roles" element={<RequireRole roles={['owner']}><RolesPage /></RequireRole>} />

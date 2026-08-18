@@ -59,7 +59,7 @@ export function PurchaseViewPage() {
   const interstate = igstTotal > 0
 
   return (
-    <div className="p-4 lg:p-6 max-w-5xl mx-auto">
+    <div className="p-4 lg:p-6">
       <div className="flex items-center gap-3 mb-6">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/purchases')}>
           <ArrowLeft className="h-4 w-4" />

@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Loader2, FileText, Eye, Trash2, CheckCircle2, Search, X } from 'lucide-react'
+import { Plus, Loader2, FileText, Eye, Trash2, Search, X } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatINR, formatDocumentNumber } from '@billscape/core'
+import { formatINR, formatDocumentNumber, computeGST } from '@billscape/core'
+import type { CartItem, GSTContext } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,13 +32,23 @@ interface Quotation {
   quotation_items: { id: string }[]
 }
 
-interface QuoteItem {
+interface QuoteItemRow {
   product_name: string
   qty: number
   unit_price: number
   discount_pct: number
+  tax_rate: number
   line_total: number
 }
+
+interface CustomerOption {
+  id: string
+  name: string
+  phone: string | null
+  state_code: string | null
+}
+
+const GST_RATES = [0, 5, 12, 18, 28] as const
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
@@ -46,21 +58,24 @@ const STATUS_COLORS: Record<string, string> = {
   expired: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
 }
 
+function emptyItem(): QuoteItemRow {
+  return { product_name: '', qty: 1, unit_price: 0, discount_pct: 0, tax_rate: 18, line_total: 0 }
+}
+
 export function QuotationsPage() {
   const { org, user } = useAuth()
   const orgId = org?.id
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   const [showDialog, setShowDialog] = useState(false)
-  const [viewQuote, setViewQuote] = useState<Quotation & { items_detail?: QuoteItem[] } | null>(null)
   const [search, setSearch] = useState('')
+  const [customerId, setCustomerId] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
   const [validUntil, setValidUntil] = useState('')
   const [notes, setNotes] = useState('')
-  const [items, setItems] = useState<QuoteItem[]>([{ product_name: '', qty: 1, unit_price: 0, discount_pct: 0, line_total: 0 }])
-
-  const total = items.reduce((s, i) => s + i.line_total, 0)
+  const [items, setItems] = useState<QuoteItemRow[]>([emptyItem()])
 
   const { data: quotations = [], isLoading } = useQuery({
     queryKey: ['quotations', orgId],
@@ -76,7 +91,41 @@ export function QuotationsPage() {
     },
   })
 
-  function updateItem(index: number, patch: Partial<QuoteItem>) {
+  const { data: customers } = useQuery({
+    queryKey: ['customers-for-quote', orgId],
+    enabled: !!orgId && showDialog,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('customers')
+        .select('id, name, phone, state_code')
+        .eq('organization_id', orgId!)
+        .order('name')
+      return (data ?? []) as CustomerOption[]
+    },
+  })
+
+  const selectedCustomer = customers?.find((c) => c.id === customerId)
+
+  const gstContext: GSTContext = {
+    shopStateCode: org?.state_code ?? 'TN',
+    customerStateCode: selectedCustomer?.state_code ?? undefined,
+    taxInclusive: org?.branding?.tax_inclusive ?? false,
+  }
+
+  const cartItems: CartItem[] = items
+    .filter((i) => i.product_name.trim() && i.qty > 0)
+    .map((i) => ({
+      product_id: '',
+      product_name: i.product_name.trim(),
+      tax_rate: i.tax_rate as any,
+      unit_price: i.unit_price,
+      qty: i.qty,
+      discount_pct: i.discount_pct,
+    }))
+
+  const totals = computeGST(gstContext, cartItems)
+
+  function updateItem(index: number, patch: Partial<QuoteItemRow>) {
     setItems((prev) => {
       const next = [...prev]
       const merged = { ...next[index], ...patch }
@@ -88,14 +137,15 @@ export function QuotationsPage() {
   }
 
   function resetForm() {
-    setCustomerName(''); setCustomerPhone(''); setValidUntil(''); setNotes('')
-    setItems([{ product_name: '', qty: 1, unit_price: 0, discount_pct: 0, line_total: 0 }])
+    setCustomerId(''); setCustomerName(''); setCustomerPhone(''); setValidUntil(''); setNotes('')
+    setItems([emptyItem()])
   }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error('Not logged in')
-      if (!customerName.trim()) throw new Error('Customer name required')
+      const finalCustomerName = selectedCustomer?.name ?? customerName.trim()
+      if (!finalCustomerName) throw new Error('Customer name required')
       const validItems = items.filter((i) => i.product_name.trim() && i.qty > 0)
       if (validItems.length === 0) throw new Error('Add at least one item')
 
@@ -108,26 +158,50 @@ export function QuotationsPage() {
       const { data: quote, error: quoteErr } = await supabase.from('quotations').insert({
         organization_id: orgId!,
         quote_no: quoteNo,
-        customer_name: customerName.trim(),
-        customer_phone: customerPhone.trim() || null,
+        customer_id: customerId || null,
+        customer_name: finalCustomerName,
+        customer_phone: selectedCustomer?.phone ?? (customerPhone.trim() || null),
         valid_until: validUntil || null,
         status: 'draft',
-        total_amount: total,
+        total_amount: totals.net_payable,
+        subtotal: totals.subtotal,
+        discount_total: totals.discount_total,
+        tax_total: totals.tax_total,
+        cgst_total: totals.cgst_total,
+        sgst_total: totals.sgst_total,
+        igst_total: totals.igst_total,
+        net_payable: totals.net_payable,
         notes: notes.trim() || null,
         created_by: user.id,
       }).select('id').single()
       if (quoteErr) throw quoteErr
 
+      const interstate = totals.is_interstate
       const { error: itemsErr } = await supabase.from('quotation_items').insert(
-        validItems.map((i) => ({
-          quotation_id: quote.id,
-          organization_id: orgId!,
-          product_name: i.product_name.trim(),
-          qty: i.qty,
-          unit_price: i.unit_price,
-          discount_pct: i.discount_pct,
-          line_total: i.line_total,
-        }))
+        validItems.map((i) => {
+          const line = computeGST(gstContext, [{
+            product_id: '',
+            product_name: i.product_name,
+            tax_rate: i.tax_rate as any,
+            unit_price: i.unit_price,
+            qty: i.qty,
+            discount_pct: i.discount_pct,
+          }])
+          const breakup = line.tax_breakup[0]
+          return {
+            quotation_id: quote.id,
+            organization_id: orgId!,
+            product_name: i.product_name.trim(),
+            qty: i.qty,
+            unit_price: i.unit_price,
+            discount_pct: i.discount_pct,
+            tax_rate: i.tax_rate,
+            cgst_amount: interstate ? 0 : (breakup?.cgst ?? 0),
+            sgst_amount: interstate ? 0 : (breakup?.sgst ?? 0),
+            igst_amount: interstate ? (breakup?.igst ?? 0) : 0,
+            line_total: (breakup?.taxable_amount ?? 0) + (breakup?.cgst ?? 0) + (breakup?.sgst ?? 0) + (breakup?.igst ?? 0),
+          }
+        })
       )
       if (itemsErr) throw itemsErr
 
@@ -138,8 +212,8 @@ export function QuotationsPage() {
         entityId: quote.id,
         metadata: {
           quote_no: quoteNo,
-          customer_name: customerName,
-          total_amount: total,
+          customer_name: finalCustomerName,
+          total_amount: totals.net_payable,
         },
       })
     },
@@ -150,26 +224,6 @@ export function QuotationsPage() {
       resetForm(); setShowDialog(false)
     },
     onError: (err: Error) => toast.error('Failed to create quotation', err.message),
-  })
-
-  const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const { error } = await supabase.from('quotations').update({ status }).eq('id', id).eq('organization_id', orgId!)
-      if (error) throw error
-
-      await logActivity({
-        organizationId: orgId!,
-        action: 'updated',
-        entity: 'quotation',
-        entityId: id,
-        metadata: { status },
-      })
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quotations', orgId] })
-      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
-    },
-    onError: (err: Error) => toast.error('Update failed', err.message),
   })
 
   const deleteMutation = useMutation({
@@ -197,11 +251,6 @@ export function QuotationsPage() {
     },
     onError: (err: Error) => toast.error('Delete failed', err.message),
   })
-
-  async function handleView(q: Quotation) {
-    const { data } = await supabase.from('quotation_items').select('product_name, qty, unit_price, discount_pct, line_total').eq('quotation_id', q.id)
-    setViewQuote({ ...q, items_detail: data ?? [] })
-  }
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -299,19 +348,13 @@ export function QuotationsPage() {
                     <TableCell className="text-sm text-muted-foreground">{q.quotation_items.length}</TableCell>
                     <TableCell className="text-right font-semibold">{formatINR(q.total_amount)}</TableCell>
                     <TableCell>
-                      <select
-                        value={isExpired ? 'expired' : q.status}
-                        disabled={isExpired === true}
-                        onChange={(e) => statusMutation.mutate({ id: q.id, status: e.target.value })}
-                        className={cn('rounded-full border px-2 py-0.5 text-xs font-medium bg-transparent cursor-pointer', STATUS_COLORS[isExpired ? 'expired' : q.status])}
-                      >
-                        {['draft', 'sent', 'accepted', 'rejected'].map((s) => <option key={s} value={s} className="bg-zinc-900">{s}</option>)}
-                        {isExpired && <option value="expired" className="bg-zinc-900">expired</option>}
-                      </select>
+                      <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-xs font-medium capitalize', STATUS_COLORS[isExpired ? 'expired' : q.status])}>
+                        {isExpired ? 'expired' : q.status}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => handleView(q)}>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => navigate(`/quotations/${q.id}`)}>
                           <Eye className="h-3.5 w-3.5 mr-1" /> View
                         </Button>
                         <button onClick={() => deleteMutation.mutate(q)}
@@ -330,28 +373,43 @@ export function QuotationsPage() {
 
       {/* New Quotation Dialog */}
       <Dialog open={showDialog} onOpenChange={(o) => { setShowDialog(o); if (!o) resetForm() }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>New Quotation</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Customer Name *</Label>
-                <Input placeholder="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+                <Label>Customer</Label>
+                <select
+                  value={customerId}
+                  onChange={(e) => setCustomerId(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">— Walk-in / type name below —</option>
+                  {customers?.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.phone ? ` (${c.phone})` : ''}</option>
+                  ))}
+                </select>
               </div>
-              <div className="space-y-1.5">
-                <Label>Phone</Label>
-                <Input placeholder="Phone number" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+              {!customerId && (
+                <div className="space-y-1.5">
+                  <Label>Customer Name *</Label>
+                  <Input placeholder="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+                </div>
+              )}
+              {!customerId && (
+                <div className="space-y-1.5">
+                  <Label>Phone</Label>
+                  <Input placeholder="Phone number" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label>Valid Until</Label>
                 <Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
               </div>
-              <div className="space-y-1.5">
-                <Label>Notes</Label>
-                <Input placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Notes</Label>
+              <Input placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
 
             <div className="space-y-2">
@@ -360,11 +418,12 @@ export function QuotationsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[38%]">Product</TableHead>
-                      <TableHead className="w-[12%]">Qty</TableHead>
-                      <TableHead className="w-[18%]">Price (₹)</TableHead>
-                      <TableHead className="w-[12%]">Disc%</TableHead>
-                      <TableHead className="w-[15%] text-right">Total</TableHead>
+                      <TableHead className="w-[28%]">Product</TableHead>
+                      <TableHead className="w-[10%]">Qty</TableHead>
+                      <TableHead className="w-[14%]">Price (₹)</TableHead>
+                      <TableHead className="w-[10%]">Disc%</TableHead>
+                      <TableHead className="w-[16%]">GST%</TableHead>
+                      <TableHead className="w-[17%] text-right">Total</TableHead>
                       <TableHead className="w-[5%]"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -387,6 +446,15 @@ export function QuotationsPage() {
                           <Input type="number" min={0} max={100} value={item.discount_pct}
                             onChange={(e) => updateItem(idx, { discount_pct: Number(e.target.value) || 0 })} className="h-8 text-sm" />
                         </TableCell>
+                        <TableCell className="py-1.5">
+                          <select
+                            value={item.tax_rate}
+                            onChange={(e) => updateItem(idx, { tax_rate: Number(e.target.value) })}
+                            className="flex h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                          </select>
+                        </TableCell>
                         <TableCell className="text-right text-sm font-medium py-1.5">{formatINR(item.line_total)}</TableCell>
                         <TableCell className="py-1.5">
                           {items.length > 1 && (
@@ -400,14 +468,25 @@ export function QuotationsPage() {
                 </Table>
               </div>
               <Button type="button" variant="outline" size="sm" className="text-xs h-7"
-                onClick={() => setItems((p) => [...p, { product_name: '', qty: 1, unit_price: 0, discount_pct: 0, line_total: 0 }])}>
+                onClick={() => setItems((p) => [...p, emptyItem()])}>
                 <Plus className="h-3.5 w-3.5 mr-1" /> Add Item
               </Button>
             </div>
 
-            <div className="flex justify-end items-center gap-3 pt-1 border-t border-border">
-              <span className="text-sm text-muted-foreground">Total</span>
-              <span className="text-lg font-bold">{formatINR(total)}</span>
+            <div className="rounded-lg border border-border bg-secondary/20 p-3 space-y-1 text-sm max-w-xs ml-auto">
+              <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span>{formatINR(totals.taxable_amount)}</span></div>
+              {totals.is_interstate ? (
+                <div className="flex justify-between text-muted-foreground"><span>IGST</span><span>{formatINR(totals.igst_total)}</span></div>
+              ) : (
+                <>
+                  <div className="flex justify-between text-muted-foreground"><span>CGST</span><span>{formatINR(totals.cgst_total)}</span></div>
+                  <div className="flex justify-between text-muted-foreground"><span>SGST</span><span>{formatINR(totals.sgst_total)}</span></div>
+                </>
+              )}
+              <div className="flex justify-between items-center pt-1.5 border-t border-border font-bold">
+                <span>Total</span>
+                <span className="text-lg">{formatINR(totals.net_payable)}</span>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -416,58 +495,6 @@ export function QuotationsPage() {
               {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Creating...</> : 'Create Quotation'}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Dialog */}
-      <Dialog open={!!viewQuote} onOpenChange={(o) => { if (!o) setViewQuote(null) }}>
-        <DialogContent className="max-w-md">
-          {viewQuote && (
-            <>
-              <DialogHeader><DialogTitle>Quotation {viewQuote.quote_no}</DialogTitle></DialogHeader>
-              <div className="space-y-3 text-sm">
-                <div className="grid grid-cols-2 gap-2">
-                  <div><p className="text-xs text-muted-foreground">Customer</p><p>{viewQuote.customer_name}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Phone</p><p>{viewQuote.customer_phone ?? '—'}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Valid Until</p>
-                    <p>{viewQuote.valid_until ? new Date(viewQuote.valid_until).toLocaleDateString('en-IN') : 'No expiry'}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Status</p>
-                    <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-xs font-medium capitalize', STATUS_COLORS[viewQuote.status])}>{viewQuote.status}</span></div>
-                </div>
-                {viewQuote.notes && <p className="text-xs text-muted-foreground">{viewQuote.notes}</p>}
-                <div className="rounded-lg border border-border overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Qty</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {viewQuote.items_detail?.map((item, i) => (
-                        <TableRow key={i}>
-                          <TableCell>{item.product_name}</TableCell>
-                          <TableCell className="text-right text-muted-foreground">{item.qty}</TableCell>
-                          <TableCell className="text-right font-medium">{formatINR(item.line_total)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="flex justify-end items-center gap-3">
-                  <span className="text-muted-foreground">Total</span>
-                  <span className="text-lg font-bold">{formatINR(viewQuote.total_amount)}</span>
-                </div>
-                <div className="flex gap-2 justify-end pt-1">
-                  <Button size="sm" className="h-7 text-xs gap-1"
-                    onClick={() => { statusMutation.mutate({ id: viewQuote.id, status: 'accepted' }); setViewQuote(null) }}>
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Mark Accepted
-                  </Button>
-                </div>
-              </div>
-            </>
-          )}
         </DialogContent>
       </Dialog>
     </div>
