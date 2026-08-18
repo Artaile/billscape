@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Download,
-  Calendar,
   TrendingUp,
   TrendingDown,
   Package,
@@ -24,7 +23,6 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
@@ -36,8 +34,8 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { DateRangeFilter } from '@/components/ui/date-range-filter'
 import { cn } from '@/lib/utils'
 
 function getDateRange(days: number) {
@@ -504,48 +502,23 @@ export function ReportsPage() {
 
       {/* Date Range Picker */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Calendar className="h-4 w-4 text-zinc-400" />
-        <div className="flex items-center gap-2">
-          <Label htmlFor="from" className="text-xs text-zinc-400">From</Label>
-          <Input
-            id="from"
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="h-8 text-xs w-36"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="to" className="text-xs text-zinc-400">To</Label>
-          <Input
-            id="to"
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="h-8 text-xs w-36"
-          />
-        </div>
-        {/* Quick filters */}
-        <div className="flex gap-1">
-          {[
-            { label: 'Today', days: 0 },
-            { label: '7D', days: 7 },
-            { label: '30D', days: 30 },
-            { label: '90D', days: 90 },
-          ].map((q) => (
-            <button
-              key={q.label}
-              onClick={() => {
-                const r = getDateRange(q.days)
-                setDateFrom(r.from)
-                setDateTo(r.to)
-              }}
-              className="rounded px-2.5 py-1 text-xs border border-zinc-700 bg-secondary/30 text-zinc-300 hover:border-zinc-500 hover:bg-secondary transition-colors"
-            >
-              {q.label}
-            </button>
-          ))}
-        </div>
+        <DateRangeFilter
+          from={dateFrom}
+          to={dateTo}
+          onChange={(f, t) => {
+            // Reports queries always need a bounded range — if cleared, fall back to
+            // the same default 30-day window used on initial load rather than sending
+            // empty strings into every gte()/lte() query below.
+            if (!f && !t) {
+              const fallback = getDateRange(30)
+              setDateFrom(fallback.from)
+              setDateTo(fallback.to)
+            } else {
+              setDateFrom(f)
+              setDateTo(t)
+            }
+          }}
+        />
       </div>
 
       <Tabs value={activeReportTab} onValueChange={handleReportTabChange} className="space-y-4">

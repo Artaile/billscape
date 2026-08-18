@@ -177,7 +177,7 @@ export function CategoriesPage() {
               ))
             ) : filtered.length > 0 ? (
               filtered.map((c) => (
-                <TableRow key={c.id} className="group">
+                <TableRow key={c.id}>
                   <TableCell>
                     <div className="flex items-center gap-2.5">
                       <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: c.color ?? '#6366f1' }} />
@@ -188,7 +188,7 @@ export function CategoriesPage() {
                   <TableCell className="text-right tabular-nums">{c.total_stock}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatINR(c.stock_value)}</TableCell>
                   <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-end gap-1">
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => startEdit(c)}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>

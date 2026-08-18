@@ -287,7 +287,7 @@ export function QuotationsPage() {
               {filteredQuotations.map((q) => {
                 const isExpired = q.valid_until && q.valid_until < today && q.status !== 'accepted'
                 return (
-                  <TableRow key={q.id} className="group">
+                  <TableRow key={q.id}>
                     <TableCell className="font-mono text-sm font-medium">{q.quote_no}</TableCell>
                     <TableCell>
                       <p className="text-sm font-medium text-foreground">{q.customer_name}</p>
@@ -310,7 +310,7 @@ export function QuotationsPage() {
                       </select>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-1">
                         <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => handleView(q)}>
                           <Eye className="h-3.5 w-3.5 mr-1" /> View
                         </Button>

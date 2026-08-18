@@ -234,7 +234,7 @@ export function HistoryTab() {
             </TableHeader>
             <TableBody>
               {filteredSales.map((sale) => (
-                <TableRow key={sale.id} className="group">
+                <TableRow key={sale.id}>
                   <TableCell className="font-medium">{sale.invoice_no}</TableCell>
                   <TableCell className="text-xs text-zinc-400">{formatDateTime(sale.created_at)}</TableCell>
                   <TableCell className="text-xs">
@@ -253,7 +253,7 @@ export function HistoryTab() {
                     </TableCell>
                   )}
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <div className="flex justify-end gap-1">
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="View"
                         onClick={() => navigate(`/billing/sales/${sale.id}`)}>
                         <Eye className="h-3.5 w-3.5" />

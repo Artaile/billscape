@@ -23,6 +23,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
+import { DateRangeFilter } from '@/components/ui/date-range-filter'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -396,17 +397,10 @@ export function PurchasesPage() {
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="w-full sm:w-40"
-        />
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="w-full sm:w-40"
+        <DateRangeFilter
+          from={dateFrom}
+          to={dateTo}
+          onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
         />
         {(search || supplierFilter || dateFrom || dateTo) && (
           <Button
@@ -440,7 +434,7 @@ export function PurchasesPage() {
               {filteredPurchases.length > 0 ? filteredPurchases.map((p) => {
                 const pay = parsePurchasePayment(p)
                 return (
-                  <TableRow key={p.id} className="group">
+                  <TableRow key={p.id}>
                     <TableCell className="font-mono text-xs text-indigo-300 whitespace-nowrap">
                       {p.purchase_no ?? <span className="text-zinc-600">—</span>}
                     </TableCell>
@@ -480,7 +474,7 @@ export function PurchasesPage() {
                             <CreditCard className="h-3.5 w-3.5 mr-1" />Pay
                           </Button>
                         )}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1">
                           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-zinc-400 hover:text-white" onClick={() => navigate(`/purchases/${p.id}`)}>
                             <Eye className="h-3.5 w-3.5 mr-1" />View
                           </Button>

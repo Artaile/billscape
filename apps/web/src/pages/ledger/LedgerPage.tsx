@@ -15,6 +15,7 @@ import { formatINR, formatDocumentNumber } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DateRangeFilter } from '@/components/ui/date-range-filter'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
@@ -180,13 +181,13 @@ export function LedgerPage() {
     queryKey: ['vouchers', org?.id, dateFrom, dateTo],
     enabled: !!org?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('vouchers')
         .select('*, voucher_entries(id, account_id, type, amount, narration)')
         .eq('organization_id', org!.id)
-        .gte('date', dateFrom)
-        .lte('date', dateTo)
-        .order('date', { ascending: false })
+      if (dateFrom) query = query.gte('date', dateFrom)
+      if (dateTo) query = query.lte('date', dateTo)
+      const { data, error } = await query.order('date', { ascending: false })
       if (error) throw error
       return data ?? []
     },
@@ -478,26 +479,11 @@ export function LedgerPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-4">
             <h2 className="text-lg font-semibold">Vouchers</h2>
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="dateFrom" className="text-sm whitespace-nowrap">From</Label>
-                <Input
-                  id="dateFrom"
-                  type="date"
-                  value={dateFrom}
-                  onChange={e => setDateFrom(e.target.value)}
-                  className="w-36"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="dateTo" className="text-sm whitespace-nowrap">To</Label>
-                <Input
-                  id="dateTo"
-                  type="date"
-                  value={dateTo}
-                  onChange={e => setDateTo(e.target.value)}
-                  className="w-36"
-                />
-              </div>
+              <DateRangeFilter
+                from={dateFrom}
+                to={dateTo}
+                onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+              />
               <Button size="sm" onClick={() => setVchDialogOpen(true)}>
                 <Plus className="h-4 w-4 mr-1" />
                 New Voucher
