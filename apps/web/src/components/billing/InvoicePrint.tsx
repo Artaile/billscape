@@ -141,6 +141,13 @@ export function InvoicePrint({
   const showTaxSummaryBlock = (branding?.print_show_tax_summary ?? true) && !isThermal
   const showCgstSgstIgst = branding?.print_show_cgst_sgst_igst ?? true
 
+  // Totals Calculation Card Toggles
+  const showBlockSubtotal = branding?.print_show_block_subtotal ?? true
+  const showBlockDiscount = branding?.print_show_block_discount ?? true
+  const showBlockTaxAmount = branding?.print_show_block_tax_amount ?? true
+  const showBlockRoundOff = branding?.print_show_block_round_off ?? true
+  const showBlockGrandTotal = branding?.print_show_block_grand_total ?? true
+
   return (
     <>
       {/* Print action button - hidden during print */}
@@ -330,44 +337,52 @@ export function InvoicePrint({
           <div className={isThermal ? 'w-full border-t border-gray-300 pt-2' : 'w-56'}>
             <table className="w-full text-xs">
               <tbody>
-                <tr>
-                  <td className="py-0.5 text-gray-600">Subtotal</td>
-                  <td className="py-0.5 text-right">{formatINR(totals.subtotal)}</td>
-                </tr>
-                {totals.discount_total > 0 && (
+                {showBlockSubtotal && (
+                  <tr>
+                    <td className="py-0.5 text-gray-600">Subtotal</td>
+                    <td className="py-0.5 text-right">{formatINR(totals.subtotal)}</td>
+                  </tr>
+                )}
+                {showBlockDiscount && totals.discount_total > 0 && (
                   <tr>
                     <td className="py-0.5 text-gray-600">Discount</td>
                     <td className="py-0.5 text-right text-green-700">-{formatINR(totals.discount_total)}</td>
                   </tr>
                 )}
-                <tr>
-                  <td className="py-0.5 text-gray-600">Taxable Amount</td>
-                  <td className="py-0.5 text-right">{formatINR(totals.taxable_amount)}</td>
-                </tr>
-                {totals.is_interstate ? (
+                {showBlockTaxAmount && (
                   <tr>
-                    <td className="py-0.5 text-gray-600">IGST</td>
-                    <td className="py-0.5 text-right">{formatINR(totals.igst_total)}</td>
+                    <td className="py-0.5 text-gray-600">Taxable Amount</td>
+                    <td className="py-0.5 text-right">{formatINR(totals.taxable_amount)}</td>
                   </tr>
-                ) : (
-                  <>
-                    <tr>
-                      <td className="py-0.5 text-gray-600">CGST</td>
-                      <td className="py-0.5 text-right">{formatINR(totals.cgst_total)}</td>
-                    </tr>
-                    <tr>
-                      <td className="py-0.5 text-gray-600">SGST</td>
-                      <td className="py-0.5 text-right">{formatINR(totals.sgst_total)}</td>
-                    </tr>
-                  </>
                 )}
-                <tr>
-                  <td className="py-0.5 font-medium text-gray-800">Grand Total</td>
-                  <td className="py-0.5 text-right font-medium text-gray-900">
-                    {formatINR(totals.grand_total)}
-                  </td>
-                </tr>
-                {totals.order_discount_amount > 0 && (
+                {showBlockTaxAmount && (
+                  totals.is_interstate ? (
+                    <tr>
+                      <td className="py-0.5 text-gray-600">IGST</td>
+                      <td className="py-0.5 text-right">{formatINR(totals.igst_total)}</td>
+                    </tr>
+                  ) : (
+                    <>
+                      <tr>
+                        <td className="py-0.5 text-gray-600">CGST</td>
+                        <td className="py-0.5 text-right">{formatINR(totals.cgst_total)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-0.5 text-gray-600">SGST</td>
+                        <td className="py-0.5 text-right">{formatINR(totals.sgst_total)}</td>
+                      </tr>
+                    </>
+                  )
+                )}
+                {showBlockGrandTotal && (
+                  <tr>
+                    <td className="py-0.5 font-medium text-gray-800">Grand Total</td>
+                    <td className="py-0.5 text-right font-medium text-gray-900">
+                      {formatINR(totals.grand_total)}
+                    </td>
+                  </tr>
+                )}
+                {showBlockDiscount && totals.order_discount_amount > 0 && (
                   <tr>
                     <td className="py-0.5 text-gray-600">Bill Discount</td>
                     <td className="py-0.5 text-right text-green-700">-{formatINR(totals.order_discount_amount)}</td>
@@ -379,7 +394,7 @@ export function InvoicePrint({
                     <td className="py-0.5 text-right text-green-700">-{formatINR(totals.loyalty_redeem_amount)}</td>
                   </tr>
                 )}
-                {typeof totals.round_off_amount === 'number' && totals.round_off_amount !== 0 && (
+                {showBlockRoundOff && typeof totals.round_off_amount === 'number' && totals.round_off_amount !== 0 && (
                   <tr>
                     <td className="py-0.5 text-gray-600">Round Off</td>
                     <td className="py-0.5 text-right">
