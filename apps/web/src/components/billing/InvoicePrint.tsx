@@ -122,6 +122,11 @@ export function InvoicePrint({
   const showDocumentDate = branding?.print_show_document_date ?? true
   const showPaymentModeHeader = branding?.print_show_payment_mode ?? false
 
+  // Party (Bill To) Toggles
+  const showPartyBlock = (branding?.print_show_party_details ?? true) && !!(customerName || customerPhone || customerGstin || customerAddress)
+  const showCustomerBillingAddress = (branding?.print_show_customer_billing_address ?? true) && !!customerAddress
+  const showCustomerPhoneLine = branding?.print_show_customer_phone ?? true
+
   return (
     <>
       {/* Print action button - hidden during print */}
@@ -188,12 +193,12 @@ export function InvoicePrint({
         </div>
 
         {/* Customer details */}
-        {(customerName || customerPhone || customerGstin || customerAddress) && (
+        {showPartyBlock && (
           <div className="border border-gray-300 rounded p-2.5 mb-3 bg-gray-50 text-xs">
             <p className="font-semibold text-gray-700 mb-0.5">Bill To:</p>
             {customerName && <p className="font-medium text-gray-900">{customerName}</p>}
-            {customerPhone && <p className="text-gray-600">Phone: {customerPhone}</p>}
-            {customerAddress && <p className="text-gray-600">Address: {customerAddress}</p>}
+            {showCustomerPhoneLine && customerPhone && <p className="text-gray-600">Phone: {customerPhone}</p>}
+            {showCustomerBillingAddress && <p className="text-gray-600">Address: {customerAddress}</p>}
             {customerGstin && <p className="text-gray-700 font-semibold">GSTIN: {customerGstin}</p>}
           </div>
         )}
