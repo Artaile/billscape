@@ -1307,32 +1307,32 @@ export function ReportsPage() {
         <TabsContent value="all-txns" className="space-y-4">
           {(() => {
             type TxnKind = 'sale' | 'purchase' | 'expense' | 'sale-return' | 'purchase-return' | 'payment-in' | 'payment-out'
-            type Txn = { id: string; date: string; label: string; amount: number; kind: TxnKind; navTo?: string }
+            type Txn = { id: string; date: string; title: string; subtitle?: string; amount: number; kind: TxnKind; navTo?: string }
 
             const voucherAmount = (v: (typeof vouchersData)[number]) =>
               (v.voucher_entries ?? []).filter((e: any) => e.type === 'debit').reduce((s: number, e: any) => s + (e.amount || 0), 0)
 
             const txns: Txn[] = [
               ...salesData.map((s) => ({
-                id: `sale-${s.id}`, date: s.created_at, label: `Sale — Invoice #${s.invoice_no}`,
+                id: `sale-${s.id}`, date: s.created_at, title: `#${s.invoice_no}`,
                 amount: s.grand_total, kind: 'sale' as const, navTo: `/billing/sales/${s.id}`,
               })),
               ...purchasesData.map((p: any) => ({
-                id: `purchase-${p.id}`, date: p.created_at, label: `Purchase — ${p.purchase_no || p.invoice_no || p.id.slice(0, 8)}`,
+                id: `purchase-${p.id}`, date: p.created_at, title: `#${p.purchase_no || p.invoice_no || p.id.slice(0, 8)}`,
                 amount: -p.total_amount, kind: 'purchase' as const, navTo: `/purchases/${p.id}`,
               })),
               ...expensesData.map((e) => ({
-                id: `expense-${e.id}`, date: e.expense_date, label: `Expense — ${e.description || e.category}`,
+                id: `expense-${e.id}`, date: e.expense_date, title: e.description || e.category,
                 amount: -e.amount, kind: 'expense' as const,
               })),
               ...returnsData.map((r) => ({
                 id: `return-${r.id}`, date: r.created_at,
-                label: r.return_type === 'sale' ? `Sales Return${r.original_invoice_no ? ` (${r.original_invoice_no})` : ''}` : `Purchase Return${r.purchase_ref ? ` (${r.purchase_ref})` : ''}`,
+                title: r.return_type === 'sale' ? (r.original_invoice_no ? `#${r.original_invoice_no}` : 'Credit Note') : (r.purchase_ref ? `#${r.purchase_ref}` : 'Debit Note'),
                 amount: r.return_type === 'sale' ? -r.refund_amount : r.refund_amount,
                 kind: (r.return_type === 'sale' ? 'sale-return' : 'purchase-return') as TxnKind,
               })),
               ...vouchersData.map((v) => ({
-                id: `voucher-${v.id}`, date: v.date, label: `${v.type === 'receipt' ? 'Payment In' : 'Payment Out'} — ${v.voucher_no}${v.narration ? ` (${v.narration})` : ''}`,
+                id: `voucher-${v.id}`, date: v.date, title: `#${v.voucher_no}`, subtitle: v.narration ?? undefined,
                 amount: v.type === 'receipt' ? voucherAmount(v) : -voucherAmount(v),
                 kind: (v.type === 'receipt' ? 'payment-in' : 'payment-out') as TxnKind,
               })),
@@ -1353,6 +1353,22 @@ export function ReportsPage() {
               sale: TrendingUp, purchase: TrendingDown, expense: Wallet,
               'sale-return': Undo2, 'purchase-return': Undo2,
               'payment-in': ArrowDownRight, 'payment-out': ArrowUpRight,
+            }
+
+            const kindTagLabel: Record<TxnKind, string> = {
+              sale: 'Sale', purchase: 'Purchase', expense: 'Expense',
+              'sale-return': 'Sales Return', 'purchase-return': 'Purchase Return',
+              'payment-in': 'Payment In', 'payment-out': 'Payment Out',
+            }
+
+            const kindTagColor: Record<TxnKind, string> = {
+              sale: 'border-emerald-500/40 text-emerald-400',
+              purchase: 'border-indigo-500/40 text-indigo-400',
+              expense: 'border-amber-500/40 text-amber-400',
+              'sale-return': 'border-red-500/40 text-red-400',
+              'purchase-return': 'border-red-500/40 text-red-400',
+              'payment-in': 'border-emerald-500/40 text-emerald-400',
+              'payment-out': 'border-red-500/40 text-red-400',
             }
 
             const totalSales = salesData.reduce((s, r) => s + r.grand_total, 0)
@@ -1429,9 +1445,15 @@ export function ReportsPage() {
                               <Icon className="h-4 w-4" />
                             </div>
                             <div className="min-w-0">
-                              <span className="font-medium text-white truncate block">{t.label}</span>
-                              <p className="text-xs text-zinc-500">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-white truncate">{t.title}</span>
+                                <Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4 shrink-0', kindTagColor[t.kind])}>
+                                  {kindTagLabel[t.kind]}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-zinc-500 truncate">
                                 {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(t.date))}
+                                {t.subtitle ? ` · ${t.subtitle}` : ''}
                               </p>
                             </div>
                           </div>
