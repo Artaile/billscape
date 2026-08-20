@@ -336,7 +336,7 @@ export function QuotationViewPage() {
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          body > * { display: none !important; }
+          body :not(#quotation-print-root):not(#quotation-print-root *) { display: none !important; }
           #quotation-print-root { display: block !important; }
         }
       `}</style>

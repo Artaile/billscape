@@ -27,6 +27,8 @@ export interface InvoicePrintProps {
   invoiceTemplate?: OrgInvoiceTemplate
   /** Hide the built-in "Print Invoice" button — set when the host page provides its own print action. */
   hidePrintButton?: boolean
+  /** DOM id for the printable root — override when a second InvoicePrint may be mounted at the same time (e.g. a preview dialog) to avoid duplicate ids. */
+  rootId?: string
 }
 
 export function InvoicePrint({
@@ -49,6 +51,7 @@ export function InvoicePrint({
   branding,
   invoiceTemplate,
   hidePrintButton,
+  rootId = 'invoice-print-root',
 }: InvoicePrintProps) {
   const [upiQrDataUrl, setUpiQrDataUrl] = useState<string | null>(null)
 
@@ -119,10 +122,10 @@ export function InvoicePrint({
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          body > * { display: none !important; }
-          #invoice-print-root { display: block !important; }
+          body :not(#${rootId}):not(#${rootId} *) { display: none !important; }
+          #${rootId} { display: block !important; }
         }
-        #invoice-print-root {
+        #${rootId} {
           font-family: ${branding?.print_font_family || 'Arial, sans-serif'};
           color: ${branding?.print_text_color || '#000'};
           background: #fff;
@@ -136,7 +139,7 @@ export function InvoicePrint({
         }
       `}</style>
 
-      <div id="invoice-print-root" className="bg-white text-black p-4 sm:p-6 rounded-lg">
+      <div id={rootId} className="bg-white text-black p-4 sm:p-6 rounded-lg">
         {/* Optional Header Message */}
         {showHeaderMsg && (
           <div className="text-center pb-2 mb-2 border-b border-gray-200 text-xs italic text-gray-700">

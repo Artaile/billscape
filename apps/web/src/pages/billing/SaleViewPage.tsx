@@ -145,7 +145,70 @@ export function SaleViewPage() {
     hidePrintButton: true,
   } : null
 
-  const handlePrint = () => window.print()
+  const handlePrint = () => {
+    const elem = printRef.current
+    if (!elem) {
+      window.print()
+      return
+    }
+
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document
+    if (!doc) {
+      window.print()
+      return
+    }
+
+    let styles = ''
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+      styles += node.outerHTML
+    })
+
+    doc.open()
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Invoice ${sale?.invoice_no ?? ''}</title>
+          ${styles}
+          <style>
+            @page {
+              margin: 10mm 12mm;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              color: #000000 !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${elem.innerHTML}
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.frameElement?.remove();
+                }, 1000);
+              }, 250);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    doc.close()
+  }
 
   const handleDownloadPdf = async () => {
     if (!printRef.current) return
@@ -366,17 +429,22 @@ export function SaleViewPage() {
       {/* Hidden print target — mounted off-screen so window.print()/PDF capture works without
           the raw paper-size layout being the page's own visible body. */}
       {invoicePrintProps && (
-        <div className="fixed left-[-9999px] top-0" aria-hidden>
+        <div id="invoice-print-offscreen" className="fixed left-[-9999px] top-0" aria-hidden>
           <div ref={printRef}>
             <InvoicePrint {...invoicePrintProps} />
           </div>
         </div>
       )}
+      <style>{`
+        @media print {
+          #invoice-print-offscreen { position: static !important; left: auto !important; top: auto !important; }
+        }
+      `}</style>
 
       {/* Preview dialog — shows the actual print layout */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          {invoicePrintProps && <InvoicePrint {...invoicePrintProps} />}
+          {invoicePrintProps && <InvoicePrint {...invoicePrintProps} rootId="invoice-preview-root" />}
         </DialogContent>
       </Dialog>
 
