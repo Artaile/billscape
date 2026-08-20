@@ -109,6 +109,19 @@ export function InvoicePrint({
   const showDiscount = (branding?.print_show_column_discount ?? true) && totals.discount_total > 0
   const showTaxRate = branding?.print_show_column_tax_rate ?? true
 
+  // Header / Business Info Toggles
+  const showShopName = branding?.print_show_shop_name ?? true
+  const showShopAddress = (branding?.print_show_address ?? true) && !!shopAddress
+  const showShopContact = branding?.print_show_contact ?? true
+  const showShopGstin = branding?.print_show_gstin ?? true
+  const showShopPan = branding?.print_show_pan ?? true
+  const showShopEmailWebsite = branding?.print_show_email_website ?? true
+
+  // Document Details Toggles
+  const showDocumentNumber = branding?.print_show_document_number ?? true
+  const showDocumentDate = branding?.print_show_document_date ?? true
+  const showPaymentModeHeader = branding?.print_show_payment_mode ?? false
+
   return (
     <>
       {/* Print action button - hidden during print */}
@@ -156,19 +169,21 @@ export function InvoicePrint({
               <img src={shopLogoUrl || branding?.logo_url} alt="Logo" className={`${isThermal ? 'h-10 w-10 mb-1' : 'h-14 w-14'} object-contain`} />
             )}
             <div>
-              <h1 className={`${isThermal ? 'text-base' : 'text-lg'} font-bold text-gray-900`}>{shopName}</h1>
-              {shopAddress && <p className="text-xs text-gray-600 mt-0.5">{shopAddress}</p>}
+              {showShopName && <h1 className={`${isThermal ? 'text-base' : 'text-lg'} font-bold text-gray-900`}>{shopName}</h1>}
+              {showShopAddress && <p className="text-xs text-gray-600 mt-0.5">{shopAddress}</p>}
               <div className="flex flex-wrap gap-x-3 text-xs text-gray-600">
-                {shopPhone && <span>Ph: {shopPhone}</span>}
-                {shopEmail && <span>{shopEmail}</span>}
+                {showShopContact && shopPhone && <span>Ph: {shopPhone}</span>}
+                {showShopEmailWebsite && shopEmail && <span>{shopEmail}</span>}
               </div>
-              {shopGstin && <p className="text-xs font-semibold text-gray-700 mt-0.5">GSTIN: {shopGstin}</p>}
+              {showShopGstin && shopGstin && <p className="text-xs font-semibold text-gray-700 mt-0.5">GSTIN: {shopGstin}</p>}
+              {showShopPan && shopPan && <p className="text-xs font-semibold text-gray-700">PAN: {shopPan}</p>}
             </div>
           </div>
           <div className={`${isThermal ? 'text-center border-t border-gray-200 pt-2 w-full' : 'text-right'}`}>
             <h2 className="text-sm sm:text-base font-bold text-gray-800 tracking-wider">TAX INVOICE</h2>
-            <p className="text-gray-700 mt-0.5">Invoice: <strong className="font-mono">{invoiceNo}</strong></p>
-            <p className="text-gray-600 text-xs">Date: {formatDateTime(date)}</p>
+            {showDocumentNumber && <p className="text-gray-700 mt-0.5">Invoice: <strong className="font-mono">{invoiceNo}</strong></p>}
+            {showDocumentDate && <p className="text-gray-600 text-xs">Date: {formatDateTime(date)}</p>}
+            {showPaymentModeHeader && <p className="text-gray-600 text-xs">Mode: <span className="capitalize">{paymentMode}</span></p>}
           </div>
         </div>
 
