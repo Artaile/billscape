@@ -89,7 +89,7 @@ export function InvoicePrint({
   const showHeaderMsg = !!(invoiceTemplate?.invoice_header || branding?.invoice_header)
   const headerMsg = invoiceTemplate?.invoice_header || branding?.invoice_header
 
-  const showFooterMsg = !!(invoiceTemplate?.invoice_footer || branding?.invoice_footer)
+  const showFooterMsg = (branding?.print_show_notes ?? true) && !!(invoiceTemplate?.invoice_footer || branding?.invoice_footer)
   const footerMsg = invoiceTemplate?.invoice_footer || branding?.invoice_footer
 
   const showTerms = branding?.print_show_terms ?? true
@@ -477,7 +477,7 @@ export function InvoicePrint({
 
         {/* Footer Notes */}
         <p className="text-center text-[10px] text-gray-500 mt-3 border-t border-gray-200 pt-2">
-          {footerMsg || branding?.print_thank_you_note || 'Thank you for your purchase! Visit us again.'}
+          {(showFooterMsg && footerMsg) || branding?.print_thank_you_note || 'Thank you for your purchase! Visit us again.'}
         </p>
       </div>
     </>
