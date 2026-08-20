@@ -255,29 +255,44 @@ export function InvoicePrint({
         )}
 
         {/* Business Header */}
-        <div className={`flex ${isThermal ? 'flex-col text-center items-center' : 'items-start justify-between'} border-b-2 border-gray-800 pb-3 mb-3 gap-2`}>
-          <div className={`flex ${isThermal ? 'flex-col items-center text-center' : 'items-start'} gap-3`}>
+        <div className={`space-y-1 pb-3 mb-3 border-b-2 border-dashed border-zinc-400 ${isThermal ? 'text-center' : 'flex items-start justify-between text-left'}`}>
+          <div className={`space-y-0.5 ${isThermal ? 'mx-auto' : ''}`}>
             {(shopLogoUrl || branding?.print_show_logo) && (
-              <img src={shopLogoUrl || branding?.logo_url} alt="Logo" className={`${isThermal ? 'h-10 w-10 mb-1' : 'h-14 w-14'} object-contain`} />
-            )}
-            <div>
-              {showShopName && <h1 className={`${isThermal ? 'text-base' : 'text-lg'} font-bold text-gray-900`}>{shopName}</h1>}
-              {showShopAddress && <p className="text-xs text-gray-600 mt-0.5">{shopAddress}</p>}
-              <div className="flex flex-wrap gap-x-3 text-xs text-gray-600">
-                {showShopContact && shopPhone && <span>Ph: {shopPhone}</span>}
-                {showShopEmailWebsite && shopEmail && <span>{shopEmail}</span>}
+              <div className={`flex items-center ${isThermal ? 'justify-center mb-1' : 'justify-start mb-2'}`}>
+                <img src={shopLogoUrl || branding?.logo_url} alt="Logo" className={`object-contain ${isThermal ? 'h-8' : 'h-10'}`} />
               </div>
-              {showShopGstin && shopGstin && <p className="text-xs font-semibold text-gray-700 mt-0.5">GSTIN: {shopGstin}</p>}
-              {showShopPan && shopPan && <p className="text-xs font-semibold text-gray-700">PAN: {shopPan}</p>}
+            )}
+            {showShopName && <h1 className="font-bold text-zinc-950 uppercase tracking-tight text-[1.15em]">{shopName}</h1>}
+            {showShopAddress && <p className="text-[0.9em] text-zinc-600 leading-tight">{shopAddress}</p>}
+            <div className="text-[0.9em] text-zinc-600 space-x-1">
+              {showShopContact && shopPhone && <span>Ph: {shopPhone}</span>}
+              {showShopContact && shopPhone && showShopEmailWebsite && shopEmail && <span>|</span>}
+              {showShopEmailWebsite && shopEmail && <span>{shopEmail}</span>}
+            </div>
+            <div className="text-[0.9em] font-bold text-zinc-800 space-x-1">
+              {showShopGstin && shopGstin && <span>GSTIN: {shopGstin}</span>}
+              {showShopGstin && shopGstin && showShopPan && shopPan && <span>|</span>}
+              {showShopPan && shopPan && <span>PAN: {shopPan}</span>}
             </div>
           </div>
-          <div className={`${isThermal ? 'text-center border-t border-gray-200 pt-2 w-full' : 'text-right'}`}>
-            <h2 className="text-sm sm:text-base font-bold text-gray-800 tracking-wider">TAX INVOICE</h2>
-            {showDocumentNumber && <p className="text-gray-700 mt-0.5">Invoice: <strong className="font-mono">{invoiceNo}</strong></p>}
-            {showDocumentDate && <p className="text-gray-600 text-xs">Date: {formatDateTime(date)}</p>}
-            {showPaymentModeHeader && <p className="text-gray-600 text-xs">Mode: <span className="capitalize">{paymentMode}</span></p>}
-          </div>
+
+          {!isThermal && (
+            <div className="text-right text-[0.9em] space-y-0.5 shrink-0">
+              <h2 className="font-bold text-[1.1em] uppercase text-zinc-950">TAX INVOICE</h2>
+              {showDocumentNumber && <p className="text-zinc-600">Invoice: <span className="font-bold font-mono">{invoiceNo}</span></p>}
+              {showDocumentDate && <p className="text-zinc-600">Date: {formatDateTime(date)}</p>}
+              {showPaymentModeHeader && <p className="text-zinc-600">Mode: <span className="capitalize">{paymentMode}</span></p>}
+            </div>
+          )}
         </div>
+
+        {isThermal && (showDocumentNumber || showDocumentDate || showPaymentModeHeader) && (
+          <div className="py-1 text-[0.9em] flex justify-between text-zinc-600 border-b border-dashed border-zinc-400 flex-wrap gap-1 mb-3">
+            {showDocumentNumber && <span>Invoice: <span className="font-bold font-mono">{invoiceNo}</span></span>}
+            {showDocumentDate && <span>{formatDateTime(date)}</span>}
+            {showPaymentModeHeader && <span>Mode: <span className="capitalize">{paymentMode}</span></span>}
+          </div>
+        )}
 
         {/* Customer details */}
         {showPartyBlock && (
