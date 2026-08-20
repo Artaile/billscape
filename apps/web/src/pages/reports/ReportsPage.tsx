@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Download,
+  Printer,
   TrendingUp,
   TrendingDown,
   Package,
@@ -18,6 +19,13 @@ import {
   Layers,
   ArrowUpRight,
   ArrowDownRight,
+  Users,
+  FileBarChart,
+  Percent,
+  ShoppingCart,
+  ClipboardList,
+  Landmark,
+  Undo2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -36,6 +44,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { DateRangeFilter } from '@/components/ui/date-range-filter'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
 function getDateRange(days: number) {
@@ -48,14 +57,47 @@ function getDateRange(days: number) {
   }
 }
 
-const REPORTS_TAB_VALUES = ['sales', 'pnl', 'balance-sheet', 'trial-balance', 'cash-flow', 'items', 'stock', 'gst'] as const
+const REPORTS_TAB_VALUES = [
+  'sales', 'purchases', 'cashbank', 'all-txns', 'pnl', 'cash-flow', 'trial-balance', 'balance-sheet',
+] as const
+
+const REPORT_SECTIONS = [
+  { value: 'transactions', label: 'Transaction Reports', icon: FileBarChart },
+  { value: 'party', label: 'Party Reports', icon: Users },
+  { value: 'gst', label: 'GST Reports', icon: Percent },
+  { value: 'stock', label: 'Stock / Item Reports', icon: Package },
+  { value: 'taxes', label: 'Taxes Reports', icon: Landmark },
+  { value: 'expenses', label: 'Expense Reports', icon: Wallet },
+  { value: 'sale-orders', label: 'Sale Order Reports', icon: ClipboardList },
+] as const
+const REPORT_SECTION_VALUES = REPORT_SECTIONS.map((s) => s.value)
+
+const STATUS_BADGE_COLORS: Record<string, string> = {
+  draft: 'border-zinc-500/30 text-zinc-400',
+  sent: 'border-blue-500/30 text-blue-400',
+  accepted: 'border-emerald-500/30 text-emerald-400',
+  rejected: 'border-red-500/30 text-red-400',
+  expired: 'border-orange-500/30 text-orange-400',
+}
 
 export function ReportsPage() {
   const { org, role } = useAuth()
   const orgId = org?.id
   const isOwner = role === 'owner'
+  const navigate = useNavigate()
 
   const [searchParams, setSearchParams] = useSearchParams()
+  const sectionParam = searchParams.get('section')
+  const activeSection = REPORT_SECTION_VALUES.includes(sectionParam as any) ? sectionParam! : 'transactions'
+  const handleSectionChange = (value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('section', value)
+      if (value === 'transactions') next.set('tab', 'sales')
+      return next
+    }, { replace: true })
+  }
+
   const tabParam = searchParams.get('tab')
   const activeReportTab = REPORTS_TAB_VALUES.includes(tabParam as any) ? tabParam! : 'sales'
   const handleReportTabChange = (value: string) => {
@@ -68,6 +110,11 @@ export function ReportsPage() {
 
   const [dateFrom, setDateFrom] = useState(getDateRange(30).from)
   const [dateTo, setDateTo] = useState(getDateRange(0).to)
+
+  const [salesDetailCard, setSalesDetailCard] = useState<'total' | 'returns' | 'net' | 'due' | null>(null)
+  const [allTxnsFilter, setAllTxnsFilter] = useState<'all' | 'sale' | 'purchase' | 'expense' | 'sale-return' | 'purchase-return' | 'payment-in' | 'payment-out'>('all')
+  const [invoiceRangeFrom, setInvoiceRangeFrom] = useState('')
+  const [invoiceRangeTo, setInvoiceRangeTo] = useState('')
 
   const fromISO = `${dateFrom}T00:00:00.000Z`
   const toISO = `${dateTo}T23:59:59.999Z`
@@ -137,6 +184,21 @@ export function ReportsPage() {
     },
   })
 
+  // 4b. B2B/B2C classification query (sale -> customer GSTIN)
+  const { data: salesPartyData = [], isLoading: salesPartyLoading } = useQuery({
+    queryKey: ['report-sales-party', orgId, dateFrom, dateTo],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('sales')
+        .select('id, invoice_no, grand_total, tax_total, created_at, customers(name, gstin)')
+        .eq('organization_id', orgId!)
+        .gte('created_at', fromISO)
+        .lte('created_at', toISO)
+      return data ?? []
+    },
+  })
+
   // 5. Operating Expenses query
   const { data: expensesData = [], isLoading: expensesLoading } = useQuery({
     queryKey: ['report-expenses', orgId, dateFrom, dateTo],
@@ -159,7 +221,7 @@ export function ReportsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('purchases')
-        .select('id, total_amount, notes, created_at, suppliers(name)')
+        .select('id, purchase_no, invoice_no, supplier_id, total_amount, notes, created_at, suppliers(name)')
         .eq('organization_id', orgId!)
         .gte('created_at', fromISO)
         .lte('created_at', toISO)
@@ -174,7 +236,20 @@ export function ReportsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('customers')
-        .select('id, name, balance')
+        .select('id, name, phone, balance')
+        .eq('organization_id', orgId!)
+      return data ?? []
+    },
+  })
+
+  // 7b. Suppliers Balance query (Accounts Payable — party reports)
+  const { data: suppliersData = [] } = useQuery({
+    queryKey: ['report-suppliers', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('suppliers')
+        .select('id, name, phone')
         .eq('organization_id', orgId!)
       return data ?? []
     },
@@ -187,10 +262,59 @@ export function ReportsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('returns')
-        .select('id, return_type, refund_amount, created_at')
+        .select('id, return_type, original_invoice_no, purchase_ref, reason, refund_amount, created_at')
         .eq('organization_id', orgId!)
         .gte('created_at', fromISO)
         .lte('created_at', toISO)
+      return data ?? []
+    },
+  })
+
+  // 9. Purchase-side GST query (Input Tax — for Taxes Reports)
+  const { data: purchaseGstData = [], isLoading: purchaseGstLoading } = useQuery({
+    queryKey: ['report-purchase-gst', orgId, dateFrom, dateTo],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('purchase_items')
+        .select(`
+          tax_rate, taxable_amount, cgst_amount, sgst_amount, igst_amount,
+          purchases!inner(organization_id, created_at)
+        `)
+        .eq('purchases.organization_id', orgId!)
+        .gte('purchases.created_at', fromISO)
+        .lte('purchases.created_at', toISO)
+      return data ?? []
+    },
+  })
+
+  // 10. Quotations query (Sale Order Reports)
+  const { data: quotationsData = [], isLoading: quotationsLoading } = useQuery({
+    queryKey: ['report-quotations', orgId, dateFrom, dateTo],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('quotations')
+        .select('id, quote_no, customer_name, status, total_amount, valid_until, created_at')
+        .eq('organization_id', orgId!)
+        .gte('created_at', fromISO)
+        .lte('created_at', toISO)
+      return data ?? []
+    },
+  })
+
+  // 11. Vouchers query (Payments In / Payments Out — receipt/payment vouchers from Ledger)
+  const { data: vouchersData = [], isLoading: vouchersLoading } = useQuery({
+    queryKey: ['report-vouchers', orgId, dateFrom, dateTo],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('vouchers')
+        .select('id, voucher_no, type, date, narration, reference, voucher_entries(amount, type)')
+        .eq('organization_id', orgId!)
+        .in('type', ['receipt', 'payment'])
+        .gte('date', dateFrom)
+        .lte('date', dateTo)
       return data ?? []
     },
   })
@@ -271,6 +395,81 @@ export function ReportsPage() {
     }
     return Array.from(map.values()).sort((a, b) => a.rate - b.rate)
   }, [gstData])
+
+  // GSTR-1: B2B (customer has GSTIN) vs B2C (no GSTIN / walk-in) split, with reconciliation check
+  const gstr1Summary = useMemo(() => {
+    const b2b = salesPartyData.filter((s: any) => s.customers?.gstin)
+    const b2c = salesPartyData.filter((s: any) => !s.customers?.gstin)
+    const sum = (rows: typeof salesPartyData) => rows.reduce((acc, s) => acc + (s.tax_total ?? 0), 0)
+    const taxableSum = (rows: typeof salesPartyData) => rows.reduce((acc, s) => acc + (s.grand_total - (s.tax_total ?? 0)), 0)
+
+    const netTaxableValue = taxableSum(salesPartyData)
+    const netOutputTax = sum(salesPartyData)
+
+    // Reconciliation: net taxable + tax should equal invoice-line-level totals from gstSummary
+    const lineLevelTaxable = gstSummary.reduce((s, g) => s + g.taxable, 0)
+    const lineLevelTax = gstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0)
+    const difference = Math.abs((netTaxableValue + netOutputTax) - (lineLevelTaxable + lineLevelTax))
+    const reconciled = difference <= 1
+
+    return {
+      b2bCount: b2b.length,
+      b2cCount: b2c.length,
+      b2bTaxable: taxableSum(b2b),
+      b2bTax: sum(b2b),
+      b2cTaxable: taxableSum(b2c),
+      b2cTax: sum(b2c),
+      netTaxableValue,
+      netOutputTax,
+      reconciled,
+      difference,
+    }
+  }, [salesPartyData, gstSummary])
+
+  // Aggregate purchase-side GST (Input Tax, by rate)
+  const purchaseGstSummary = useMemo(() => {
+    const map = new Map<number, { rate: number; taxable: number; cgst: number; sgst: number; igst: number }>()
+    for (const item of purchaseGstData) {
+      const existing = map.get(item.tax_rate)
+      if (existing) {
+        existing.taxable += item.taxable_amount ?? 0
+        existing.cgst += item.cgst_amount ?? 0
+        existing.sgst += item.sgst_amount ?? 0
+        existing.igst += item.igst_amount ?? 0
+      } else {
+        map.set(item.tax_rate, {
+          rate: item.tax_rate,
+          taxable: item.taxable_amount ?? 0,
+          cgst: item.cgst_amount ?? 0,
+          sgst: item.sgst_amount ?? 0,
+          igst: item.igst_amount ?? 0,
+        })
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.rate - b.rate)
+  }, [purchaseGstData])
+
+  // Net GST liability (Output Tax collected on sales − Input Tax paid on purchases)
+  const taxLiabilitySummary = useMemo(() => {
+    const outputTax = gstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0)
+    const inputTax = purchaseGstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0)
+    const netPayable = outputTax - inputTax
+    return { outputTax, inputTax, netPayable }
+  }, [gstSummary, purchaseGstSummary])
+
+  // Sale Order (Quotations) summary
+  const quotationsSummary = useMemo(() => {
+    const byStatus: Record<string, { count: number; value: number }> = {}
+    for (const q of quotationsData) {
+      if (!byStatus[q.status]) byStatus[q.status] = { count: 0, value: 0 }
+      byStatus[q.status].count += 1
+      byStatus[q.status].value += q.total_amount || 0
+    }
+    const total = quotationsData.length
+    const accepted = byStatus['accepted']?.count ?? 0
+    const conversionRate = total > 0 ? (accepted / total) * 100 : 0
+    return { byStatus, total, accepted, conversionRate }
+  }, [quotationsData])
 
   // ── Financial Engine Aggregations ──────────────────────────────────────────
 
@@ -491,61 +690,126 @@ export function ReportsPage() {
     )
   }
 
+  const exportTaxes = () => {
+    downloadCSV(
+      `taxes-report-${dateFrom}-to-${dateTo}.csv`,
+      ['Tax Rate', 'Output Tax (Sales)', 'Input Tax (Purchases)', 'Net Payable'],
+      [0, 5, 12, 18, 28]
+        .filter((rate) => gstSummary.some((g) => g.rate === rate) || purchaseGstSummary.some((g) => g.rate === rate))
+        .map((rate) => {
+          const out = gstSummary.find((g) => g.rate === rate)
+          const inp = purchaseGstSummary.find((g) => g.rate === rate)
+          const outTotal = out ? out.cgst + out.sgst + out.igst : 0
+          const inTotal = inp ? inp.cgst + inp.sgst + inp.igst : 0
+          return [`${rate}%`, outTotal.toFixed(2), inTotal.toFixed(2), (outTotal - inTotal).toFixed(2)]
+        }),
+    )
+  }
+
+  const exportQuotations = () => {
+    downloadCSV(
+      `sale-order-report-${dateFrom}-to-${dateTo}.csv`,
+      ['Quote No', 'Customer', 'Status', 'Amount', 'Valid Until'],
+      quotationsData.map((q) => [q.quote_no, q.customer_name, q.status, q.total_amount.toFixed(2), q.valid_until ?? '']),
+    )
+  }
+
+  const handlePrint = () => window.print()
+
   return (
-    <div className="p-4 lg:p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">Financial & Business Reports</h1>
-          <p className="text-sm text-zinc-400 mt-0.5">Comprehensive audit, double-entry financial statements & operational insights</p>
+    <div className="p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
+      {/* ── Left sub-nav: REPORTS ── */}
+      <div className="lg:w-56 shrink-0 no-print lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+        <p className="text-xs font-semibold tracking-wider text-zinc-500 px-2 mb-2">REPORTS</p>
+        <nav className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0">
+          {REPORT_SECTIONS.map((s) => {
+            const Icon = s.icon
+            const active = activeSection === s.value
+            return (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => handleSectionChange(s.value)}
+                className={cn(
+                  'flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-left whitespace-nowrap transition-colors',
+                  active
+                    ? 'bg-indigo-600 text-white font-medium'
+                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200',
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {s.label}
+                </span>
+              </button>
+            )
+          })}
+        </nav>
+      </div>
+
+      {/* ── Right: content ── */}
+      <div className="flex-1 min-w-0 space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-xl font-bold text-white">
+              {REPORT_SECTIONS.find((s) => s.value === activeSection)?.label ?? 'Reports'}
+            </h1>
+            <p className="text-sm text-zinc-400 mt-0.5">Comprehensive audit, double-entry financial statements & operational insights</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon" onClick={handlePrint} title="Print" className="no-print">
+              <Printer className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
-      </div>
 
-      {/* Date Range Picker */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <DateRangeFilter
-          from={dateFrom}
-          to={dateTo}
-          onChange={(f, t) => {
-            // Reports queries always need a bounded range — if cleared, fall back to
-            // the same default 30-day window used on initial load rather than sending
-            // empty strings into every gte()/lte() query below.
-            if (!f && !t) {
-              const fallback = getDateRange(30)
-              setDateFrom(fallback.from)
-              setDateTo(fallback.to)
-            } else {
-              setDateFrom(f)
-              setDateTo(t)
-            }
-          }}
-        />
-      </div>
+        {/* Date Range Picker */}
+        <div className="flex items-center gap-3 flex-wrap no-print">
+            <DateRangeFilter
+              from={dateFrom}
+              to={dateTo}
+              onChange={(f, t) => {
+                // Reports queries always need a bounded range — if cleared, fall back to
+                // the same default 30-day window used on initial load rather than sending
+                // empty strings into every gte()/lte() query below.
+                if (!f && !t) {
+                  const fallback = getDateRange(30)
+                  setDateFrom(fallback.from)
+                  setDateTo(fallback.to)
+                } else {
+                  setDateFrom(f)
+                  setDateTo(t)
+                }
+              }}
+            />
+        </div>
 
+        {activeSection === 'transactions' && (
       <Tabs value={activeReportTab} onValueChange={handleReportTabChange} className="space-y-4">
-        <TabsList className="flex flex-wrap h-auto gap-1 bg-card border border-border p-1">
-          <TabsTrigger value="sales">Sales Summary</TabsTrigger>
+        <TabsList className="flex flex-wrap h-auto gap-1 bg-card border border-border p-1 no-print">
+          <TabsTrigger value="sales">Sales Report</TabsTrigger>
+          <TabsTrigger value="purchases">Purchase Report</TabsTrigger>
+          <TabsTrigger value="cashbank">Cash / Bank Book</TabsTrigger>
+          <TabsTrigger value="all-txns">All Transactions</TabsTrigger>
           <TabsTrigger value="pnl" className="flex items-center gap-1.5">
             <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-            Profit & Loss (P&L)
-          </TabsTrigger>
-          <TabsTrigger value="balance-sheet" className="flex items-center gap-1.5">
-            <Building2 className="h-3.5 w-3.5 text-blue-400" />
-            Balance Sheet
-          </TabsTrigger>
-          <TabsTrigger value="trial-balance" className="flex items-center gap-1.5">
-            <Scale className="h-3.5 w-3.5 text-purple-400" />
-            Trial Balance
+            Profit & Loss
           </TabsTrigger>
           <TabsTrigger value="cash-flow" className="flex items-center gap-1.5">
             <Wallet className="h-3.5 w-3.5 text-amber-400" />
             Cash Flow
           </TabsTrigger>
-          <TabsTrigger value="items">Item-wise</TabsTrigger>
-          <TabsTrigger value="stock">Stock Report</TabsTrigger>
-          <TabsTrigger value="gst">GST Summary</TabsTrigger>
+          <TabsTrigger value="trial-balance" className="flex items-center gap-1.5">
+            <Scale className="h-3.5 w-3.5 text-purple-400" />
+            Trial Balance
+          </TabsTrigger>
+          <TabsTrigger value="balance-sheet" className="flex items-center gap-1.5">
+            <Building2 className="h-3.5 w-3.5 text-blue-400" />
+            Balance Sheet
+          </TabsTrigger>
         </TabsList>
 
-        {/* ── 1. Sales Summary Tab ── */}
+        {/* ── 1. Sales Report Tab (IppoBill-style summary cards + transaction list) ── */}
         <TabsContent value="sales" className="space-y-4">
           <div className="flex justify-end">
             <Button variant="outline" size="sm" onClick={exportSales}>
@@ -563,31 +827,130 @@ export function ReportsPage() {
           ) : (
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card>
+                <Card
+                  className="cursor-pointer transition-colors hover:border-zinc-600"
+                  onClick={() => setSalesDetailCard('total')}
+                >
                   <CardContent className="p-5">
-                    <p className="text-xs text-zinc-400">Total Sales Revenue</p>
-                    <p className="text-2xl font-bold text-white mt-1">{formatINR(salesSummary?.total ?? 0)}</p>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <TrendingUp className="h-4 w-4 text-emerald-400" />
+                      <p className="text-xs">Total Sales</p>
+                    </div>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(pnlSummary.grossSales)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">{salesSummary?.billCount ?? 0} invoices</p>
                   </CardContent>
                 </Card>
-                <Card>
+                <Card
+                  className="cursor-pointer transition-colors hover:border-zinc-600"
+                  onClick={() => setSalesDetailCard('returns')}
+                >
                   <CardContent className="p-5">
-                    <p className="text-xs text-zinc-400">Bills Generated</p>
-                    <p className="text-2xl font-bold text-white mt-1">{salesSummary?.billCount ?? 0}</p>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <TrendingDown className="h-4 w-4 text-red-400" />
+                      <p className="text-xs">Sales Returns</p>
+                    </div>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(pnlSummary.salesReturns)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      {returnsData.filter((r) => r.return_type === 'sale').length} credit notes
+                    </p>
                   </CardContent>
                 </Card>
-                <Card>
+                <Card
+                  className="cursor-pointer transition-colors hover:border-zinc-600"
+                  onClick={() => setSalesDetailCard('net')}
+                >
                   <CardContent className="p-5">
-                    <p className="text-xs text-zinc-400">Average Bill Value</p>
-                    <p className="text-2xl font-bold text-white mt-1">{formatINR(salesSummary?.avg ?? 0)}</p>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <BarChart3 className="h-4 w-4 text-blue-400" />
+                      <p className="text-xs">Net Sales</p>
+                    </div>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(pnlSummary.netSales)}</p>
                   </CardContent>
                 </Card>
-                <Card>
+                <Card
+                  className="cursor-pointer transition-colors hover:border-zinc-600"
+                  onClick={() => setSalesDetailCard('due')}
+                >
                   <CardContent className="p-5">
-                    <p className="text-xs text-zinc-400">Total Discounts Given</p>
-                    <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(salesSummary?.discount ?? 0)}</p>
+                    <div className="flex items-center gap-2 text-zinc-400">
+                      <Receipt className="h-4 w-4 text-amber-400" />
+                      <p className="text-xs">Balance Due</p>
+                    </div>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(balanceSheetSummary.accountsReceivable)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Outstanding customer dues</p>
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Transaction list */}
+              <div className="space-y-2">
+                {salesData.length > 0 ? (
+                  [...salesData]
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .map((s) => (
+                      <div
+                        key={s.id}
+                        onClick={() => navigate(`/billing/sales/${s.id}`)}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 cursor-pointer transition-colors hover:border-zinc-600"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary text-zinc-400">
+                            <Receipt className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-white truncate">Invoice #{s.invoice_no}</span>
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-emerald-500/40 text-emerald-400">
+                                paid
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-zinc-500">
+                              {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(s.created_at))}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="font-semibold text-white shrink-0">{formatINR(s.grand_total)}</span>
+                      </div>
+                    ))
+                ) : (
+                  <p className="text-center text-zinc-500 py-8 text-sm">No sales recorded for this period</p>
+                )}
+              </div>
+
+              {returnsData.filter((r) => r.return_type === 'sale').length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-zinc-300 pt-2">Sales Returns (Credit Notes)</p>
+                  {returnsData
+                    .filter((r) => r.return_type === 'sale')
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .map((r) => (
+                      <div
+                        key={r.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary text-zinc-400">
+                            <Undo2 className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-white truncate">
+                                Credit Note {r.original_invoice_no ? `(${r.original_invoice_no})` : ''}
+                              </span>
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-red-500/40 text-red-400">
+                                return
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-zinc-500">
+                              {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(r.created_at))}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="font-semibold text-red-400 shrink-0">-{formatINR(r.refund_amount)}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
 
               {/* Payment Mode Breakdown */}
               <Card>
@@ -615,7 +978,353 @@ export function ReportsPage() {
           )}
         </TabsContent>
 
-        {/* ── 2. Profit & Loss (P&L) Statement Tab ── */}
+        {/* Sales KPI card detail dialog */}
+        <Dialog open={salesDetailCard !== null} onOpenChange={(open) => !open && setSalesDetailCard(null)}>
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {salesDetailCard === 'total' && 'Total Sales — Invoice Detail'}
+                {salesDetailCard === 'returns' && 'Sales Returns — Credit Note Detail'}
+                {salesDetailCard === 'net' && 'Net Sales — Breakdown'}
+                {salesDetailCard === 'due' && 'Balance Due — Customer Detail'}
+              </DialogTitle>
+              <DialogDescription>
+                {dateFrom} to {dateTo}
+              </DialogDescription>
+            </DialogHeader>
+
+            {salesDetailCard === 'total' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 p-3 mb-2">
+                  <span className="text-sm text-muted-foreground">Total ({salesSummary?.billCount ?? 0} invoices)</span>
+                  <span className="text-lg font-bold text-white">{formatINR(pnlSummary.grossSales)}</span>
+                </div>
+                {[...salesData]
+                  .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                  .map((s) => (
+                    <div
+                      key={s.id}
+                      onClick={() => navigate(`/billing/sales/${s.id}`)}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 cursor-pointer transition-colors hover:border-zinc-600"
+                    >
+                      <div>
+                        <span className="font-medium text-white text-sm">Invoice #{s.invoice_no}</span>
+                        <p className="text-xs text-zinc-500">
+                          {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(s.created_at))}
+                          {' · '}{s.payment_mode}
+                        </p>
+                      </div>
+                      <span className="font-semibold text-white text-sm shrink-0">{formatINR(s.grand_total)}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {salesDetailCard === 'returns' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 p-3 mb-2">
+                  <span className="text-sm text-muted-foreground">Total returns</span>
+                  <span className="text-lg font-bold text-red-400">-{formatINR(pnlSummary.salesReturns)}</span>
+                </div>
+                {returnsData.filter((r) => r.return_type === 'sale').length > 0 ? (
+                  returnsData
+                    .filter((r) => r.return_type === 'sale')
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .map((r) => (
+                      <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
+                        <div>
+                          <span className="font-medium text-white text-sm">
+                            Credit Note {r.original_invoice_no ? `(${r.original_invoice_no})` : ''}
+                          </span>
+                          <p className="text-xs text-zinc-500">
+                            {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(r.created_at))}
+                            {r.reason ? ` · ${r.reason}` : ''}
+                          </p>
+                        </div>
+                        <span className="font-semibold text-red-400 text-sm shrink-0">-{formatINR(r.refund_amount)}</span>
+                      </div>
+                    ))
+                ) : (
+                  <p className="text-center text-zinc-500 py-6 text-sm">No returns for this period</p>
+                )}
+              </div>
+            )}
+
+            {salesDetailCard === 'net' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5">
+                  <span className="text-sm text-zinc-300">Gross Sales</span>
+                  <span className="font-semibold text-white">{formatINR(pnlSummary.grossSales)}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5">
+                  <span className="text-sm text-zinc-300">Less: Sales Returns</span>
+                  <span className="font-semibold text-red-400">-{formatINR(pnlSummary.salesReturns)}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5">
+                  <span className="text-sm font-medium text-blue-300">Net Sales</span>
+                  <span className="font-bold text-blue-300">{formatINR(pnlSummary.netSales)}</span>
+                </div>
+              </div>
+            )}
+
+            {salesDetailCard === 'due' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 p-3 mb-2">
+                  <span className="text-sm text-muted-foreground">Total outstanding</span>
+                  <span className="text-lg font-bold text-amber-400">{formatINR(balanceSheetSummary.accountsReceivable)}</span>
+                </div>
+                {customersData.filter((c) => (c.balance || 0) > 0).length > 0 ? (
+                  customersData
+                    .filter((c) => (c.balance || 0) > 0)
+                    .sort((a, b) => (b.balance || 0) - (a.balance || 0))
+                    .map((c) => (
+                      <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
+                        <div>
+                          <span className="font-medium text-white text-sm">{c.name}</span>
+                          <p className="text-xs text-zinc-500">{c.phone || '—'}</p>
+                        </div>
+                        <span className="font-semibold text-amber-400 text-sm shrink-0">{formatINR(c.balance || 0)}</span>
+                      </div>
+                    ))
+                ) : (
+                  <p className="text-center text-zinc-500 py-6 text-sm">No outstanding customer balances</p>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* ── 2. Purchase Report Tab ── */}
+        <TabsContent value="purchases" className="space-y-4">
+          <div className="space-y-2">
+            {purchasesLoading ? (
+              Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-16 rounded-lg bg-zinc-800 animate-pulse" />)
+            ) : purchasesData.length > 0 ? (
+              [...purchasesData]
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .map((p: any) => (
+                  <div
+                    key={p.id}
+                    onClick={() => navigate(`/purchases/${p.id}`)}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 cursor-pointer transition-colors hover:border-zinc-600"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary text-zinc-400">
+                        <ShoppingCart className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-medium text-white truncate">
+                          {p.purchase_no || p.invoice_no || 'Purchase'} {p.suppliers?.name ? `— ${p.suppliers.name}` : ''}
+                        </span>
+                        <p className="text-xs text-zinc-500">
+                          {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(p.created_at))}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-semibold text-white shrink-0">{formatINR(p.total_amount)}</span>
+                  </div>
+                ))
+            ) : (
+              <p className="text-center text-zinc-500 py-8 text-sm">No purchases recorded for this period</p>
+            )}
+          </div>
+
+          {returnsData.filter((r) => r.return_type === 'purchase').length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-zinc-300 pt-2">Purchase Returns (Debit Notes)</p>
+              {returnsData
+                .filter((r) => r.return_type === 'purchase')
+                .map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary text-zinc-400">
+                        <Undo2 className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-medium text-white truncate">
+                          Debit Note {r.purchase_ref ? `(${r.purchase_ref})` : ''}
+                        </span>
+                        <p className="text-xs text-zinc-500">
+                          {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(r.created_at))}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-semibold text-red-400 shrink-0">-{formatINR(r.refund_amount)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── 3. Cash / Bank Book Tab ── */}
+        <TabsContent value="cashbank" className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-xs text-muted-foreground">Cash in Hand</p>
+              <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(salesSummary?.paymentSplit.cash ?? 0)}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-xs text-muted-foreground">Bank (Card + UPI)</p>
+              <p className="text-2xl font-bold text-blue-400 mt-1">{formatINR((salesSummary?.paymentSplit.card ?? 0) + (salesSummary?.paymentSplit.upi ?? 0))}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-xs text-muted-foreground">Total Collections</p>
+              <p className="text-2xl font-bold text-white mt-1">{formatINR(salesSummary?.total ?? 0)}</p>
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            For full double-entry account ledgers and voucher-level detail, see the <a href="/ledger" className="text-indigo-400 hover:underline">Ledger</a> page.
+          </p>
+        </TabsContent>
+
+        {/* ── 4. All Transactions Tab ── */}
+        <TabsContent value="all-txns" className="space-y-4">
+          {(() => {
+            type TxnKind = 'sale' | 'purchase' | 'expense' | 'sale-return' | 'purchase-return' | 'payment-in' | 'payment-out'
+            type Txn = { id: string; date: string; label: string; amount: number; kind: TxnKind; navTo?: string }
+
+            const voucherAmount = (v: (typeof vouchersData)[number]) =>
+              (v.voucher_entries ?? []).filter((e: any) => e.type === 'debit').reduce((s: number, e: any) => s + (e.amount || 0), 0)
+
+            const txns: Txn[] = [
+              ...salesData.map((s) => ({
+                id: `sale-${s.id}`, date: s.created_at, label: `Sale — Invoice #${s.invoice_no}`,
+                amount: s.grand_total, kind: 'sale' as const, navTo: `/billing/sales/${s.id}`,
+              })),
+              ...purchasesData.map((p: any) => ({
+                id: `purchase-${p.id}`, date: p.created_at, label: `Purchase — ${p.purchase_no || p.invoice_no || p.id.slice(0, 8)}`,
+                amount: -p.total_amount, kind: 'purchase' as const, navTo: `/purchases/${p.id}`,
+              })),
+              ...expensesData.map((e) => ({
+                id: `expense-${e.id}`, date: e.expense_date, label: `Expense — ${e.description || e.category}`,
+                amount: -e.amount, kind: 'expense' as const,
+              })),
+              ...returnsData.map((r) => ({
+                id: `return-${r.id}`, date: r.created_at,
+                label: r.return_type === 'sale' ? `Sales Return${r.original_invoice_no ? ` (${r.original_invoice_no})` : ''}` : `Purchase Return${r.purchase_ref ? ` (${r.purchase_ref})` : ''}`,
+                amount: r.return_type === 'sale' ? -r.refund_amount : r.refund_amount,
+                kind: (r.return_type === 'sale' ? 'sale-return' : 'purchase-return') as TxnKind,
+              })),
+              ...vouchersData.map((v) => ({
+                id: `voucher-${v.id}`, date: v.date, label: `${v.type === 'receipt' ? 'Payment In' : 'Payment Out'} — ${v.voucher_no}${v.narration ? ` (${v.narration})` : ''}`,
+                amount: v.type === 'receipt' ? voucherAmount(v) : -voucherAmount(v),
+                kind: (v.type === 'receipt' ? 'payment-in' : 'payment-out') as TxnKind,
+              })),
+            ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+            const FILTERS: { value: TxnKind | 'all'; label: string }[] = [
+              { value: 'all', label: 'All' },
+              { value: 'sale', label: 'Sales' },
+              { value: 'purchase', label: 'Purchases' },
+              { value: 'expense', label: 'Expenses' },
+              { value: 'sale-return', label: 'Sales Returns' },
+              { value: 'purchase-return', label: 'Purchase Returns' },
+              { value: 'payment-in', label: 'Payments In' },
+              { value: 'payment-out', label: 'Payments Out' },
+            ]
+
+            const kindIcon: Record<TxnKind, React.ElementType> = {
+              sale: TrendingUp, purchase: TrendingDown, expense: Wallet,
+              'sale-return': Undo2, 'purchase-return': Undo2,
+              'payment-in': ArrowDownRight, 'payment-out': ArrowUpRight,
+            }
+
+            const totalSales = salesData.reduce((s, r) => s + r.grand_total, 0)
+            const totalPurchases = purchasesData.reduce((s, p) => s + (p.total_amount || 0), 0)
+            const moneyIn = totalSales + vouchersData.filter((v) => v.type === 'receipt').reduce((s, v) => s + voucherAmount(v), 0)
+            const moneyOut = totalPurchases + expensesData.reduce((s, e) => s + e.amount, 0) + vouchersData.filter((v) => v.type === 'payment').reduce((s, v) => s + voucherAmount(v), 0)
+
+            const filtered = allTxnsFilter === 'all' ? txns : txns.filter((t) => t.kind === allTxnsFilter)
+
+            return (
+              <>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card>
+                    <CardContent className="p-5">
+                      <p className="text-xs text-zinc-400">Sales</p>
+                      <p className="text-2xl font-bold text-white mt-1">{formatINR(totalSales)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-5">
+                      <p className="text-xs text-zinc-400">Purchases</p>
+                      <p className="text-2xl font-bold text-white mt-1">{formatINR(totalPurchases)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-5">
+                      <p className="text-xs text-zinc-400">Money In</p>
+                      <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(moneyIn)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-5">
+                      <p className="text-xs text-zinc-400">Money Out</p>
+                      <p className="text-2xl font-bold text-red-400 mt-1">{formatINR(moneyOut)}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 no-print">
+                  {FILTERS.map((f) => (
+                    <button
+                      key={f.value}
+                      type="button"
+                      onClick={() => setAllTxnsFilter(f.value)}
+                      className={cn(
+                        'rounded-md px-3 py-1.5 text-xs font-medium transition-colors border',
+                        allTxnsFilter === f.value
+                          ? 'bg-indigo-600 border-indigo-600 text-white'
+                          : 'border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600',
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-2">
+                  {vouchersLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-14 rounded-lg bg-zinc-800 animate-pulse" />)
+                  ) : filtered.length > 0 ? (
+                    filtered.map((t) => {
+                      const Icon = kindIcon[t.kind]
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={t.navTo ? () => navigate(t.navTo!) : undefined}
+                          className={cn(
+                            'flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3',
+                            t.navTo && 'cursor-pointer transition-colors hover:border-zinc-600',
+                          )}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary text-zinc-400">
+                              <Icon className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <span className="font-medium text-white truncate block">{t.label}</span>
+                              <p className="text-xs text-zinc-500">
+                                {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(t.date))}
+                              </p>
+                            </div>
+                          </div>
+                          <span className={cn('font-semibold shrink-0', t.amount < 0 ? 'text-red-400' : 'text-emerald-400')}>
+                            {t.amount < 0 ? '-' : ''}{formatINR(Math.abs(t.amount))}
+                          </span>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="text-center text-zinc-500 py-8 text-sm">No transactions for this period</p>
+                  )}
+                </div>
+              </>
+            )
+          })()}
+        </TabsContent>
+
+        {/* ── 5. Profit & Loss (P&L) Statement Tab ── */}
         <TabsContent value="pnl" className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">Income statement of operating revenues, cost of goods, and operational expenses</p>
@@ -911,215 +1620,744 @@ export function ReportsPage() {
             </div>
           </div>
         </TabsContent>
-
-        {/* ── 6. Item-wise Tab ── */}
-        <TabsContent value="items" className="space-y-4">
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={exportItems}>
-              <Download className="h-4 w-4 mr-1.5" />
-              Export CSV
-            </Button>
-          </div>
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Product</TableHead>
-                  <TableHead>HSN</TableHead>
-                  <TableHead className="text-right">Qty Sold</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
-                  <TableHead className="text-right">CGST</TableHead>
-                  <TableHead className="text-right">SGST</TableHead>
-                  <TableHead className="text-right">IGST</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {itemLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 7 }).map((_, j) => (
-                        <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : itemSummary.length > 0 ? (
-                  itemSummary.map((item) => (
-                    <TableRow key={item.name}>
-                      <TableCell className="font-medium text-white">{item.name}</TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-400">{item.hsn || '—'}</TableCell>
-                      <TableCell className="text-right">{item.qty}</TableCell>
-                      <TableCell className="text-right font-semibold">{formatINR(item.revenue)}</TableCell>
-                      <TableCell className="text-right">{formatINR(item.cgst)}</TableCell>
-                      <TableCell className="text-right">{formatINR(item.sgst)}</TableCell>
-                      <TableCell className="text-right">{formatINR(item.igst)}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-zinc-500 py-12">
-                      No sales recorded for this period
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
-
-        {/* ── 7. Stock Report Tab ── */}
-        <TabsContent value="stock" className="space-y-4">
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={exportStock}>
-              <Download className="h-4 w-4 mr-1.5" />
-              Export CSV
-            </Button>
-          </div>
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Reorder</TableHead>
-                  <TableHead className="text-right">Selling Price</TableHead>
-                  {isOwner && <TableHead className="text-right">Cost Price</TableHead>}
-                  <TableHead className="text-right">Stock Value (Sell)</TableHead>
-                  {isOwner && <TableHead className="text-right">Stock Value (Cost)</TableHead>}
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stockLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: isOwner ? 9 : 7 }).map((_, j) => (
-                        <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : stockData.length > 0 ? (
-                  stockData.map((item: any) => {
-                    const p = item.products
-                    const qty = item.stock_qty ?? 0
-                    const reorder = item.reorder_level ?? 0
-                    const price = p?.price ?? 0
-                    const cost = p?.cost_price ?? 0
-                    const isLow = qty <= reorder
-                    return (
-                      <TableRow key={p?.name}>
-                        <TableCell className="font-medium text-white">{p?.name ?? 'Unknown'}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{p?.categories?.name ?? 'Uncategorized'}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-semibold">{qty}</TableCell>
-                        <TableCell className="text-right text-zinc-400">{reorder}</TableCell>
-                        <TableCell className="text-right">{formatINR(price)}</TableCell>
-                        {isOwner && <TableCell className="text-right text-zinc-400">{formatINR(cost)}</TableCell>}
-                        <TableCell className="text-right font-semibold">{formatINR(qty * price)}</TableCell>
-                        {isOwner && (
-                          <TableCell className="text-right font-semibold text-zinc-300">
-                            {formatINR(qty * cost)}
-                          </TableCell>
-                        )}
-                        <TableCell>
-                          {isLow ? (
-                            <Badge variant="destructive">Low Stock</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">OK</Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={isOwner ? 9 : 7} className="text-center text-zinc-500 py-12">
-                      No inventory data
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
-
-        {/* ── 8. GST Summary Tab ── */}
-        <TabsContent value="gst" className="space-y-4">
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={exportGST}>
-              <Download className="h-4 w-4 mr-1.5" />
-              Export CSV
-            </Button>
-          </div>
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tax Rate</TableHead>
-                  <TableHead className="text-right">Taxable Amount</TableHead>
-                  <TableHead className="text-right">CGST</TableHead>
-                  <TableHead className="text-right">SGST</TableHead>
-                  <TableHead className="text-right">IGST</TableHead>
-                  <TableHead className="text-right">Total Tax</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {gstLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((_, j) => (
-                        <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : gstSummary.length > 0 ? (
-                  <>
-                    {gstSummary.map((g) => (
-                      <TableRow key={g.rate}>
-                        <TableCell>
-                          <Badge variant="secondary">{g.rate}%</Badge>
-                        </TableCell>
-                        <TableCell className="text-right">{formatINR(g.taxable)}</TableCell>
-                        <TableCell className="text-right">{formatINR(g.cgst)}</TableCell>
-                        <TableCell className="text-right">{formatINR(g.sgst)}</TableCell>
-                        <TableCell className="text-right">{formatINR(g.igst)}</TableCell>
-                        <TableCell className="text-right font-semibold">
-                          {formatINR(g.cgst + g.sgst + g.igst)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    <TableRow className="border-t-2 border-zinc-700 bg-zinc-800/30">
-                      <TableCell className="font-bold text-zinc-200">Total</TableCell>
-                      <TableCell className="text-right font-bold">
-                        {formatINR(gstSummary.reduce((s, g) => s + g.taxable, 0))}
-                      </TableCell>
-                      <TableCell className="text-right font-bold">
-                        {formatINR(gstSummary.reduce((s, g) => s + g.cgst, 0))}
-                      </TableCell>
-                      <TableCell className="text-right font-bold">
-                        {formatINR(gstSummary.reduce((s, g) => s + g.sgst, 0))}
-                      </TableCell>
-                      <TableCell className="text-right font-bold">
-                        {formatINR(gstSummary.reduce((s, g) => s + g.igst, 0))}
-                      </TableCell>
-                      <TableCell className="text-right font-bold text-indigo-300">
-                        {formatINR(gstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0))}
-                      </TableCell>
-                    </TableRow>
-                  </>
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-zinc-500 py-12">
-                      No GST data for this period
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
       </Tabs>
+        )}
+
+        {/* ── Party Reports section ── */}
+        {activeSection === 'party' && (
+          <div className="space-y-6">
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Users className="h-4 w-4 text-indigo-400" /> Customers — Receivable Balance
+                </h3>
+                <span className="font-bold text-amber-400">{formatINR(balanceSheetSummary.accountsReceivable)}</span>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead className="text-right">Balance Due</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {customersData.filter((c) => (c.balance || 0) > 0).length > 0 ? (
+                    customersData
+                      .filter((c) => (c.balance || 0) > 0)
+                      .sort((a, b) => (b.balance || 0) - (a.balance || 0))
+                      .map((c) => (
+                        <TableRow key={c.id}>
+                          <TableCell className="font-medium text-white">{c.name}</TableCell>
+                          <TableCell className="text-zinc-400">{c.phone || '—'}</TableCell>
+                          <TableCell className="text-right font-semibold text-amber-400">{formatINR(c.balance || 0)}</TableCell>
+                        </TableRow>
+                      ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center text-zinc-500 py-8">No outstanding customer balances</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-indigo-400" /> Suppliers
+                </h3>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead className="text-right">Purchases (period)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {suppliersData.length > 0 ? (
+                    suppliersData.map((s) => {
+                      const total = purchasesData
+                        .filter((p: any) => p.supplier_id === s.id)
+                        .reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0)
+                      return (
+                        <TableRow key={s.id}>
+                          <TableCell className="font-medium text-white">{s.name}</TableCell>
+                          <TableCell className="text-zinc-400">{s.phone || '—'}</TableCell>
+                          <TableCell className="text-right font-semibold">{formatINR(total)}</TableCell>
+                        </TableRow>
+                      )
+                    })
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center text-zinc-500 py-8">No suppliers found</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
+        {/* ── GST Reports section ── */}
+        {activeSection === 'gst' && (
+          <Tabs defaultValue="gstr1" className="space-y-4">
+            <TabsList className="flex flex-wrap h-auto gap-1 bg-card border border-border p-1">
+              <TabsTrigger value="gstr1">GSTR-1</TabsTrigger>
+              <TabsTrigger value="gstr2" disabled className="opacity-50">GSTR-2 (Coming soon)</TabsTrigger>
+              <TabsTrigger value="gstr3b" disabled className="opacity-50">GSTR-3B (Coming soon)</TabsTrigger>
+              <TabsTrigger value="gstr9">GSTR-9</TabsTrigger>
+              <TabsTrigger value="hsn">HSN-wise Summary</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="gstr1" className="space-y-4">
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={exportGST}>
+                  <Download className="h-4 w-4 mr-1.5" />
+                  Export CSV
+                </Button>
+              </div>
+
+              <div className={cn(
+                'rounded-lg border p-3 flex items-center justify-between text-xs',
+                gstr1Summary.reconciled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+              )}>
+                <div className="flex items-center gap-2">
+                  {gstr1Summary.reconciled ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                  <span>
+                    {gstr1Summary.reconciled
+                      ? 'GSTR-1 reconciled — taxable value + tax matches invoice line totals.'
+                      : 'GSTR-1 reconciliation mismatch — review sale/line-item tax data.'}
+                  </span>
+                </div>
+                <span>Tolerance: ₹1.00 · Difference: {formatINR(gstr1Summary.difference)}</span>
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Taxable Value</p>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(gstr1Summary.netTaxableValue)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">after sales returns not included</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Output Tax</p>
+                    <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(gstr1Summary.netOutputTax)}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">B2B Invoices</p>
+                    <p className="text-2xl font-bold text-white mt-1">{gstr1Summary.b2bCount}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">registered parties</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">B2C Invoices</p>
+                    <p className="text-2xl font-bold text-white mt-1">{gstr1Summary.b2cCount}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">walk-in / unregistered</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">B2B Supplies (Business to Business)</p>
+                    <p className="text-xs text-zinc-500">{gstr1Summary.b2bCount} invoices to GST-registered parties</p>
+                  </div>
+                  <span className="font-bold text-white">{formatINR(gstr1Summary.b2bTaxable)}</span>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-3 text-sm">
+                  <span className="text-zinc-400">Taxable Value</span>
+                  <span className="text-right text-white">{formatINR(gstr1Summary.b2bTaxable)}</span>
+                  <span className="text-zinc-400">Total Tax</span>
+                  <span className="text-right text-white">{formatINR(gstr1Summary.b2bTax)}</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">B2C Supplies (Business to Consumer)</p>
+                    <p className="text-xs text-zinc-500">{gstr1Summary.b2cCount} invoices to walk-in / unregistered parties</p>
+                  </div>
+                  <span className="font-bold text-white">{formatINR(gstr1Summary.b2cTaxable)}</span>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-3 text-sm">
+                  <span className="text-zinc-400">Taxable Value</span>
+                  <span className="text-right text-white">{formatINR(gstr1Summary.b2cTaxable)}</span>
+                  <span className="text-zinc-400">Total Tax</span>
+                  <span className="text-right text-white">{formatINR(gstr1Summary.b2cTax)}</span>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-500">
+                Note: taxable value and tax are computed from the sale-level total (grand total minus tax), not a per-line CGST/SGST/IGST
+                breakup by rate — see Tax Rate Report (under Taxes Reports) for the rate-wise split. A full GSTIN-level invoice export
+                shaped for actual GST portal filing is a larger, separately scoped item.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="gstr9" className="space-y-4">
+              <p className="text-sm text-muted-foreground">Annual return summary — aggregated outward supplies and tax for the selected period</p>
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <Table>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell className="text-zinc-300">Total Outward Taxable Supplies</TableCell>
+                      <TableCell className="text-right font-semibold text-white">{formatINR(gstr1Summary.netTaxableValue)}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="text-zinc-300">Total Tax Paid (CGST + SGST + IGST)</TableCell>
+                      <TableCell className="text-right font-semibold text-white">{formatINR(gstr1Summary.netOutputTax)}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="text-zinc-300">B2B Invoices</TableCell>
+                      <TableCell className="text-right font-semibold text-white">{gstr1Summary.b2bCount}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="text-zinc-300">B2C Invoices</TableCell>
+                      <TableCell className="text-right font-semibold text-white">{gstr1Summary.b2cCount}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="text-zinc-300">Input Tax Credit Claimed (from purchases)</TableCell>
+                      <TableCell className="text-right font-semibold text-white">{formatINR(taxLiabilitySummary.inputTax)}</TableCell>
+                    </TableRow>
+                    <TableRow className="border-t-2 border-zinc-700 bg-zinc-800/30">
+                      <TableCell className="font-bold text-zinc-200">Net Tax Payable</TableCell>
+                      <TableCell className="text-right font-bold text-indigo-300">{formatINR(Math.abs(taxLiabilitySummary.netPayable))}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+              <p className="text-xs text-zinc-500">
+                GSTR-9 is normally filed annually — this view aggregates whatever date range is currently selected above, so set the
+                filter to a full financial year for an accurate annual summary.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="hsn" className="space-y-4">
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={exportItems}>
+                  <Download className="h-4 w-4 mr-1.5" />
+                  Export CSV
+                </Button>
+              </div>
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead>HSN</TableHead>
+                      <TableHead className="text-right">Qty Sold</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {itemLoading ? (
+                      Array.from({ length: 5 }).map((_, i) => (
+                        <TableRow key={i}>
+                          {Array.from({ length: 7 }).map((_, j) => (
+                            <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : itemSummary.length > 0 ? (
+                      itemSummary.map((item) => (
+                        <TableRow key={item.name}>
+                          <TableCell className="font-medium text-white">{item.name}</TableCell>
+                          <TableCell className="font-mono text-xs text-zinc-400">{item.hsn || '—'}</TableCell>
+                          <TableCell className="text-right">{item.qty}</TableCell>
+                          <TableCell className="text-right font-semibold">{formatINR(item.revenue)}</TableCell>
+                          <TableCell className="text-right">{formatINR(item.cgst)}</TableCell>
+                          <TableCell className="text-right">{formatINR(item.sgst)}</TableCell>
+                          <TableCell className="text-right">{formatINR(item.igst)}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-zinc-500 py-12">
+                          No sales recorded for this period
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+          </Tabs>
+        )}
+
+        {/* ── Stock / Item Reports section ── */}
+        {activeSection === 'stock' && (
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={exportStock}>
+                <Download className="h-4 w-4 mr-1.5" />
+                Export CSV
+              </Button>
+            </div>
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Product</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Stock</TableHead>
+                    <TableHead className="text-right">Reorder</TableHead>
+                    <TableHead className="text-right">Selling Price</TableHead>
+                    {isOwner && <TableHead className="text-right">Cost Price</TableHead>}
+                    <TableHead className="text-right">Stock Value (Sell)</TableHead>
+                    {isOwner && <TableHead className="text-right">Stock Value (Cost)</TableHead>}
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stockLoading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <TableRow key={i}>
+                        {Array.from({ length: isOwner ? 9 : 7 }).map((_, j) => (
+                          <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : stockData.length > 0 ? (
+                    stockData.map((item: any) => {
+                      const p = item.products
+                      const qty = item.stock_qty ?? 0
+                      const reorder = item.reorder_level ?? 0
+                      const price = p?.price ?? 0
+                      const cost = p?.cost_price ?? 0
+                      const isLow = qty <= reorder
+                      return (
+                        <TableRow key={p?.name}>
+                          <TableCell className="font-medium text-white">{p?.name ?? 'Unknown'}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{p?.categories?.name ?? 'Uncategorized'}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">{qty}</TableCell>
+                          <TableCell className="text-right text-zinc-400">{reorder}</TableCell>
+                          <TableCell className="text-right">{formatINR(price)}</TableCell>
+                          {isOwner && <TableCell className="text-right text-zinc-400">{formatINR(cost)}</TableCell>}
+                          <TableCell className="text-right font-semibold">{formatINR(qty * price)}</TableCell>
+                          {isOwner && (
+                            <TableCell className="text-right font-semibold text-zinc-300">
+                              {formatINR(qty * cost)}
+                            </TableCell>
+                          )}
+                          <TableCell>
+                            {isLow ? (
+                              <Badge variant="destructive">Low Stock</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">OK</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={isOwner ? 9 : 7} className="text-center text-zinc-500 py-12">
+                        No inventory data
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Expense Reports section ── */}
+        {activeSection === 'expenses' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Total Expenses</p>
+                <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(pnlSummary.totalExpenses)}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Categories</p>
+                <p className="text-2xl font-bold text-white mt-1">{Object.keys(pnlSummary.expenseGroups).length}</p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">% of Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Object.keys(pnlSummary.expenseGroups).length > 0 ? (
+                    Object.entries(pnlSummary.expenseGroups)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([cat, amt]) => (
+                        <TableRow key={cat}>
+                          <TableCell className="font-medium text-white">{cat}</TableCell>
+                          <TableCell className="text-right">{formatINR(amt)}</TableCell>
+                          <TableCell className="text-right text-zinc-400">
+                            {pnlSummary.totalExpenses > 0 ? `${((amt / pnlSummary.totalExpenses) * 100).toFixed(1)}%` : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center text-zinc-500 py-8">No expenses recorded for this period</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Taxes Reports section: GST Summary / Tax Rate / Invoice Range / TDS ── */}
+        {activeSection === 'taxes' && (
+          <Tabs defaultValue="gst-summary" className="space-y-4">
+            <TabsList className="flex flex-wrap h-auto gap-1 bg-card border border-border p-1 no-print">
+              <TabsTrigger value="gst-summary">GST Summary</TabsTrigger>
+              <TabsTrigger value="tax-rate">Tax Rate Report</TabsTrigger>
+              <TabsTrigger value="invoice-range">Invoice From-No / To-No</TabsTrigger>
+              <TabsTrigger value="tds-payable">TDS Payable</TabsTrigger>
+              <TabsTrigger value="tds-receivable">TDS Receivable</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="gst-summary" className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">Net GST payable = Output Tax collected on sales − Input Tax paid on purchases, for the selected period</p>
+                <Button variant="outline" size="sm" onClick={exportTaxes}>
+                  <Download className="h-4 w-4 mr-1.5" />
+                  Export CSV
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <p className="text-xs text-muted-foreground">Output Tax (Sales GST Collected)</p>
+                  <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(taxLiabilitySummary.outputTax)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <p className="text-xs text-muted-foreground">Input Tax (Purchase GST Paid)</p>
+                  <p className="text-2xl font-bold text-blue-400 mt-1">{formatINR(taxLiabilitySummary.inputTax)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <p className="text-xs text-muted-foreground">Net GST Payable</p>
+                  <p className={cn('text-2xl font-bold mt-1', taxLiabilitySummary.netPayable >= 0 ? 'text-amber-400' : 'text-emerald-400')}>
+                    {formatINR(Math.abs(taxLiabilitySummary.netPayable))}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-0.5">{taxLiabilitySummary.netPayable >= 0 ? 'Payable to government' : 'Input tax credit carried forward'}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Tax Rate</TableHead>
+                      <TableHead className="text-right">Output Tax</TableHead>
+                      <TableHead className="text-right">Input Tax</TableHead>
+                      <TableHead className="text-right">Net Payable</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {purchaseGstLoading || gstLoading ? (
+                      Array.from({ length: 4 }).map((_, i) => (
+                        <TableRow key={i}>
+                          {Array.from({ length: 4 }).map((_, j) => (
+                            <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : (
+                      [0, 5, 12, 18, 28]
+                        .filter((rate) => gstSummary.some((g) => g.rate === rate) || purchaseGstSummary.some((g) => g.rate === rate))
+                        .map((rate) => {
+                          const out = gstSummary.find((g) => g.rate === rate)
+                          const inp = purchaseGstSummary.find((g) => g.rate === rate)
+                          const outTotal = out ? out.cgst + out.sgst + out.igst : 0
+                          const inTotal = inp ? inp.cgst + inp.sgst + inp.igst : 0
+                          const net = outTotal - inTotal
+                          return (
+                            <TableRow key={rate}>
+                              <TableCell><Badge variant="secondary">{rate}%</Badge></TableCell>
+                              <TableCell className="text-right">{formatINR(outTotal)}</TableCell>
+                              <TableCell className="text-right">{formatINR(inTotal)}</TableCell>
+                              <TableCell className={cn('text-right font-semibold', net >= 0 ? 'text-amber-400' : 'text-emerald-400')}>
+                                {formatINR(Math.abs(net))}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })
+                    )}
+                    {!purchaseGstLoading && !gstLoading && gstSummary.length === 0 && purchaseGstSummary.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-zinc-500 py-12">No tax data for this period</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="tax-rate" className="space-y-4">
+              <p className="text-sm text-muted-foreground">Sales revenue and tax collected, grouped by GST rate</p>
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Tax Rate</TableHead>
+                      <TableHead className="text-right">Taxable Value</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Total Tax</TableHead>
+                      <TableHead className="text-right">% of Total Tax</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {gstLoading ? (
+                      Array.from({ length: 4 }).map((_, i) => (
+                        <TableRow key={i}>
+                          {Array.from({ length: 7 }).map((_, j) => (
+                            <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : gstSummary.length > 0 ? (
+                      (() => {
+                        const grandTotalTax = gstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0)
+                        return gstSummary.map((g) => {
+                          const totalTax = g.cgst + g.sgst + g.igst
+                          return (
+                            <TableRow key={g.rate}>
+                              <TableCell><Badge variant="secondary">{g.rate}%</Badge></TableCell>
+                              <TableCell className="text-right">{formatINR(g.taxable)}</TableCell>
+                              <TableCell className="text-right">{formatINR(g.cgst)}</TableCell>
+                              <TableCell className="text-right">{formatINR(g.sgst)}</TableCell>
+                              <TableCell className="text-right">{formatINR(g.igst)}</TableCell>
+                              <TableCell className="text-right font-semibold">{formatINR(totalTax)}</TableCell>
+                              <TableCell className="text-right text-zinc-400">
+                                {grandTotalTax > 0 ? `${((totalTax / grandTotalTax) * 100).toFixed(1)}%` : '—'}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })
+                      })()
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-zinc-500 py-12">No tax data for this period</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="invoice-range" className="space-y-4">
+              <p className="text-sm text-muted-foreground">Filter sales by invoice number range (alphabetical range within the selected date period)</p>
+              <div className="flex flex-wrap gap-3">
+                <div className="flex-1 min-w-[200px]">
+                  <label htmlFor="invoice-range-from" className="text-xs text-muted-foreground mb-1 block">From Invoice No</label>
+                  <input
+                    id="invoice-range-from"
+                    name="invoiceRangeFrom"
+                    type="text"
+                    placeholder="e.g., BS-20260801-0001"
+                    value={invoiceRangeFrom}
+                    onChange={(e) => setInvoiceRangeFrom(e.target.value)}
+                    className="w-full h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="flex-1 min-w-[200px]">
+                  <label htmlFor="invoice-range-to" className="text-xs text-muted-foreground mb-1 block">To Invoice No</label>
+                  <input
+                    id="invoice-range-to"
+                    name="invoiceRangeTo"
+                    type="text"
+                    placeholder="e.g., BS-20260831-9999"
+                    value={invoiceRangeTo}
+                    onChange={(e) => setInvoiceRangeTo(e.target.value)}
+                    className="w-full h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {!invoiceRangeFrom && !invoiceRangeTo ? (
+                <p className="text-center text-zinc-500 py-12 text-sm">Enter invoice range to search</p>
+              ) : (
+                <div className="space-y-2">
+                  {[...salesData]
+                    .filter((s) => {
+                      const inv = s.invoice_no ?? ''
+                      if (invoiceRangeFrom && inv < invoiceRangeFrom) return false
+                      if (invoiceRangeTo && inv > invoiceRangeTo) return false
+                      return true
+                    })
+                    .sort((a, b) => (a.invoice_no ?? '').localeCompare(b.invoice_no ?? ''))
+                    .map((s) => (
+                      <div
+                        key={s.id}
+                        onClick={() => navigate(`/billing/sales/${s.id}`)}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 cursor-pointer transition-colors hover:border-zinc-600"
+                      >
+                        <div>
+                          <span className="font-medium text-white text-sm">Invoice #{s.invoice_no}</span>
+                          <p className="text-xs text-zinc-500">
+                            {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(s.created_at))}
+                          </p>
+                        </div>
+                        <span className="font-semibold text-white text-sm shrink-0">{formatINR(s.grand_total)}</span>
+                      </div>
+                    ))}
+                  {[...salesData].filter((s) => {
+                    const inv = s.invoice_no ?? ''
+                    if (invoiceRangeFrom && inv < invoiceRangeFrom) return false
+                    if (invoiceRangeTo && inv > invoiceRangeTo) return false
+                    return true
+                  }).length === 0 && (
+                    <p className="text-center text-zinc-500 py-8 text-sm">No invoices in this range for the selected period</p>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="tds-payable" className="space-y-4">
+              <p className="text-sm text-muted-foreground">TDS deducted on payments to suppliers/contractors and payable to the government</p>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Total TDS Payable</p>
+                <p className="text-2xl font-bold text-white mt-1">{formatINR(0)}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/40 p-6 text-center">
+                <p className="text-sm text-zinc-400">No TDS deduction tracking set up yet</p>
+                <p className="text-xs text-zinc-600 mt-1">BillScape doesn't record TDS on purchases/expenses today — this report will populate once that's added.</p>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="tds-receivable" className="space-y-4">
+              <p className="text-sm text-muted-foreground">TDS deducted by customers on payments to you, claimable as credit</p>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Total TDS Receivable</p>
+                <p className="text-2xl font-bold text-white mt-1">{formatINR(0)}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/40 p-6 text-center">
+                <p className="text-sm text-zinc-400">No TDS deduction tracking set up yet</p>
+                <p className="text-xs text-zinc-600 mt-1">BillScape doesn't record TDS on sales today — this report will populate once that's added.</p>
+              </div>
+            </TabsContent>
+          </Tabs>
+        )}
+
+        {/* ── Sale Order Reports section: Quotations by status ── */}
+        {activeSection === 'sale-orders' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">Quotations act as BillScape's sale orders — tracked by status until converted to an invoice</p>
+              <Button variant="outline" size="sm" onClick={exportQuotations}>
+                <Download className="h-4 w-4 mr-1.5" />
+                Export CSV
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Total Quotations</p>
+                <p className="text-2xl font-bold text-white mt-1">{quotationsSummary.total}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Accepted</p>
+                <p className="text-2xl font-bold text-emerald-400 mt-1">{quotationsSummary.accepted}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Conversion Rate</p>
+                <p className="text-2xl font-bold text-white mt-1">{quotationsSummary.conversionRate.toFixed(1)}%</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs text-muted-foreground">Total Value</p>
+                <p className="text-2xl font-bold text-white mt-1">{formatINR(quotationsData.reduce((s, q) => s + (q.total_amount || 0), 0))}</p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Count</TableHead>
+                    <TableHead className="text-right">Total Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {quotationsLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <TableRow key={i}>
+                        {Array.from({ length: 3 }).map((_, j) => (
+                          <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : Object.keys(quotationsSummary.byStatus).length > 0 ? (
+                    (['draft', 'sent', 'accepted', 'rejected', 'expired'] as const)
+                      .filter((status) => quotationsSummary.byStatus[status])
+                      .map((status) => (
+                        <TableRow key={status}>
+                          <TableCell>
+                            <Badge variant="outline" className={cn(STATUS_BADGE_COLORS[status])}>{status}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">{quotationsSummary.byStatus[status].count}</TableCell>
+                          <TableCell className="text-right font-semibold">{formatINR(quotationsSummary.byStatus[status].value)}</TableCell>
+                        </TableRow>
+                      ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center text-zinc-500 py-12">No quotations for this period</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="space-y-2">
+              {quotationsData.length > 0 && (
+                [...quotationsData]
+                  .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                  .map((q) => (
+                    <div key={q.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-500/15 text-indigo-400">
+                          <ClipboardList className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-white truncate">{q.quote_no} — {q.customer_name}</span>
+                            <Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4', STATUS_BADGE_COLORS[q.status])}>
+                              {q.status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-zinc-500">
+                            {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(q.created_at))}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="font-semibold text-white shrink-0">{formatINR(q.total_amount)}</span>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

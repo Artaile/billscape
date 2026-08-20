@@ -638,13 +638,13 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-sidebar border-r border-border">
+      <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-sidebar border-r border-border no-print">
         <SidebarContent />
       </aside>
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden no-print">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
@@ -662,7 +662,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       )}
 
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 lg:px-6">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 lg:px-6 no-print">
           <button
             className="lg:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
             onClick={() => setSidebarOpen(true)}
