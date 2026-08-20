@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Printer, Download, Eye, Loader2, Building2, FileText, Calendar, MoreVertical, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -22,6 +22,8 @@ const canEditDelete = (role: string | null) => role === 'owner' || role === 'man
 export function SaleViewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const backTo = (location.state as { from?: string } | null)?.from ?? '/billing?tab=history'
   const { org, user, role } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -169,7 +171,7 @@ export function SaleViewPage() {
     <div className="p-4 lg:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate('/billing?tab=history')}>
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate(backTo)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>

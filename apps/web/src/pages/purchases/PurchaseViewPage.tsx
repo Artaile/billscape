@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Loader2, Printer, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -17,6 +17,8 @@ import { toast } from '@/hooks/use-toast'
 export function PurchaseViewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const backTo = (location.state as { from?: string } | null)?.from ?? '/purchases'
   const { org } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -61,7 +63,7 @@ export function PurchaseViewPage() {
   return (
     <div className="p-4 lg:p-6">
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/purchases')}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(backTo)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div>

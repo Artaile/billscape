@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Download,
@@ -85,6 +85,8 @@ export function ReportsPage() {
   const orgId = org?.id
   const isOwner = role === 'owner'
   const navigate = useNavigate()
+  const location = useLocation()
+  const navigateBackHere = { state: { from: `${location.pathname}${location.search}` } }
 
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
@@ -1014,7 +1016,7 @@ export function ReportsPage() {
                     .map((s) => (
                       <div
                         key={s.id}
-                        onClick={() => navigate(`/billing/sales/${s.id}`)}
+                        onClick={() => navigate(`/billing/sales/${s.id}`, navigateBackHere)}
                         className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 cursor-pointer transition-colors hover:border-zinc-600"
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -1128,7 +1130,7 @@ export function ReportsPage() {
                   .map((s) => (
                     <div
                       key={s.id}
-                      onClick={() => navigate(`/billing/sales/${s.id}`)}
+                      onClick={() => navigate(`/billing/sales/${s.id}`, navigateBackHere)}
                       className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 cursor-pointer transition-colors hover:border-zinc-600"
                     >
                       <div>
@@ -1229,7 +1231,7 @@ export function ReportsPage() {
                 .map((p: any) => (
                   <div
                     key={p.id}
-                    onClick={() => navigate(`/purchases/${p.id}`)}
+                    onClick={() => navigate(`/purchases/${p.id}`, navigateBackHere)}
                     className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 cursor-pointer transition-colors hover:border-zinc-600"
                   >
                     <div className="flex items-center gap-3 min-w-0">
@@ -1416,7 +1418,7 @@ export function ReportsPage() {
                       return (
                         <div
                           key={t.id}
-                          onClick={t.navTo ? () => navigate(t.navTo!) : undefined}
+                          onClick={t.navTo ? () => navigate(t.navTo!, navigateBackHere) : undefined}
                           className={cn(
                             'flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3',
                             t.navTo && 'cursor-pointer transition-colors hover:border-zinc-600',
@@ -2782,7 +2784,7 @@ export function ReportsPage() {
                     .map((s) => (
                       <div
                         key={s.id}
-                        onClick={() => navigate(`/billing/sales/${s.id}`)}
+                        onClick={() => navigate(`/billing/sales/${s.id}`, navigateBackHere)}
                         className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 cursor-pointer transition-colors hover:border-zinc-600"
                       >
                         <div>
