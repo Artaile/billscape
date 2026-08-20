@@ -260,7 +260,7 @@ export function InvoicePrint({
       <div id={rootId} className="bg-white text-zinc-900 p-4 sm:p-6 rounded-lg">
         {/* Optional Header Message */}
         {showHeaderMsg && (
-          <div className="text-center pb-2 mb-2 border-b border-gray-200 text-xs italic text-gray-700">
+          <div className="text-center pb-2 mb-2 border-b border-dashed border-zinc-300 text-[0.85em] italic text-zinc-700">
             {headerMsg}
           </div>
         )}
