@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Printer } from 'lucide-react'
 import QRCode from 'qrcode'
-import { formatINR, amountInWords } from '@billscape/core'
+import { formatINR, amountInWords, computeLineTax } from '@billscape/core'
 import { formatDateTime } from '@/lib/utils'
 import type { CartItem, InvoiceTotals, OrgBranding, OrgInvoiceTemplate } from '@billscape/core'
 import { Button } from '@/components/ui/button'
@@ -133,9 +133,14 @@ export function InvoicePrint({
   const showPaymentModeHeader = branding?.print_show_payment_mode ?? false
 
   // Party (Bill To) Toggles
-  const showPartyBlock = (branding?.print_show_party_details ?? true) && !!(customerName || customerPhone || customerGstin || customerAddress)
   const showCustomerBillingAddress = (branding?.print_show_customer_billing_address ?? true) && !!customerAddress
   const showCustomerPhoneLine = branding?.print_show_customer_phone ?? true
+  const showPartyBlock = (branding?.print_show_party_details ?? true) && !!(
+    customerName ||
+    (showCustomerPhoneLine && customerPhone) ||
+    (showCustomerBillingAddress && customerAddress) ||
+    customerGstin
+  )
 
   // Tax Summary Toggles
   const showTaxSummaryBlock = (branding?.print_show_tax_summary ?? true) && !isThermal
@@ -245,14 +250,26 @@ export function InvoicePrint({
           </thead>
           <tbody>
             {items.map((item, i) => {
-              const base = item.unit_price * item.qty
-              const discAmt = base * (item.discount_pct / 100)
-              const lineTotal = base - discAmt
               const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
               const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
               const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
-              const rowTaxable = taxInclusivePricing ? lineTotal / (1 + item.tax_rate / 100) : lineTotal
-              const rowTax = taxInclusivePricing ? lineTotal - rowTaxable : rowTaxable * (item.tax_rate / 100)
+              const base = item.unit_price * item.qty
+              const discAmt = item.discount_type === 'flat'
+                ? Math.min(item.discount_amount ?? 0, base)
+                : base * (item.discount_pct / 100)
+              const lineCalc = computeLineTax(
+                item.unit_price,
+                item.qty,
+                item.discount_pct,
+                item.tax_rate,
+                totals.is_interstate,
+                item.discount_type,
+                item.discount_amount,
+                taxInclusivePricing,
+              )
+              const rowTaxable = lineCalc.taxableAmount
+              const rowTax = lineCalc.cgst + lineCalc.sgst + lineCalc.igst
+              const lineTotal = lineCalc.lineTotal
               return (
                 <tr key={item.product_id || i} className={i % 2 === 0 ? '' : 'bg-gray-50/50'}>
                   {showSno && <td className="px-1.5 py-1 border-b border-gray-200">{i + 1}</td>}
@@ -273,7 +290,11 @@ export function InvoicePrint({
                   {showColumnDiscountType && (
                     <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600 capitalize">{item.discount_type ?? '-'}</td>
                   )}
-                  {showDiscount && <td className="px-1.5 py-1 border-b border-gray-200 text-right text-green-700">-{item.discount_pct}%</td>}
+                  {showDiscount && (
+                    <td className="px-1.5 py-1 border-b border-gray-200 text-right text-green-700">
+                      {item.discount_type === 'flat' ? `-${formatINR(discAmt)}` : `-${item.discount_pct}%`}
+                    </td>
+                  )}
                   {showTaxRate && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{item.tax_rate}%</td>}
                   {showColumnTaxableValue && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(rowTaxable)}</td>}
                   {showColumnTaxAmount && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(rowTax)}</td>}
@@ -355,7 +376,7 @@ export function InvoicePrint({
                     <td className="py-0.5 text-right">{formatINR(totals.taxable_amount)}</td>
                   </tr>
                 )}
-                {showBlockTaxAmount && (
+                {showCgstSgstIgst && (
                   totals.is_interstate ? (
                     <tr>
                       <td className="py-0.5 text-gray-600">IGST</td>
