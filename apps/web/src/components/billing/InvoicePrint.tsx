@@ -234,7 +234,7 @@ export function InvoicePrint({
         }
         #${rootId} {
           font-family: ${branding?.print_font_family || 'Arial, sans-serif'};
-          color: ${branding?.print_text_color || '#000'};
+          color: ${branding?.print_text_color || '#18181b'};
           background: #fff;
           max-width: ${
             is58mm ? '54mm' : isThermal ? '76mm' : paperSize === 'a5' ? '148mm' : '210mm'
@@ -242,11 +242,11 @@ export function InvoicePrint({
           margin: 0 auto;
           padding: ${isThermal ? '2mm' : paperSize === 'a5' ? '5mm' : '10mm'};
           font-size: ${is58mm ? '9px' : isThermal ? '10px' : '11px'};
-          line-height: 1.3;
+          line-height: 1.4;
         }
       `}</style>
 
-      <div id={rootId} className="bg-white text-black p-4 sm:p-6 rounded-lg">
+      <div id={rootId} className="bg-white text-zinc-900 p-4 sm:p-6 rounded-lg">
         {/* Optional Header Message */}
         {showHeaderMsg && (
           <div className="text-center pb-2 mb-2 border-b border-gray-200 text-xs italic text-gray-700">
