@@ -59,6 +59,7 @@ interface CustomerOption {
   phone?: string | null
   gstin?: string | null
   state_code?: string | null
+  address?: string | null
 }
 
 const SCANNER_THRESHOLD_MS = 75
@@ -277,7 +278,7 @@ export function POSTab() {
     queryFn: async () => {
       const { data } = await supabase
         .from('customers')
-        .select('id, name, phone, gstin')
+        .select('id, name, phone, gstin, address')
         .eq('organization_id', orgId!)
         .or(`name.ilike.%${customerSearch}%,phone.ilike.%${customerSearch}%`)
         .order('name')
@@ -1321,12 +1322,14 @@ export function POSTab() {
                 shopName={org?.name ?? 'BillScape Shop'}
                 shopAddress={org?.address}
                 shopGstin={org?.gstin}
+                shopPan={org?.pan}
                 shopLogoUrl={org?.branding?.logo_url}
                 shopPhone={org?.phone}
                 shopEmail={org?.email}
                 customerName={selectedCustomer?.name}
                 customerPhone={selectedCustomer?.phone ?? undefined}
                 customerGstin={selectedCustomer?.gstin ?? undefined}
+                customerAddress={selectedCustomer?.address ?? undefined}
                 items={completedSale.items}
                 totals={completedSale.totals}
                 paymentMode={completedSale.paymentMode}

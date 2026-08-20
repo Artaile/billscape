@@ -12,6 +12,7 @@ export interface InvoicePrintProps {
   shopName: string
   shopAddress?: string
   shopGstin?: string
+  shopPan?: string
   shopLogoUrl?: string
   shopPhone?: string
   shopEmail?: string
@@ -37,6 +38,7 @@ export function InvoicePrint({
   shopName,
   shopAddress,
   shopGstin,
+  shopPan,
   shopLogoUrl,
   shopPhone,
   shopEmail,
