@@ -542,7 +542,7 @@ export function InvoicePrint({
           )}
 
           {showTerms && termsText && (
-            <p className="text-[0.85em] text-zinc-500 italic leading-tight">{termsText}</p>
+            <p className="text-[0.85em] text-zinc-500 italic leading-tight whitespace-pre-line">{termsText}</p>
           )}
 
           <p className="text-[0.85em] text-zinc-600">
