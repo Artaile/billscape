@@ -390,42 +390,42 @@ export function InvoicePrint({
         <div className={`flex ${isThermal ? 'flex-col' : 'gap-4'} mb-3`}>
           {/* Tax breakup */}
           {showTaxSummaryBlock && totals.tax_breakup.length > 0 && (
-            <div className="flex-1">
-              <p className="text-xs font-semibold text-gray-700 mb-1">Tax Summary</p>
-              <table className="w-full border-collapse text-xs border border-gray-200">
+            <div className="flex-1 py-1.5 border-t border-zinc-200">
+              <p className="font-bold text-[0.85em] mb-1">Tax Summary</p>
+              <table className="w-full text-left text-[0.85em] text-zinc-600">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th className="border border-gray-200 px-2 py-1 text-left">Rate</th>
-                    <th className="border border-gray-200 px-2 py-1 text-right">Taxable</th>
+                  <tr className="border-b border-zinc-200">
+                    <th>Rate</th>
+                    <th className="text-right">Taxable</th>
                     {showCgstSgstIgst && (
                       totals.is_interstate ? (
-                        <th className="border border-gray-200 px-2 py-1 text-right">IGST</th>
+                        <th className="text-right">IGST</th>
                       ) : (
                         <>
-                          <th className="border border-gray-200 px-2 py-1 text-right">CGST</th>
-                          <th className="border border-gray-200 px-2 py-1 text-right">SGST</th>
+                          <th className="text-right">CGST</th>
+                          <th className="text-right">SGST</th>
                         </>
                       )
                     )}
-                    <th className="border border-gray-200 px-2 py-1 text-right">Tax Amt</th>
+                    <th className="text-right">Tax Amt</th>
                   </tr>
                 </thead>
                 <tbody>
                   {totals.tax_breakup.map((line) => (
                     <tr key={line.tax_rate}>
-                      <td className="border border-gray-200 px-2 py-0.5">{line.tax_rate}%</td>
-                      <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.taxable_amount)}</td>
+                      <td>{line.tax_rate}%</td>
+                      <td className="text-right">{formatINR(line.taxable_amount)}</td>
                       {showCgstSgstIgst && (
                         totals.is_interstate ? (
-                          <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.igst)}</td>
+                          <td className="text-right">{formatINR(line.igst)}</td>
                         ) : (
                           <>
-                            <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.cgst)}</td>
-                            <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.sgst)}</td>
+                            <td className="text-right">{formatINR(line.cgst)}</td>
+                            <td className="text-right">{formatINR(line.sgst)}</td>
                           </>
                         )
                       )}
-                      <td className="border border-gray-200 px-2 py-0.5 text-right">
+                      <td className="text-right">
                         {formatINR(totals.is_interstate ? line.igst : line.cgst + line.sgst)}
                       </td>
                     </tr>
