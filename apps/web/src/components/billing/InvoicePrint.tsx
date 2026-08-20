@@ -58,7 +58,68 @@ export function InvoicePrint({
   const [upiQrDataUrl, setUpiQrDataUrl] = useState<string | null>(null)
 
   const handlePrint = () => {
-    window.print()
+    const elem = document.getElementById(rootId)
+    if (!elem) {
+      window.print()
+      return
+    }
+
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document
+    if (!doc) {
+      window.print()
+      return
+    }
+
+    let styles = ''
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+      styles += node.outerHTML
+    })
+
+    doc.open()
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Invoice ${invoiceNo}</title>
+          ${styles}
+          <style>
+            @page {
+              margin: 10mm 12mm;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              color: #000000 !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${elem.outerHTML}
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.frameElement?.remove();
+                }, 1000);
+              }, 250);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    doc.close()
   }
 
   // Determine Paper Size & Mode
