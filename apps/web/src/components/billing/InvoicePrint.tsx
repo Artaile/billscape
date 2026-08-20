@@ -137,6 +137,10 @@ export function InvoicePrint({
   const showCustomerBillingAddress = (branding?.print_show_customer_billing_address ?? true) && !!customerAddress
   const showCustomerPhoneLine = branding?.print_show_customer_phone ?? true
 
+  // Tax Summary Toggles
+  const showTaxSummaryBlock = (branding?.print_show_tax_summary ?? true) && !isThermal
+  const showCgstSgstIgst = branding?.print_show_cgst_sgst_igst ?? true
+
   return (
     <>
       {/* Print action button - hidden during print */}
@@ -276,7 +280,7 @@ export function InvoicePrint({
         {/* Totals + Tax breakup */}
         <div className={`flex ${isThermal ? 'flex-col' : 'gap-4'} mb-3`}>
           {/* Tax breakup */}
-          {!isThermal && totals.tax_breakup.length > 0 && (
+          {showTaxSummaryBlock && totals.tax_breakup.length > 0 && (
             <div className="flex-1">
               <p className="text-xs font-semibold text-gray-700 mb-1">Tax Summary</p>
               <table className="w-full border-collapse text-xs border border-gray-200">
@@ -284,14 +288,17 @@ export function InvoicePrint({
                   <tr className="bg-gray-100">
                     <th className="border border-gray-200 px-2 py-1 text-left">Rate</th>
                     <th className="border border-gray-200 px-2 py-1 text-right">Taxable</th>
-                    {totals.is_interstate ? (
-                      <th className="border border-gray-200 px-2 py-1 text-right">IGST</th>
-                    ) : (
-                      <>
-                        <th className="border border-gray-200 px-2 py-1 text-right">CGST</th>
-                        <th className="border border-gray-200 px-2 py-1 text-right">SGST</th>
-                      </>
+                    {showCgstSgstIgst && (
+                      totals.is_interstate ? (
+                        <th className="border border-gray-200 px-2 py-1 text-right">IGST</th>
+                      ) : (
+                        <>
+                          <th className="border border-gray-200 px-2 py-1 text-right">CGST</th>
+                          <th className="border border-gray-200 px-2 py-1 text-right">SGST</th>
+                        </>
+                      )
                     )}
+                    <th className="border border-gray-200 px-2 py-1 text-right">Tax Amt</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -299,14 +306,19 @@ export function InvoicePrint({
                     <tr key={line.tax_rate}>
                       <td className="border border-gray-200 px-2 py-0.5">{line.tax_rate}%</td>
                       <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.taxable_amount)}</td>
-                      {totals.is_interstate ? (
-                        <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.igst)}</td>
-                      ) : (
-                        <>
-                          <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.cgst)}</td>
-                          <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.sgst)}</td>
-                        </>
+                      {showCgstSgstIgst && (
+                        totals.is_interstate ? (
+                          <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.igst)}</td>
+                        ) : (
+                          <>
+                            <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.cgst)}</td>
+                            <td className="border border-gray-200 px-2 py-0.5 text-right">{formatINR(line.sgst)}</td>
+                          </>
+                        )
                       )}
+                      <td className="border border-gray-200 px-2 py-0.5 text-right">
+                        {formatINR(totals.is_interstate ? line.igst : line.cgst + line.sgst)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
