@@ -436,82 +436,72 @@ export function InvoicePrint({
           )}
 
           {/* Totals Calculation Card */}
-          <div className={isThermal ? 'w-full border-t border-gray-300 pt-2' : 'w-56'}>
-            <table className="w-full text-xs">
-              <tbody>
-                {showBlockSubtotal && (
-                  <tr>
-                    <td className="py-0.5 text-gray-600">Subtotal</td>
-                    <td className="py-0.5 text-right">{formatINR(totals.subtotal)}</td>
-                  </tr>
-                )}
-                {showBlockDiscount && totals.discount_total > 0 && (
-                  <tr>
-                    <td className="py-0.5 text-gray-600">Discount</td>
-                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.discount_total)}</td>
-                  </tr>
-                )}
-                {showBlockTaxAmount && (
-                  <tr>
-                    <td className="py-0.5 text-gray-600">Taxable Amount</td>
-                    <td className="py-0.5 text-right">{formatINR(totals.taxable_amount)}</td>
-                  </tr>
-                )}
-                {showCgstSgstIgst && (
-                  totals.is_interstate ? (
-                    <tr>
-                      <td className="py-0.5 text-gray-600">IGST</td>
-                      <td className="py-0.5 text-right">{formatINR(totals.igst_total)}</td>
-                    </tr>
-                  ) : (
-                    <>
-                      <tr>
-                        <td className="py-0.5 text-gray-600">CGST</td>
-                        <td className="py-0.5 text-right">{formatINR(totals.cgst_total)}</td>
-                      </tr>
-                      <tr>
-                        <td className="py-0.5 text-gray-600">SGST</td>
-                        <td className="py-0.5 text-right">{formatINR(totals.sgst_total)}</td>
-                      </tr>
-                    </>
-                  )
-                )}
-                {showBlockGrandTotal && (
-                  <tr>
-                    <td className="py-0.5 font-medium text-gray-800">Grand Total</td>
-                    <td className="py-0.5 text-right font-medium text-gray-900">
-                      {formatINR(totals.grand_total)}
-                    </td>
-                  </tr>
-                )}
-                {showBlockDiscount && totals.order_discount_amount > 0 && (
-                  <tr>
-                    <td className="py-0.5 text-gray-600">Bill Discount</td>
-                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.order_discount_amount)}</td>
-                  </tr>
-                )}
-                {totals.loyalty_redeem_amount > 0 && (
-                  <tr>
-                    <td className="py-0.5 text-gray-600">Loyalty Redeemed</td>
-                    <td className="py-0.5 text-right text-green-700">-{formatINR(totals.loyalty_redeem_amount)}</td>
-                  </tr>
-                )}
-                {showBlockRoundOff && typeof totals.round_off_amount === 'number' && totals.round_off_amount !== 0 && (
-                  <tr>
-                    <td className="py-0.5 text-gray-600">Round Off</td>
-                    <td className="py-0.5 text-right">
-                      {totals.round_off_amount > 0 ? `+${formatINR(totals.round_off_amount)}` : formatINR(totals.round_off_amount)}
-                    </td>
-                  </tr>
-                )}
-                <tr className="border-t-2 border-gray-800">
-                  <td className="pt-1.5 font-bold text-sm text-gray-900">Net Payable</td>
-                  <td className="pt-1.5 text-right font-bold text-sm text-gray-900">
-                    {formatINR(totals.net_payable)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div className={`border-t border-zinc-950 pt-1.5 space-y-0.5 text-[0.9em] ${isThermal ? 'w-full' : 'w-56'}`}>
+            {showBlockSubtotal && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Subtotal:</span>
+                <span>{formatINR(totals.subtotal)}</span>
+              </div>
+            )}
+            {showBlockDiscount && totals.discount_total > 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Discount:</span>
+                <span>-{formatINR(totals.discount_total)}</span>
+              </div>
+            )}
+            {showBlockTaxAmount && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Taxable Amount:</span>
+                <span>{formatINR(totals.taxable_amount)}</span>
+              </div>
+            )}
+            {showCgstSgstIgst && (
+              totals.is_interstate ? (
+                <div className="flex justify-between text-zinc-600">
+                  <span>IGST:</span>
+                  <span>{formatINR(totals.igst_total)}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>CGST:</span>
+                    <span>{formatINR(totals.cgst_total)}</span>
+                  </div>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>SGST:</span>
+                    <span>{formatINR(totals.sgst_total)}</span>
+                  </div>
+                </>
+              )
+            )}
+            {showBlockGrandTotal && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Grand Total:</span>
+                <span>{formatINR(totals.grand_total)}</span>
+              </div>
+            )}
+            {showBlockDiscount && totals.order_discount_amount > 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Bill Discount:</span>
+                <span>-{formatINR(totals.order_discount_amount)}</span>
+              </div>
+            )}
+            {totals.loyalty_redeem_amount > 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Loyalty Redeemed:</span>
+                <span>-{formatINR(totals.loyalty_redeem_amount)}</span>
+              </div>
+            )}
+            {showBlockRoundOff && typeof totals.round_off_amount === 'number' && totals.round_off_amount !== 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>Round Off:</span>
+                <span>{totals.round_off_amount > 0 ? `+${formatINR(totals.round_off_amount)}` : formatINR(totals.round_off_amount)}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-bold text-[1.1em] pt-1 border-t-2 border-zinc-400 text-zinc-950">
+              <span>Net Payable:</span>
+              <span>{formatINR(totals.net_payable)}</span>
+            </div>
           </div>
         </div>
 
