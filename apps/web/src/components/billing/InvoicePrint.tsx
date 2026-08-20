@@ -296,12 +296,15 @@ export function InvoicePrint({
 
         {/* Customer details */}
         {showPartyBlock && (
-          <div className="border border-gray-300 rounded p-2.5 mb-3 bg-gray-50 text-xs">
-            <p className="font-semibold text-gray-700 mb-0.5">Bill To:</p>
-            {customerName && <p className="font-medium text-gray-900">{customerName}</p>}
-            {showCustomerPhoneLine && customerPhone && <p className="text-gray-600">Phone: {customerPhone}</p>}
-            {showCustomerBillingAddress && <p className="text-gray-600">Address: {customerAddress}</p>}
-            {customerGstin && <p className="text-gray-700 font-semibold">GSTIN: {customerGstin}</p>}
+          <div className="py-2 mb-3 border-b border-dashed border-zinc-400 text-[0.9em]">
+            <p className="font-bold text-zinc-800">Billed To:</p>
+            {customerName && <p className="font-medium text-zinc-950">{customerName}</p>}
+            {showCustomerBillingAddress && <p className="text-zinc-600">{customerAddress}</p>}
+            <div className="text-zinc-600 space-x-1">
+              {showCustomerPhoneLine && customerPhone && <span>Ph: {customerPhone}</span>}
+              {showCustomerPhoneLine && customerPhone && customerGstin && <span>|</span>}
+              {customerGstin && <span>GSTIN: {customerGstin}</span>}
+            </div>
           </div>
         )}
 
