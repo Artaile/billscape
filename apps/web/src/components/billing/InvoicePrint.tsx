@@ -106,8 +106,18 @@ export function InvoicePrint({
   // Column Visibility Toggles
   const showSno = branding?.print_show_column_sno ?? true
   const showHsn = (branding?.print_show_column_hsn ?? true) && (branding?.show_hsn_on_invoice ?? true)
+  const showColumnMrp = branding?.print_show_column_mrp ?? false
+  const showColumnItemName = branding?.print_show_column_item_name ?? true
+  const showColumnQty = branding?.print_show_column_qty ?? true
+  const showColumnUnit = branding?.print_show_column_unit ?? true
+  const showColumnRate = branding?.print_show_column_rate ?? true
+  const showColumnDiscountType = branding?.print_show_column_discount_type ?? false
   const showDiscount = (branding?.print_show_column_discount ?? true) && totals.discount_total > 0
   const showTaxRate = branding?.print_show_column_tax_rate ?? true
+  const showColumnTaxableValue = branding?.print_show_column_taxable_value ?? false
+  const showColumnTaxAmount = branding?.print_show_column_tax_amount ?? false
+  const showColumnItemTotal = branding?.print_show_column_item_total ?? true
+  const taxInclusivePricing = branding?.tax_inclusive ?? false
 
   // Header / Business Info Toggles
   const showShopName = branding?.print_show_shop_name ?? true
@@ -208,13 +218,18 @@ export function InvoicePrint({
           <thead>
             <tr className="bg-gray-100 border-y border-gray-300">
               {showSno && <th className="px-1.5 py-1 text-left">#</th>}
-              <th className="px-1.5 py-1 text-left">Item</th>
+              {showColumnItemName && <th className="px-1.5 py-1 text-left">Item</th>}
               {showHsn && <th className="px-1.5 py-1 text-left">HSN</th>}
-              <th className="px-1.5 py-1 text-right">Qty</th>
-              <th className="px-1.5 py-1 text-right">Rate</th>
+              {showColumnMrp && <th className="px-1.5 py-1 text-right">MRP</th>}
+              {showColumnQty && <th className="px-1.5 py-1 text-right">Qty</th>}
+              {showColumnUnit && <th className="px-1.5 py-1 text-left">Unit</th>}
+              {showColumnRate && <th className="px-1.5 py-1 text-right">Rate</th>}
+              {showColumnDiscountType && <th className="px-1.5 py-1 text-left">Disc Type</th>}
               {showDiscount && <th className="px-1.5 py-1 text-right">Disc</th>}
               {showTaxRate && <th className="px-1.5 py-1 text-right">Tax%</th>}
-              <th className="px-1.5 py-1 text-right">Amount</th>
+              {showColumnTaxableValue && <th className="px-1.5 py-1 text-right">Taxable</th>}
+              {showColumnTaxAmount && <th className="px-1.5 py-1 text-right">Tax Amt</th>}
+              {showColumnItemTotal && <th className="px-1.5 py-1 text-right">Amount</th>}
             </tr>
           </thead>
           <tbody>
@@ -225,20 +240,33 @@ export function InvoicePrint({
               const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
               const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
               const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
+              const rowTaxable = taxInclusivePricing ? lineTotal / (1 + item.tax_rate / 100) : lineTotal
+              const rowTax = taxInclusivePricing ? lineTotal - rowTaxable : rowTaxable * (item.tax_rate / 100)
               return (
                 <tr key={item.product_id || i} className={i % 2 === 0 ? '' : 'bg-gray-50/50'}>
                   {showSno && <td className="px-1.5 py-1 border-b border-gray-200">{i + 1}</td>}
-                  <td className="px-1.5 py-1 border-b border-gray-200 font-medium">
-                    {item.product_name}
-                  </td>
+                  {showColumnItemName && (
+                    <td className="px-1.5 py-1 border-b border-gray-200 font-medium">
+                      {item.product_name}
+                    </td>
+                  )}
                   {showHsn && <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600">{item.hsn_code ?? '-'}</td>}
-                  <td className="px-1.5 py-1 border-b border-gray-200 text-right whitespace-nowrap">
-                    {displayQty}{displayUnitSymbol ? ` ${displayUnitSymbol}` : ''}
-                  </td>
-                  <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(item.unit_price)}</td>
+                  {showColumnMrp && <td className="px-1.5 py-1 border-b border-gray-200 text-right text-gray-400">—</td>}
+                  {showColumnQty && (
+                    <td className="px-1.5 py-1 border-b border-gray-200 text-right whitespace-nowrap">
+                      {displayQty}
+                    </td>
+                  )}
+                  {showColumnUnit && <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600">{displayUnitSymbol ?? '-'}</td>}
+                  {showColumnRate && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(item.unit_price)}</td>}
+                  {showColumnDiscountType && (
+                    <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600 capitalize">{item.discount_type ?? '-'}</td>
+                  )}
                   {showDiscount && <td className="px-1.5 py-1 border-b border-gray-200 text-right text-green-700">-{item.discount_pct}%</td>}
                   {showTaxRate && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{item.tax_rate}%</td>}
-                  <td className="px-1.5 py-1 border-b border-gray-200 text-right font-medium">{formatINR(lineTotal)}</td>
+                  {showColumnTaxableValue && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(rowTaxable)}</td>}
+                  {showColumnTaxAmount && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(rowTax)}</td>}
+                  {showColumnItemTotal && <td className="px-1.5 py-1 border-b border-gray-200 text-right font-medium">{formatINR(lineTotal)}</td>}
                 </tr>
               )
             })}
