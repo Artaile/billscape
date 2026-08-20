@@ -309,80 +309,82 @@ export function InvoicePrint({
         )}
 
         {/* Items table */}
-        <table className="w-full border-collapse text-xs mb-3">
-          <thead>
-            <tr className="bg-gray-100 border-y border-gray-300">
-              {showSno && <th className="px-1.5 py-1 text-left">#</th>}
-              {showColumnItemName && <th className="px-1.5 py-1 text-left">Item</th>}
-              {showHsn && <th className="px-1.5 py-1 text-left">HSN</th>}
-              {showColumnMrp && <th className="px-1.5 py-1 text-right">MRP</th>}
-              {showColumnQty && <th className="px-1.5 py-1 text-right">Qty</th>}
-              {showColumnUnit && <th className="px-1.5 py-1 text-left">Unit</th>}
-              {showColumnRate && <th className="px-1.5 py-1 text-right">Rate</th>}
-              {showColumnDiscountType && <th className="px-1.5 py-1 text-left">Disc Type</th>}
-              {showDiscount && <th className="px-1.5 py-1 text-right">Disc</th>}
-              {showTaxRate && <th className="px-1.5 py-1 text-right">Tax%</th>}
-              {showColumnTaxableValue && <th className="px-1.5 py-1 text-right">Taxable</th>}
-              {showColumnTaxAmount && <th className="px-1.5 py-1 text-right">Tax Amt</th>}
-              {showColumnItemTotal && <th className="px-1.5 py-1 text-right">Amount</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, i) => {
-              const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
-              const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
-              const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
-              const base = item.unit_price * item.qty
-              const discAmt = item.discount_type === 'flat'
-                ? Math.min(item.discount_amount ?? 0, base)
-                : base * (item.discount_pct / 100)
-              const lineCalc = computeLineTax(
-                item.unit_price,
-                item.qty,
-                item.discount_pct,
-                item.tax_rate,
-                totals.is_interstate,
-                item.discount_type,
-                item.discount_amount,
-                taxInclusivePricing,
-              )
-              const rowTaxable = lineCalc.taxableAmount
-              const rowTax = lineCalc.cgst + lineCalc.sgst + lineCalc.igst
-              const lineTotal = lineCalc.lineTotal
-              return (
-                <tr key={item.product_id || i} className={i % 2 === 0 ? '' : 'bg-gray-50/50'}>
-                  {showSno && <td className="px-1.5 py-1 border-b border-gray-200">{i + 1}</td>}
-                  {showColumnItemName && (
-                    <td className="px-1.5 py-1 border-b border-gray-200 font-medium">
-                      {item.product_name}
-                    </td>
-                  )}
-                  {showHsn && <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600">{item.hsn_code ?? '-'}</td>}
-                  {showColumnMrp && <td className="px-1.5 py-1 border-b border-gray-200 text-right text-gray-400">—</td>}
-                  {showColumnQty && (
-                    <td className="px-1.5 py-1 border-b border-gray-200 text-right whitespace-nowrap">
-                      {displayQty}
-                    </td>
-                  )}
-                  {showColumnUnit && <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600">{displayUnitSymbol ?? '-'}</td>}
-                  {showColumnRate && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(item.unit_price)}</td>}
-                  {showColumnDiscountType && (
-                    <td className="px-1.5 py-1 border-b border-gray-200 text-gray-600 capitalize">{item.discount_type ?? '-'}</td>
-                  )}
-                  {showDiscount && (
-                    <td className="px-1.5 py-1 border-b border-gray-200 text-right text-green-700">
-                      {item.discount_type === 'flat' ? `-${formatINR(discAmt)}` : `-${item.discount_pct}%`}
-                    </td>
-                  )}
-                  {showTaxRate && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{item.tax_rate}%</td>}
-                  {showColumnTaxableValue && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(rowTaxable)}</td>}
-                  {showColumnTaxAmount && <td className="px-1.5 py-1 border-b border-gray-200 text-right">{formatINR(rowTax)}</td>}
-                  {showColumnItemTotal && <td className="px-1.5 py-1 border-b border-gray-200 text-right font-medium">{formatINR(lineTotal)}</td>}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <div className="py-2">
+          <table className="w-full text-left text-[0.9em]">
+            <thead>
+              <tr className="border-b border-zinc-950 font-bold">
+                {showSno && <th className="py-1 pr-1">#</th>}
+                {showColumnItemName && <th className="py-1">Item</th>}
+                {showHsn && <th className="py-1">HSN</th>}
+                {showColumnMrp && <th className="py-1 text-right">MRP</th>}
+                {showColumnQty && <th className="py-1 text-center">Qty</th>}
+                {showColumnUnit && <th className="py-1">Unit</th>}
+                {showColumnRate && <th className="py-1 text-right">Rate</th>}
+                {showColumnDiscountType && <th className="py-1">Disc Type</th>}
+                {showDiscount && <th className="py-1 text-right">Disc</th>}
+                {showTaxRate && <th className="py-1 text-right">GST%</th>}
+                {showColumnTaxableValue && <th className="py-1 text-right">Taxable</th>}
+                {showColumnTaxAmount && <th className="py-1 text-right">Tax Amt</th>}
+                {showColumnItemTotal && <th className="py-1 text-right">Amount</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200">
+              {items.map((item, i) => {
+                const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
+                const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
+                const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
+                const base = item.unit_price * item.qty
+                const discAmt = item.discount_type === 'flat'
+                  ? Math.min(item.discount_amount ?? 0, base)
+                  : base * (item.discount_pct / 100)
+                const lineCalc = computeLineTax(
+                  item.unit_price,
+                  item.qty,
+                  item.discount_pct,
+                  item.tax_rate,
+                  totals.is_interstate,
+                  item.discount_type,
+                  item.discount_amount,
+                  taxInclusivePricing,
+                )
+                const rowTaxable = lineCalc.taxableAmount
+                const rowTax = lineCalc.cgst + lineCalc.sgst + lineCalc.igst
+                const lineTotal = lineCalc.lineTotal
+                return (
+                  <tr key={item.product_id || i}>
+                    {showSno && <td className="py-1 text-zinc-500">{i + 1}</td>}
+                    {showColumnItemName && (
+                      <td className="py-1 font-medium">
+                        {item.product_name}
+                      </td>
+                    )}
+                    {showHsn && <td className="py-1 text-zinc-600">{item.hsn_code ?? '-'}</td>}
+                    {showColumnMrp && <td className="py-1 text-right text-zinc-400">—</td>}
+                    {showColumnQty && (
+                      <td className="py-1 text-center font-bold whitespace-nowrap">
+                        {displayQty}
+                      </td>
+                    )}
+                    {showColumnUnit && <td className="py-1 text-zinc-600">{displayUnitSymbol ?? '-'}</td>}
+                    {showColumnRate && <td className="py-1 text-right">{formatINR(item.unit_price)}</td>}
+                    {showColumnDiscountType && (
+                      <td className="py-1 text-zinc-600 capitalize">{item.discount_type ?? '-'}</td>
+                    )}
+                    {showDiscount && (
+                      <td className="py-1 text-right text-zinc-600">
+                        {item.discount_type === 'flat' ? `-${formatINR(discAmt)}` : `-${item.discount_pct}%`}
+                      </td>
+                    )}
+                    {showTaxRate && <td className="py-1 text-right text-zinc-600">{item.tax_rate}%</td>}
+                    {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{formatINR(rowTaxable)}</td>}
+                    {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{formatINR(rowTax)}</td>}
+                    {showColumnItemTotal && <td className="py-1 text-right font-bold">{formatINR(lineTotal)}</td>}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
 
         {/* Totals + Tax breakup */}
         <div className={`flex ${isThermal ? 'flex-col' : 'gap-4'} mb-3`}>
