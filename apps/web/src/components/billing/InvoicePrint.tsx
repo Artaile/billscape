@@ -158,6 +158,17 @@ export function InvoicePrint({
 
   const showBankDetails = (branding?.print_show_bank_details ?? true) && (branding?.bank_name || branding?.bank_account || branding?.bank_ifsc || branding?.upi_id)
 
+  // Joined so the "|" separators only ever appear BETWEEN fields that actually render.
+  // Real branding data is sparse (any field may be missing), so appending a leading "| "
+  // per-field would emit a dangling pipe whenever an earlier field is absent.
+  const bankDetailsLine = [
+    branding?.bank_name && `Bank: ${branding.bank_name}`,
+    branding?.bank_account && `A/C: ${branding.bank_account}`,
+    branding?.bank_ifsc && `IFSC: ${branding.bank_ifsc}`,
+  ]
+    .filter(Boolean)
+    .join(' | ')
+
   // Signatory & Digital Signature visibility
   const showSignatory = branding?.print_show_signature ?? true
   const showSignatureOutline = branding?.print_show_signature_outline ?? true
@@ -506,71 +517,59 @@ export function InvoicePrint({
         </div>
 
         {/* Amount in words */}
-        <div className="border border-gray-300 rounded p-2 mb-3 bg-gray-50 text-xs">
-          <span className="font-semibold">Amount in Words: </span>
+        <div className="py-1.5 text-[0.85em] text-zinc-600">
+          <span className="font-bold text-zinc-800">Amount in Words: </span>
           <span className="italic">{amountInWords(totals.net_payable)}</span>
         </div>
 
-        {/* Bank Details & UPI QR Code Section */}
-        {(showBankDetails || upiQrDataUrl) && (
-          <div className="border border-gray-300 rounded p-3 mb-3 bg-gray-50 flex items-center justify-between gap-4">
-            {showBankDetails && (
-              <div className="text-xs space-y-0.5">
-                <p className="font-bold text-gray-800 mb-1">Bank &amp; Payment Details</p>
-                {branding?.bank_name && <p><span className="text-gray-500">Bank:</span> <strong>{branding.bank_name}</strong></p>}
-                {branding?.bank_account && <p><span className="text-gray-500">A/C No:</span> <strong>{branding.bank_account}</strong></p>}
-                {branding?.bank_ifsc && <p><span className="text-gray-500">IFSC:</span> <strong>{branding.bank_ifsc}</strong></p>}
-                {branding?.upi_id && <p><span className="text-gray-500">UPI ID:</span> <strong>{branding.upi_id}</strong></p>}
-              </div>
-            )}
-            {upiQrDataUrl && (
-              <div className="flex flex-col items-center shrink-0">
-                <img src={upiQrDataUrl} alt="Scan & Pay UPI QR" className="h-20 w-20 border border-gray-300 rounded bg-white p-1" />
-                <span className="text-[10px] font-semibold text-gray-600 mt-1">Scan &amp; Pay via UPI</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Terms & Conditions */}
-        {showTerms && termsText && (
-          <div className="text-[10px] text-gray-600 border-t border-gray-200 pt-2 mb-3">
-            <p className="font-semibold text-gray-700">Terms &amp; Conditions:</p>
-            <p className="whitespace-pre-line mt-0.5">{termsText}</p>
-          </div>
-        )}
-
-        {/* Signatory & Payment Mode Footer */}
-        <div className="flex justify-between items-end border-t border-gray-300 pt-3">
-          <div>
-            <p className="text-gray-700 text-xs">
-              Payment Mode: <strong className="capitalize">{paymentMode}</strong>
-              {paymentDetail && <span className="text-gray-500"> ({paymentDetail})</span>}
-            </p>
-            <p className="text-gray-400 text-[10px] mt-1">
-              Computer generated invoice.
-            </p>
-          </div>
-
-          {showSignatory && (
-            <div className="text-center flex flex-col items-center">
-              {showDigitalSignature && signatureUrl ? (
-                <img src={signatureUrl} alt="Signature" className="h-10 object-contain mb-1" />
-              ) : showSignatureOutline ? (
-                <div className="h-8" />
-              ) : null}
-              <div className="border-t border-gray-400 pt-1 w-32">
-                <p className="text-[11px] text-gray-600">Authorised Signatory</p>
-              </div>
-              <p className="text-xs font-semibold mt-0.5">{shopName}</p>
+        {/* Footer: Bank/UPI, Terms, Signatory, Payment Mode, Thank-you note — one consolidated section, matching Settings preview */}
+        <div className="mt-3 pt-2 border-t border-dashed border-zinc-400 space-y-2">
+          {showBankDetails && bankDetailsLine && (
+            <div className="text-[0.85em] text-zinc-700 bg-zinc-100 p-1.5 rounded">
+              <p className="font-bold">{bankDetailsLine}</p>
             </div>
           )}
-        </div>
 
-        {/* Footer Notes */}
-        <p className="text-center text-[10px] text-gray-500 mt-3 border-t border-gray-200 pt-2">
-          {(showFooterMsg && footerMsg) || branding?.print_thank_you_note || 'Thank you for your purchase! Visit us again.'}
-        </p>
+          {upiQrDataUrl && (
+            <div className="flex items-center gap-3 p-2 bg-zinc-50 border border-zinc-200 rounded justify-center">
+              <img src={upiQrDataUrl} alt="Scan & Pay UPI QR" className="h-20 w-20 object-contain rounded border border-zinc-200 shadow-sm" />
+              <div className="text-left space-y-0.5">
+                <p className="text-[0.85em] font-bold text-zinc-900 uppercase">Scan &amp; Pay via UPI</p>
+                {branding?.upi_id && <p className="text-[0.8em] font-mono font-semibold text-zinc-700">{branding.upi_id}</p>}
+                <p className="text-[0.75em] text-zinc-500">Google Pay • PhonePe • Paytm</p>
+              </div>
+            </div>
+          )}
+
+          {showTerms && termsText && (
+            <p className="text-[0.85em] text-zinc-500 italic leading-tight">{termsText}</p>
+          )}
+
+          <p className="text-[0.85em] text-zinc-600">
+            Payment Mode: <span className="font-bold capitalize">{paymentMode}</span>
+            {paymentDetail && <span className="text-zinc-500"> ({paymentDetail})</span>}
+          </p>
+
+          {showSignatory && (
+            <div className="pt-2 flex justify-end">
+              <div className="text-center w-28">
+                {showDigitalSignature && signatureUrl ? (
+                  <img src={signatureUrl} alt="Signature" className="h-7 mx-auto object-contain" />
+                ) : (
+                  <div className={`h-7 w-full ${showSignatureOutline ? 'border-b border-dashed border-zinc-300' : ''}`} />
+                )}
+                <p className="border-t border-zinc-400 text-[0.75em] font-bold uppercase text-zinc-800 pt-0.5 mt-1">
+                  Authorised Signatory
+                </p>
+                <p className="text-[0.75em] font-semibold text-zinc-700 mt-0.5">{shopName}</p>
+              </div>
+            </div>
+          )}
+
+          <p className="text-center text-[0.85em] font-semibold text-zinc-700 pt-1">
+            {(showFooterMsg && footerMsg) || branding?.print_thank_you_note || 'Thank you for your purchase! Visit us again.'}
+          </p>
+        </div>
       </div>
     </>
   )
