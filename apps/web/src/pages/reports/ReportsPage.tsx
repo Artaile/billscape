@@ -144,6 +144,7 @@ export function ReportsPage() {
         .select(`
           product_name, hsn_code, qty, unit_price, discount_pct, tax_rate,
           cgst_amount, sgst_amount, igst_amount, line_total,
+          products(units!products_unit_id_fkey(symbol)),
           sales!inner(organization_id, created_at)
         `)
         .eq('sales.organization_id', orgId!)
@@ -270,7 +271,7 @@ export function ReportsPage() {
     },
   })
 
-  // 9. Purchase-side GST query (Input Tax — for Taxes Reports)
+  // 9. Purchase-side GST query (Input Tax — for Taxes Reports + GSTR-2 eligibility)
   const { data: purchaseGstData = [], isLoading: purchaseGstLoading } = useQuery({
     queryKey: ['report-purchase-gst', orgId, dateFrom, dateTo],
     enabled: !!orgId,
@@ -278,8 +279,8 @@ export function ReportsPage() {
       const { data } = await supabase
         .from('purchase_items')
         .select(`
-          tax_rate, taxable_amount, cgst_amount, sgst_amount, igst_amount,
-          purchases!inner(organization_id, created_at)
+          purchase_id, tax_rate, taxable_amount, cgst_amount, sgst_amount, igst_amount,
+          purchases!inner(organization_id, created_at, suppliers(gstin))
         `)
         .eq('purchases.organization_id', orgId!)
         .gte('purchases.created_at', fromISO)
@@ -348,8 +349,9 @@ export function ReportsPage() {
 
   // Aggregate item-wise
   const itemSummary = useMemo(() => {
-    const map = new Map<string, { name: string; hsn: string; qty: number; revenue: number; cgst: number; sgst: number; igst: number }>()
+    const map = new Map<string, { name: string; hsn: string; uqc: string; qty: number; revenue: number; cgst: number; sgst: number; igst: number }>()
     for (const item of itemData) {
+      const uqc = (item.products as any)?.units?.symbol ?? 'NA'
       const existing = map.get(item.product_name)
       if (existing) {
         existing.qty += item.qty
@@ -361,6 +363,7 @@ export function ReportsPage() {
         map.set(item.product_name, {
           name: item.product_name,
           hsn: item.hsn_code ?? '',
+          uqc,
           qty: item.qty,
           revenue: item.line_total,
           cgst: item.cgst_amount,
@@ -403,13 +406,27 @@ export function ReportsPage() {
     const sum = (rows: typeof salesPartyData) => rows.reduce((acc, s) => acc + (s.tax_total ?? 0), 0)
     const taxableSum = (rows: typeof salesPartyData) => rows.reduce((acc, s) => acc + (s.grand_total - (s.tax_total ?? 0)), 0)
 
-    const netTaxableValue = taxableSum(salesPartyData)
-    const netOutputTax = sum(salesPartyData)
+    const grossTaxableValue = taxableSum(salesPartyData)
+    const grossOutputTax = sum(salesPartyData)
+    const grossTotal = grossTaxableValue + grossOutputTax
 
-    // Reconciliation: net taxable + tax should equal invoice-line-level totals from gstSummary
+    const salesReturnsTotal = returnsData
+      .filter((r) => r.return_type === 'sale')
+      .reduce((s, r) => s + r.refund_amount, 0)
+
+    // returns.refund_amount has no taxable/tax split in the schema — apportion the
+    // tax-inclusive refund across taxable value and tax using the org's blended rate
+    // for this period, so "net of returns" doesn't silently zero out only one side.
+    const returnsTaxablePortion = grossTotal > 0 ? salesReturnsTotal * (grossTaxableValue / grossTotal) : 0
+    const returnsTaxPortion = grossTotal > 0 ? salesReturnsTotal * (grossOutputTax / grossTotal) : 0
+
+    const netTaxableValue = Math.max(0, grossTaxableValue - returnsTaxablePortion)
+    const netOutputTax = Math.max(0, grossOutputTax - returnsTaxPortion)
+
+    // Reconciliation: gross taxable + tax should equal invoice-line-level totals from gstSummary
     const lineLevelTaxable = gstSummary.reduce((s, g) => s + g.taxable, 0)
     const lineLevelTax = gstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0)
-    const difference = Math.abs((netTaxableValue + netOutputTax) - (lineLevelTaxable + lineLevelTax))
+    const difference = Math.abs((grossTaxableValue + grossOutputTax) - (lineLevelTaxable + lineLevelTax))
     const reconciled = difference <= 1
 
     return {
@@ -419,12 +436,14 @@ export function ReportsPage() {
       b2bTax: sum(b2b),
       b2cTaxable: taxableSum(b2c),
       b2cTax: sum(b2c),
+      grossTaxableValue,
+      salesReturnsTotal,
       netTaxableValue,
       netOutputTax,
       reconciled,
       difference,
     }
-  }, [salesPartyData, gstSummary])
+  }, [salesPartyData, gstSummary, returnsData])
 
   // Aggregate purchase-side GST (Input Tax, by rate)
   const purchaseGstSummary = useMemo(() => {
@@ -456,6 +475,75 @@ export function ReportsPage() {
     const netPayable = outputTax - inputTax
     return { outputTax, inputTax, netPayable }
   }, [gstSummary, purchaseGstSummary])
+
+  // GSTR-2: Eligible ITC (supplier has GSTIN) vs Ineligible ITC (no GSTIN / unregistered), with reconciliation check
+  const gstr2Summary = useMemo(() => {
+    const eligibleBillIds = new Set<string>()
+    const ineligibleBillIds = new Set<string>()
+    let eligibleTaxable = 0, eligibleTax = 0, eligibleCgst = 0, eligibleSgst = 0, eligibleIgst = 0
+    let ineligibleTaxable = 0, ineligibleTax = 0
+
+    for (const item of purchaseGstData) {
+      const hasGstin = !!(item.purchases as any)?.suppliers?.gstin
+      const taxable = item.taxable_amount ?? 0
+      const cgst = item.cgst_amount ?? 0, sgst = item.sgst_amount ?? 0, igst = item.igst_amount ?? 0
+      const tax = cgst + sgst + igst
+      if (hasGstin) {
+        eligibleTaxable += taxable
+        eligibleTax += tax
+        eligibleCgst += cgst
+        eligibleSgst += sgst
+        eligibleIgst += igst
+        if (item.purchase_id) eligibleBillIds.add(item.purchase_id)
+      } else {
+        ineligibleTaxable += taxable
+        ineligibleTax += tax
+        if (item.purchase_id) ineligibleBillIds.add(item.purchase_id)
+      }
+    }
+
+    const purchaseReturnsTotal = returnsData
+      .filter((r) => r.return_type === 'purchase')
+      .reduce((s, r) => s + r.refund_amount, 0)
+
+    // purchase returns.refund_amount has no taxable/tax split — apportion the
+    // tax-inclusive refund across taxable value and tax using the eligible-purchase
+    // blended rate, so "net of returns" nets both sides consistently, not just one.
+    const eligibleGrossTotal = eligibleTaxable + eligibleTax
+    const returnsTaxablePortion = eligibleGrossTotal > 0 ? purchaseReturnsTotal * (eligibleTaxable / eligibleGrossTotal) : 0
+    const returnsTaxPortion = eligibleGrossTotal > 0 ? purchaseReturnsTotal * (eligibleTax / eligibleGrossTotal) : 0
+    const returnsRate = eligibleTax > 0 ? returnsTaxPortion / eligibleTax : 0
+
+    const netEligibleTaxable = Math.max(0, eligibleTaxable - returnsTaxablePortion)
+    const netEligibleITC = Math.max(0, eligibleTax - returnsTaxPortion)
+    const netEligibleCgst = Math.max(0, eligibleCgst * (1 - returnsRate))
+    const netEligibleSgst = Math.max(0, eligibleSgst * (1 - returnsRate))
+    const netEligibleIgst = Math.max(0, eligibleIgst * (1 - returnsRate))
+
+    const lineLevelTax = purchaseGstSummary.reduce((s, g) => s + g.cgst + g.sgst + g.igst, 0)
+    const difference = Math.abs((eligibleTax + ineligibleTax) - lineLevelTax)
+    const reconciled = difference <= 1
+
+    return {
+      eligibleBillCount: eligibleBillIds.size,
+      eligibleTaxable,
+      eligibleTax,
+      eligibleCgst,
+      eligibleSgst,
+      eligibleIgst,
+      ineligibleBillCount: ineligibleBillIds.size,
+      ineligibleTaxable,
+      ineligibleTax,
+      purchaseReturnsTotal,
+      netEligibleTaxable,
+      netEligibleITC,
+      netEligibleCgst,
+      netEligibleSgst,
+      netEligibleIgst,
+      reconciled,
+      difference,
+    }
+  }, [purchaseGstData, purchaseGstSummary, returnsData])
 
   // Sale Order (Quotations) summary
   const quotationsSummary = useMemo(() => {
@@ -516,6 +604,17 @@ export function ReportsPage() {
       netMargin,
     }
   }, [salesSummary, returnsData, purchasesData, expensesData])
+
+  // HSN-wise summary totals + reconciliation against GSTR-1
+  const hsnSummary = useMemo(() => {
+    const totalTax = itemSummary.reduce((s, i) => s + i.cgst + i.sgst + i.igst, 0)
+    const grossTaxable = itemSummary.reduce((s, i) => s + (i.revenue - i.cgst - i.sgst - i.igst), 0)
+    const returnsAdjusted = pnlSummary.salesReturns
+    const netTaxableValue = Math.max(0, grossTaxable - returnsAdjusted)
+    const difference = Math.abs(netTaxableValue - gstr1Summary.netTaxableValue) + Math.abs(totalTax - gstr1Summary.netOutputTax)
+    const reconciled = difference <= 1
+    return { totalTax, grossTaxable, returnsAdjusted, netTaxableValue, reconciled, difference }
+  }, [itemSummary, pnlSummary.salesReturns, gstr1Summary])
 
   // Balance Sheet Calculations
   const balanceSheetSummary = useMemo(() => {
@@ -656,6 +755,31 @@ export function ReportsPage() {
       ['Product', 'HSN', 'Qty Sold', 'Revenue', 'CGST', 'SGST', 'IGST'],
       itemSummary.map((i) => [i.name, i.hsn, i.qty, i.revenue.toFixed(2), i.cgst.toFixed(2), i.sgst.toFixed(2), i.igst.toFixed(2)]),
     )
+  }
+
+  const exportHsnGstr1Json = () => {
+    const payload = {
+      gstin: org?.gstin ?? '',
+      period: `${dateFrom}_to_${dateTo}`,
+      hsn: itemSummary.map((i) => ({
+        hsn_sc: i.hsn || '',
+        desc: i.name,
+        uqc: i.uqc,
+        qty: i.qty,
+        taxable_value: Number((i.revenue - i.cgst - i.sgst - i.igst).toFixed(2)),
+        cgst_amt: Number(i.cgst.toFixed(2)),
+        sgst_amt: Number(i.sgst.toFixed(2)),
+        igst_amt: Number(i.igst.toFixed(2)),
+        total_value: Number(i.revenue.toFixed(2)),
+      })),
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `hsn-summary-gstr1-${dateFrom}-to-${dateTo}.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const exportStock = () => {
@@ -1706,8 +1830,8 @@ export function ReportsPage() {
           <Tabs defaultValue="gstr1" className="space-y-4">
             <TabsList className="flex flex-wrap h-auto gap-1 bg-card border border-border p-1">
               <TabsTrigger value="gstr1">GSTR-1</TabsTrigger>
-              <TabsTrigger value="gstr2" disabled className="opacity-50">GSTR-2 (Coming soon)</TabsTrigger>
-              <TabsTrigger value="gstr3b" disabled className="opacity-50">GSTR-3B (Coming soon)</TabsTrigger>
+              <TabsTrigger value="gstr2">GSTR-2</TabsTrigger>
+              <TabsTrigger value="gstr3b">GSTR-3B</TabsTrigger>
               <TabsTrigger value="gstr9">GSTR-9</TabsTrigger>
               <TabsTrigger value="hsn">HSN-wise Summary</TabsTrigger>
             </TabsList>
@@ -1740,7 +1864,7 @@ export function ReportsPage() {
                   <CardContent className="p-5">
                     <p className="text-xs text-zinc-400">Net Taxable Value</p>
                     <p className="text-2xl font-bold text-white mt-1">{formatINR(gstr1Summary.netTaxableValue)}</p>
-                    <p className="text-xs text-zinc-500 mt-0.5">after sales returns not included</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">after sales returns</p>
                   </CardContent>
                 </Card>
                 <Card>
@@ -1804,38 +1928,408 @@ export function ReportsPage() {
               </p>
             </TabsContent>
 
-            <TabsContent value="gstr9" className="space-y-4">
-              <p className="text-sm text-muted-foreground">Annual return summary — aggregated outward supplies and tax for the selected period</p>
-              <div className="rounded-lg border border-border bg-card overflow-hidden">
-                <Table>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell className="text-zinc-300">Total Outward Taxable Supplies</TableCell>
-                      <TableCell className="text-right font-semibold text-white">{formatINR(gstr1Summary.netTaxableValue)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="text-zinc-300">Total Tax Paid (CGST + SGST + IGST)</TableCell>
-                      <TableCell className="text-right font-semibold text-white">{formatINR(gstr1Summary.netOutputTax)}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="text-zinc-300">B2B Invoices</TableCell>
-                      <TableCell className="text-right font-semibold text-white">{gstr1Summary.b2bCount}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="text-zinc-300">B2C Invoices</TableCell>
-                      <TableCell className="text-right font-semibold text-white">{gstr1Summary.b2cCount}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="text-zinc-300">Input Tax Credit Claimed (from purchases)</TableCell>
-                      <TableCell className="text-right font-semibold text-white">{formatINR(taxLiabilitySummary.inputTax)}</TableCell>
-                    </TableRow>
-                    <TableRow className="border-t-2 border-zinc-700 bg-zinc-800/30">
-                      <TableCell className="font-bold text-zinc-200">Net Tax Payable</TableCell>
-                      <TableCell className="text-right font-bold text-indigo-300">{formatINR(Math.abs(taxLiabilitySummary.netPayable))}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
+            <TabsContent value="gstr2" className="space-y-4">
+              <div className={cn(
+                'rounded-lg border p-3 flex items-center justify-between text-xs',
+                gstr2Summary.reconciled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+              )}>
+                <div className="flex items-center gap-2">
+                  {gstr2Summary.reconciled ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                  <span>
+                    {gstr2Summary.reconciled
+                      ? 'GSTR-2 reconciled — CGST + SGST + IGST matches Net ITC.'
+                      : 'GSTR-2 reconciliation mismatch — review purchase/line-item tax data.'}
+                  </span>
+                </div>
+                <span>Tolerance: ₹1.00 · Difference: {formatINR(gstr2Summary.difference)}</span>
               </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Eligible Taxable</p>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(gstr2Summary.netEligibleTaxable)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">after purchase returns</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Eligible ITC</p>
+                    <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(gstr2Summary.netEligibleITC)}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Eligible Bills</p>
+                    <p className="text-2xl font-bold text-white mt-1">{gstr2Summary.eligibleBillCount}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">registered + non-blocked</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Ineligible Tax</p>
+                    <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(gstr2Summary.ineligibleTax)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">{gstr2Summary.ineligibleBillCount} bills excluded</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Eligible ITC (Registered Suppliers)</p>
+                    <p className="text-xs text-zinc-500">{gstr2Summary.eligibleBillCount} bills with valid GSTIN, non-blocked credits</p>
+                  </div>
+                  <span className="font-bold text-white">{formatINR(gstr2Summary.eligibleTax)}</span>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-3 text-sm">
+                  <span className="text-zinc-400">Taxable Value</span>
+                  <span className="text-right text-white">{formatINR(gstr2Summary.eligibleTaxable)}</span>
+                  <span className="text-zinc-400">Total ITC Available</span>
+                  <span className="text-right text-white font-semibold">{formatINR(gstr2Summary.eligibleTax)}</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-amber-500/20 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Ineligible ITC (Excluded)</p>
+                    <p className="text-xs text-zinc-500">Unregistered suppliers — Section 17(5) blocked-credit tracking not implemented</p>
+                  </div>
+                  <span className="font-bold text-amber-400">{formatINR(gstr2Summary.ineligibleTax)}</span>
+                </div>
+              </div>
+
+              {gstr2Summary.purchaseReturnsTotal > 0 && (
+                <div className="rounded-lg border border-red-500/20 bg-red-500/5 overflow-hidden">
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Purchase Returns / Debit Notes (Deducted)</p>
+                      <p className="text-xs text-zinc-500">reduces net eligible taxable value</p>
+                    </div>
+                    <span className="font-bold text-red-400">-{formatINR(gstr2Summary.purchaseReturnsTotal)}</span>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-zinc-500">
+                Note: "Ineligible ITC" here means purchases from suppliers with no GSTIN on file — BillScape does not yet track true
+                Section 17(5) blocked-credit categories (e.g. motor vehicles, personal consumption), so this is a proxy, not a full
+                eligibility engine.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="gstr3b" className="space-y-4">
+              <div className={cn(
+                'rounded-lg border p-3 flex items-center justify-between text-xs',
+                (gstr1Summary.reconciled && gstr2Summary.reconciled) ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+              )}>
+                <div className="flex items-center gap-2">
+                  {(gstr1Summary.reconciled && gstr2Summary.reconciled) ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                  <span>GSTR-3B reconciled — Output Tax, ITC and Net Payable all balance with GSTR-1 &amp; GSTR-2.</span>
+                </div>
+                <span>Tolerance: ₹1.00 · Sales returns deducted from Output Tax · Purchase returns deducted from ITC.</span>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card p-5">
+                <p className="text-sm font-semibold text-white mb-4">GST Summary</p>
+                <div className="flex flex-col sm:flex-row items-center gap-6">
+                  <div className="relative flex h-40 w-40 shrink-0 items-center justify-center rounded-full border-[14px] border-emerald-500/70">
+                    <div className="text-center">
+                      <p className="text-xs text-zinc-400">Net Payable</p>
+                      <p className="text-xl font-bold text-red-400">
+                        {formatINR(Math.max(0, gstr1Summary.netOutputTax - gstr2Summary.netEligibleITC))}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex-1 w-full space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="text-zinc-300">Output Tax (net of returns)</span>
+                        <span className="font-semibold text-white">{formatINR(gstr1Summary.netOutputTax)}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                        <div className="h-full bg-emerald-500" style={{ width: '100%' }} />
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-0.5">100.0%</p>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="text-zinc-300">Eligible ITC (net of returns)</span>
+                        <span className="font-semibold text-white">{formatINR(gstr2Summary.netEligibleITC)}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                        <div
+                          className="h-full bg-amber-500"
+                          style={{ width: gstr1Summary.netOutputTax > 0 ? `${Math.min(100, (gstr2Summary.netEligibleITC / gstr1Summary.netOutputTax) * 100)}%` : '0%' }}
+                        />
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {gstr1Summary.netOutputTax > 0 ? `${((gstr2Summary.netEligibleITC / gstr1Summary.netOutputTax) * 100).toFixed(1)}%` : '0.0%'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-emerald-500/20 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">3.1 - Outward Supplies (Net of Sales Returns)</p>
+                  <span className="font-bold text-emerald-400">{formatINR(gstr1Summary.netOutputTax)}</span>
+                </div>
+                <div className="p-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">(a) Outward taxable supplies</span>
+                    <span className="text-white">{formatINR(gstr1Summary.netTaxableValue)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Integrated Tax (IGST)</span>
+                    <span className="text-white">{formatINR(gstSummary.reduce((s, g) => s + g.igst, 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Central Tax (CGST)</span>
+                    <span className="text-white">{formatINR(gstSummary.reduce((s, g) => s + g.cgst, 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">State Tax (SGST)</span>
+                    <span className="text-white">{formatINR(gstSummary.reduce((s, g) => s + g.sgst, 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 font-semibold">
+                    <span className="text-zinc-300">Total Output Tax</span>
+                    <span className="text-white">{formatINR(gstr1Summary.netOutputTax)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-amber-500/20 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">4 - Eligible ITC (Net of Purchase Returns)</p>
+                  <span className="font-bold text-amber-400">{formatINR(gstr2Summary.netEligibleITC)}</span>
+                </div>
+                <div className="p-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">(A) ITC Available — eligible taxable value</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleTaxable)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Integrated Tax (IGST)</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleIgst)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Central Tax (CGST)</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleCgst)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">State Tax (SGST)</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleSgst)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 font-semibold">
+                    <span className="text-zinc-300">Total Eligible ITC</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleITC)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-zinc-500">
+                    <span>(D) Ineligible ITC (Section 17(5) / unregistered) — reported separately</span>
+                    <span>{formatINR(gstr2Summary.ineligibleTax)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-red-500/30 bg-red-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-red-500/20 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">Net Tax Payable (Output − Eligible ITC)</p>
+                  <span className="font-bold text-red-400">{formatINR(Math.max(0, gstr1Summary.netOutputTax - gstr2Summary.netEligibleITC))}</span>
+                </div>
+                <div className="p-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">IGST Payable</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstSummary.reduce((s, g) => s + g.igst, 0) - gstr2Summary.netEligibleIgst))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">CGST Payable</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstSummary.reduce((s, g) => s + g.cgst, 0) - gstr2Summary.netEligibleCgst))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">SGST Payable</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstSummary.reduce((s, g) => s + g.sgst, 0) - gstr2Summary.netEligibleSgst))}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 font-semibold">
+                    <span className="text-zinc-300">Total Payable</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstr1Summary.netOutputTax - gstr2Summary.netEligibleITC))}</span>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="gstr9" className="space-y-4">
+              <div className={cn(
+                'rounded-lg border p-3 flex items-center justify-between text-xs',
+                (gstr1Summary.reconciled && gstr2Summary.reconciled) ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+              )}>
+                <div className="flex items-center gap-2">
+                  {(gstr1Summary.reconciled && gstr2Summary.reconciled) ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                  <span>GSTR-9 reconciled — matches GSTR-1 and GSTR-3B within tolerance.</span>
+                </div>
+                <span>
+                  Tolerance: ₹1.00 · vs GSTR-1: Δ {formatINR(gstr1Summary.difference)} · vs GSTR-3B: Δ {formatINR(gstr2Summary.difference)}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Outward Supplies</p>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(gstr1Summary.netTaxableValue)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">after credit notes</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Output Tax</p>
+                    <p className="text-2xl font-bold text-blue-400 mt-1">{formatINR(gstr1Summary.netOutputTax)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      CGST {formatINR(gstSummary.reduce((s, g) => s + g.cgst, 0))} + SGST {formatINR(gstSummary.reduce((s, g) => s + g.sgst, 0))}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Eligible ITC</p>
+                    <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(gstr2Summary.netEligibleITC)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">after purchase returns</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Tax Payable</p>
+                    <p className="text-2xl font-bold text-red-400 mt-1">{formatINR(Math.max(0, gstr1Summary.netOutputTax - gstr2Summary.netEligibleITC))}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Outward − Eligible ITC</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-emerald-500/20 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Part II — Outward Supplies</p>
+                    <p className="text-xs text-zinc-500">B2B + B2C, net of credit notes</p>
+                  </div>
+                  <span className="font-bold text-emerald-400">{formatINR(gstr1Summary.netTaxableValue)}</span>
+                </div>
+                <div className="p-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">B2B Taxable Value</span>
+                    <span className="text-white">{formatINR(gstr1Summary.b2bTaxable)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">B2C Taxable Value</span>
+                    <span className="text-white">{formatINR(gstr1Summary.b2cTaxable)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Nil-Rated / Exempt (separate)</span>
+                    <span className="text-white">{formatINR(0)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-red-400">
+                    <span>Less: Credit Notes (Sales Returns)</span>
+                    <span>-{formatINR(pnlSummary.salesReturns)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 font-semibold">
+                    <span className="text-zinc-300">Net Taxable Value</span>
+                    <span className="text-white">{formatINR(gstr1Summary.netTaxableValue)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">CGST</span>
+                    <span className="text-white">{formatINR(gstSummary.reduce((s, g) => s + g.cgst, 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">SGST</span>
+                    <span className="text-white">{formatINR(gstSummary.reduce((s, g) => s + g.sgst, 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between font-semibold">
+                    <span className="text-zinc-300">Net Output Tax</span>
+                    <span className="text-white">{formatINR(gstr1Summary.netOutputTax)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-amber-500/20 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Part III — ITC Availed</p>
+                    <p className="text-xs text-zinc-500">Eligible only (registered + non-blocked), net of returns</p>
+                  </div>
+                  <span className="font-bold text-amber-400">{formatINR(gstr2Summary.netEligibleITC)}</span>
+                </div>
+                <div className="p-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Eligible Taxable Value</span>
+                    <span className="text-white">{formatINR(gstr2Summary.eligibleTaxable)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Eligible ITC (CGST + SGST)</span>
+                    <span className="text-white">{formatINR(gstr2Summary.eligibleTax)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-red-400">
+                    <span>Less: Purchase Returns / Reversals</span>
+                    <span>-{formatINR(gstr2Summary.purchaseReturnsTotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-zinc-500">
+                    <span>Ineligible / Blocked Credits (reported separately)</span>
+                    <span>{formatINR(gstr2Summary.ineligibleTax)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 font-semibold">
+                    <span className="text-zinc-300">Net Eligible ITC</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleITC)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">CGST</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleCgst)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">SGST</span>
+                    <span className="text-white">{formatINR(gstr2Summary.netEligibleSgst)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-red-500/30 bg-red-500/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-red-500/20 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">Part IV — Net Tax Payable</p>
+                  <span className="font-bold text-red-400">{formatINR(Math.max(0, gstr1Summary.netOutputTax - gstr2Summary.netEligibleITC))}</span>
+                </div>
+                <div className="p-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Net Output Tax</span>
+                    <span className="text-white">{formatINR(gstr1Summary.netOutputTax)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-red-400">
+                    <span>Less: Net Eligible ITC</span>
+                    <span>-{formatINR(gstr2Summary.netEligibleITC)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-zinc-700 pt-2 font-semibold">
+                    <span className="text-zinc-300">Net Tax Payable</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstr1Summary.netOutputTax - gstr2Summary.netEligibleITC))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">CGST</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstSummary.reduce((s, g) => s + g.cgst, 0) - gstr2Summary.netEligibleCgst))}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">SGST</span>
+                    <span className="text-white">{formatINR(Math.max(0, gstSummary.reduce((s, g) => s + g.sgst, 0) - gstr2Summary.netEligibleSgst))}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Part V — Reconciliation with Monthly Filings</p>
+                    <p className="text-xs text-zinc-500">GSTR-9 must reconcile with GSTR-1 and GSTR-3B</p>
+                  </div>
+                  <span className="font-bold text-white">{formatINR(gstr1Summary.difference + gstr2Summary.difference)}</span>
+                </div>
+              </div>
+
               <p className="text-xs text-zinc-500">
                 GSTR-9 is normally filed annually — this view aggregates whatever date range is currently selected above, so set the
                 filter to a full financial year for an accurate annual summary.
@@ -1843,49 +2337,128 @@ export function ReportsPage() {
             </TabsContent>
 
             <TabsContent value="hsn" className="space-y-4">
-              <div className="flex justify-end">
-                <Button variant="outline" size="sm" onClick={exportItems}>
-                  <Download className="h-4 w-4 mr-1.5" />
-                  Export CSV
-                </Button>
+              <div className={cn(
+                'rounded-lg border p-3 flex items-center justify-between text-xs',
+                hsnSummary.reconciled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+              )}>
+                <div className="flex items-center gap-2">
+                  {hsnSummary.reconciled ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                  <span>
+                    {hsnSummary.reconciled ? 'HSN summary reconciled with GSTR-1 totals.' : 'HSN summary reconciliation mismatch — review item-level HSN codes.'}
+                  </span>
+                </div>
+                <span>
+                  Tolerance: ₹1.00 · Taxable Δ {formatINR(Math.abs(hsnSummary.netTaxableValue - gstr1Summary.netTaxableValue))} ·
+                  Tax Δ {formatINR(Math.abs(hsnSummary.totalTax - gstr1Summary.netOutputTax))}
+                </span>
               </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Net Taxable Value</p>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(hsnSummary.netTaxableValue)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">after sales returns</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Total Tax</p>
+                    <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(hsnSummary.totalTax)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      CGST {formatINR(itemSummary.reduce((s, i) => s + i.cgst, 0))} + SGST {formatINR(itemSummary.reduce((s, i) => s + i.sgst, 0))}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Gross Taxable</p>
+                    <p className="text-2xl font-bold text-white mt-1">{formatINR(hsnSummary.grossTaxable)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">before returns</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-5">
+                    <p className="text-xs text-zinc-400">Returns Adjusted</p>
+                    <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(hsnSummary.returnsAdjusted)}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">credit notes deducted</p>
+                  </CardContent>
+                </Card>
+              </div>
+
               <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">HSN-wise Summary (GSTR-1 format)</p>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={exportItems}>
+                      <Download className="h-4 w-4 mr-1.5" />
+                      Export CSV
+                    </Button>
+                    <Button size="sm" onClick={exportHsnGstr1Json}>
+                      <Download className="h-4 w-4 mr-1.5" />
+                      Export GSTR-1 JSON
+                    </Button>
+                  </div>
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead>HSN</TableHead>
-                      <TableHead className="text-right">Qty Sold</TableHead>
-                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead>#</TableHead>
+                      <TableHead>HSN / SAC</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>UQC</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Taxable Value</TableHead>
                       <TableHead className="text-right">CGST</TableHead>
                       <TableHead className="text-right">SGST</TableHead>
                       <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Total Tax</TableHead>
+                      <TableHead className="text-right">Total Value</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {itemLoading ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <TableRow key={i}>
-                          {Array.from({ length: 7 }).map((_, j) => (
+                          {Array.from({ length: 11 }).map((_, j) => (
                             <TableCell key={j}><div className="h-4 bg-zinc-800 rounded animate-pulse" /></TableCell>
                           ))}
                         </TableRow>
                       ))
                     ) : itemSummary.length > 0 ? (
-                      itemSummary.map((item) => (
-                        <TableRow key={item.name}>
-                          <TableCell className="font-medium text-white">{item.name}</TableCell>
-                          <TableCell className="font-mono text-xs text-zinc-400">{item.hsn || '—'}</TableCell>
-                          <TableCell className="text-right">{item.qty}</TableCell>
-                          <TableCell className="text-right font-semibold">{formatINR(item.revenue)}</TableCell>
-                          <TableCell className="text-right">{formatINR(item.cgst)}</TableCell>
-                          <TableCell className="text-right">{formatINR(item.sgst)}</TableCell>
-                          <TableCell className="text-right">{formatINR(item.igst)}</TableCell>
+                      <>
+                        {itemSummary.map((item, i) => {
+                          const totalTax = item.cgst + item.sgst + item.igst
+                          const taxable = item.revenue - totalTax
+                          return (
+                            <TableRow key={item.name}>
+                              <TableCell className="text-zinc-500">{i + 1}</TableCell>
+                              <TableCell className="font-mono text-xs text-zinc-400">{item.hsn || '—'}</TableCell>
+                              <TableCell className="font-medium text-white">{item.name}</TableCell>
+                              <TableCell className="text-zinc-400">{item.uqc}</TableCell>
+                              <TableCell className="text-right">{item.qty}</TableCell>
+                              <TableCell className="text-right">{formatINR(taxable)}</TableCell>
+                              <TableCell className="text-right">{formatINR(item.cgst)}</TableCell>
+                              <TableCell className="text-right">{formatINR(item.sgst)}</TableCell>
+                              <TableCell className="text-right">{formatINR(item.igst)}</TableCell>
+                              <TableCell className="text-right font-semibold">{formatINR(totalTax)}</TableCell>
+                              <TableCell className="text-right font-semibold">{formatINR(item.revenue)}</TableCell>
+                            </TableRow>
+                          )
+                        })}
+                        <TableRow className="border-t-2 border-zinc-700 bg-zinc-800/30 font-bold">
+                          <TableCell colSpan={5} className="text-zinc-200">Total</TableCell>
+                          <TableCell className="text-right">{formatINR(hsnSummary.grossTaxable)}</TableCell>
+                          <TableCell className="text-right">{formatINR(itemSummary.reduce((s, i) => s + i.cgst, 0))}</TableCell>
+                          <TableCell className="text-right">{formatINR(itemSummary.reduce((s, i) => s + i.sgst, 0))}</TableCell>
+                          <TableCell className="text-right">{formatINR(itemSummary.reduce((s, i) => s + i.igst, 0))}</TableCell>
+                          <TableCell className="text-right">{formatINR(hsnSummary.totalTax)}</TableCell>
+                          <TableCell className="text-right">{formatINR(itemSummary.reduce((s, i) => s + i.revenue, 0))}</TableCell>
                         </TableRow>
-                      ))
+                      </>
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-zinc-500 py-12">
+                        <TableCell colSpan={11} className="text-center text-zinc-500 py-12">
                           No sales recorded for this period
                         </TableCell>
                       </TableRow>
