@@ -414,7 +414,8 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
         // 1. Insert into expenses
         const { data: expData, error: expErr } = await supabase.from('expenses').insert({
           organization_id: orgId,
-          category: 'salary',
+          created_by: user.id,
+          category: 'Salary',
           amount: netPaid,
           description: `Salary for ${emp.full_name} - ${currentMonth}`,
           expense_date: today,
@@ -486,6 +487,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
 
       const { data: expData, error: expErr } = await supabase.from('expenses').insert({
         organization_id: orgId,
+        created_by: user.id,
         category: confirmExpenseTemplate.category,
         amount: standardExpenseInput.amount,
         description: standardExpenseInput.notes,

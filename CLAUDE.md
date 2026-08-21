@@ -119,7 +119,18 @@ currency, date_format, timezone
 **UPI / Payments**: upi_id, default_payment_mode, default_payment_terms, payment_reminder_days
 **Signature**: signature_url, show_signature_on_invoice
 **Notifications**: notify_low_stock, notify_expiry, notify_invoice_due, notify_payment_received, notify_daily_summary
-**Print & PDF Layout**: print_paper_size, print_template_theme, print_show_logo, print_show_shop_name, print_show_address, print_show_contact, print_show_gstin, print_show_pan, print_show_column_sno, print_show_column_hsn, print_show_column_mrp, print_show_column_unit, print_show_column_discount, print_show_column_tax_rate, print_show_column_tax_amount, print_show_bank_details, print_show_upi_qr, print_show_terms, print_show_signature, print_thank_you_note
+**Print & PDF Layout**: ~48 fields as of 2026-08-21 (grew from an original ~20-field set — see
+`OrgBranding` interface in `packages/core/src/types/index.ts` for the authoritative current list,
+do not hand-maintain a copy here). Covers paper size/theme/font, per-section show/hide (logo, shop
+name, address, contact, GSTIN, PAN, email/website), party-detail sub-toggles, document-detail
+toggles (number, date, due date, place of supply, delivery note, payment mode), all 13 item-table
+column toggles individually, tax-display toggles (CGST/SGST/IGST split, tax summary block), all
+totals-block row toggles (subtotal, discount, tax amount, round off, grand total — 3 of these,
+received/balance-due/change-returned, have no backing data on a real `Sale` and are declared but
+never actually wired into `InvoicePrint.tsx`, see Invoice visual parity section above), and
+footer/signature/bank/UPI toggles. As of 2026-08-21, every one of these that has a real data
+source on a completed `Sale` is read and respected by `InvoicePrint.tsx` (the actual printed
+bill) — previously only ~10 of them were wired and the rest were silently ignored.
 **Custom Fields**: custom_fields array
 
 ## Critical DB fixes applied
@@ -505,6 +516,94 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - Loyalty settings query key is `loyalty_settings` (underscore, matches `/loyalty`'s existing
   LoyaltyPage key) — POSTab must use the same key or a rate change saved on `/loyalty` won't
   invalidate POSTab's cached settings in another open tab.
+
+## Invoice print pipeline — InvoicePrint.tsx (as of 2026-08-21)
+- **Single source of truth for real printed bills**: `apps/web/src/components/billing/InvoicePrint.tsx`
+  is used by exactly two real call sites — `POSTab.tsx` (post-checkout print dialog) and
+  `SaleViewPage.tsx` (Sales History view/reprint). Both must always pass the same prop shape
+  (`shopPan`, `customerAddress` included) so a bill printed right after checkout looks identical
+  to the same bill reprinted later. `SettingsPage.tsx`'s `LivePrintBillPreview` ("Live Document
+  Preview" / "Test Print" on Settings → Print & Layout) is a **separate, independent component**
+  with hardcoded mock data — it does not share code with `InvoicePrint.tsx` and is not
+  automatically kept in sync; see "Invoice visual parity" section below.
+- **Printing mechanism**: `InvoicePrint`'s own `handlePrint` builds a hidden `<iframe>`
+  (`position:fixed; width:0; height:0`), copies every `<style>`/`<link rel="stylesheet">` tag
+  from the host document into the iframe's `<head>`, writes `document.getElementById(rootId)
+  .outerHTML` directly into the iframe's `<body>`, then calls `window.print()` **inside the
+  iframe** (not on the host page) after a short `setTimeout` to let the iframe's stylesheets
+  load, and self-removes the iframe ~1s later. This is deliberate — printing the whole host page
+  via a bare `window.print()` + `@media print` CSS trick was tried first and failed twice in
+  production (see below); the iframe approach prints only the invoice's own isolated document,
+  sidestepping the host page's DOM/CSS entirely.
+  - **CRITICAL**: pass `elem.outerHTML` (the `#invoice-print-root` element ITSELF), not a wrapper
+    div's `outerHTML`. `InvoicePrint.tsx`'s own embedded `<style>` block contains
+    `body :not(#${rootId}):not(#${rootId} *) { display: none !important }`, which assumes
+    `#${rootId}` is a **direct child of the iframe's `<body>`**. Passing a wrapper's `outerHTML`
+    (even one that just contains the root div) breaks this — the wrapper itself becomes `body`'s
+    child, the rule hides the wrapper (since it's neither the root nor a descendant of it), and
+    the root along with all its content disappears too. This exact bug shipped once
+    (`elem.outerHTML` computed from `printRef`'s wrapper `<div>` instead of the root div itself)
+    and produced a blank print preview identical in symptom to the original bug it was meant to
+    fix — caught by re-testing, not by code review.
+  - `rootId` (prop on `InvoicePrint`, default `'invoice-print-root'`) exists specifically so two
+    `InvoicePrint` instances can be mounted simultaneously (e.g. `SaleViewPage.tsx`'s off-screen
+    print copy + its Preview-dialog copy, which uses `rootId="invoice-preview-root"`) without a
+    duplicate-DOM-id collision that would make the print CSS's `#${rootId}` selector match two
+    elements at once.
+- **Root-caused failure modes, do not reintroduce**:
+  1. `@media print { body > * { display:none } }` — only matches `body`'s *direct* children. Once
+     the invoice is nested inside AppShell/routing wrappers (which it always is, post any React
+     Router/dashboard-shell redesign), this hides the wrong ancestor and the invoice along with
+     it. Fixed by switching to `body :not(#${rootId}):not(#${rootId} *) { display:none }`, which
+     hides everything that is neither the root nor a descendant of it, regardless of nesting depth.
+  2. `position: fixed` (or a Radix `Dialog`'s auto-centered `position:fixed; transform:
+     translate(-50%,-50%)` content wrapper) anywhere in the ancestor chain of the printed root —
+     Chrome's print pagination lays out fixed-position elements relative to the *printed page box*
+     at their literal fixed coordinates, not by reflowing them into the print layout. An
+     off-screen `left:-9999px` trick, or simply mounting `InvoicePrint` inside a `<Dialog>`
+     (`POSTab.tsx`'s post-checkout dialog does this), silently produces a blank printed page even
+     though `display:block` is correctly applied — `display` and `position` are orthogonal, and a
+     `display:none`-free but `position:fixed`-tainted ancestor chain still fails. This is why
+     `InvoicePrint.tsx` prints via an isolated iframe now instead of relying on host-page CSS
+     tricks — it makes this whole failure class structurally impossible rather than papering over
+     each new place it can recur.
+  3. Browser's native "Headers and footers" print setting (URL/date/page-number strip at top and
+     bottom of the printed page) is a per-print browser preference, not something a web page's
+     CSS/JS can control — if a merchant reports stray text above/below the invoice content itself
+     is otherwise correct, direct them to uncheck it under the print dialog's "More settings," not
+     to a code fix.
+
+## Invoice visual parity — InvoicePrint.tsx vs Settings preview (as of 2026-08-21)
+- As of this date, `InvoicePrint.tsx`'s visual styling (colors, borders, spacing, font-sizing
+  strategy) was ported section-by-section to match `SettingsPage.tsx`'s `LivePrintBillPreview`
+  ("Test Print" reference) exactly — zinc-* color family (not gray-*), relative `text-[N em]`
+  sizing (not fixed px/rem), dashed dividers between sections (not solid), open rule-only tables
+  for the items/tax-summary sections (not full-grid bordered tables), `flex justify-between` rows
+  for the totals card (not an HTML `<table>`).
+- **This is a one-time hand-synced snapshot match, NOT automatic propagation.** `InvoicePrint.tsx`
+  and `LivePrintBillPreview` remain two independent files with duplicated JSX — a future edit to
+  one will silently drift from the other unless both are updated together. If "Settings changes
+  should always flow through to real bills" becomes a hard requirement, the fix is extracting one
+  shared presentational component both files render (real data vs. mock data as props) — this was
+  explicitly deferred as a larger, riskier refactor outside the scope of the visual-parity pass.
+- **Border thickness and QR code size were explicitly frozen, not touched** — the reference itself
+  uses 1px borders and a small (85–120px generated, 64–80px displayed) UPI QR, so "match the
+  reference" alone does not fix print-quality complaints (thin lines not registering on thermal
+  print heads, QR too small/low-fidelity to scan reliably). Two pre-existing 2px border exceptions
+  (`InvoicePrint.tsx`'s business-header bottom rule and Net Payable top rule) were kept at 2px and
+  only recolored to `border-dashed border-zinc-400` / `border-zinc-400` — do not thin these to 1px
+  in a future pass without confirming that's actually wanted. Border-thickness and QR-size fixes
+  are intentionally deferred to a follow-up pass, gated on the shop owner test-printing the current
+  design on a real thermal printer and reporting exactly what's too thin/small.
+- **QR generation** (`QRCode.toDataURL`, both in `InvoicePrint.tsx` and independently duplicated in
+  `SettingsPage.tsx`'s preview) has no shared helper — a future QR-size fix must touch both call
+  sites separately, or factor out a shared utility first.
+- Per-row tax math in the items table (`InvoicePrint.tsx`) uses `packages/core`'s `computeLineTax`
+  (not ad-hoc inline arithmetic) specifically because a flat (₹) line discount stores
+  `discount_pct: 0` with the real amount in `discount_amount` — naive `base * (discount_pct/100)`
+  silently computes zero for flat-discounted lines, which previously made a printed invoice's
+  per-line Taxable/Tax Amount columns visibly contradict the totals card and tax summary on the
+  same document for any bill using a ₹ (not %) line discount. Do not revert to inline math here.
 
 ## Dashboard Invitations (as of 2026-08-12)
 - The manual 6-digit OTP flow for adding dashboard users has been completely replaced by a frictionless, secure **Supabase Magic Link** flow.

@@ -95,6 +95,22 @@
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-zinc-600;
   }
+
+  /* Native date/time input calendar icon renders near-black by default — invisible
+     against the dark theme's zinc-900 input background. Invert it in dark mode only
+     (the .light theme's icon is already dark-on-white and correct as-is). */
+  html:not(.light) input[type="date"]::-webkit-calendar-picker-indicator,
+  html:not(.light) input[type="time"]::-webkit-calendar-picker-indicator,
+  html:not(.light) input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(1.5);
+    opacity: 0.8;
+    cursor: pointer;
+  }
+  html:not(.light) input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  html:not(.light) input[type="time"]::-webkit-calendar-picker-indicator:hover,
+  html:not(.light) input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
 }
 
 @layer components {

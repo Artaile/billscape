@@ -34,10 +34,19 @@ const DialogContent = React.forwardRef<
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
-      // Prevent Radix from hijacking focus on open — let the user's click/tab control it
+      // Prevent Radix from hijacking focus on open — let the user's click/tab control it.
+      // Because we never move focus INTO the dialog, whatever triggered it (often a button
+      // inside a Tabs.Content panel) keeps browser focus while Radix marks that same
+      // background subtree aria-hidden — which logs "Blocked aria-hidden on an element that
+      // retained focus". Blur the trigger so focus moves off the hidden subtree entirely
+      // instead of trying to redirect it into the dialog (which is exactly what this
+      // preventDefault is here to avoid).
       onOpenAutoFocus={(e) => {
         if (onOpenAutoFocus) { onOpenAutoFocus(e); return }
         e.preventDefault()
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur()
+        }
       }}
       // Prevent Radix FocusScope from stealing focus back to the dialog container
       // when an input inside is focused and React re-renders the tree

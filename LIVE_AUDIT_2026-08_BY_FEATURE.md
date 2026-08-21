@@ -153,8 +153,15 @@ balance is captured on creation but still has no "Record Payment" flow to pay it
 | Priority | Item | Evidence |
 |---|------|----------|
 | 🟠 High | ✅ **FIXED** — Single invoice_prefix, not per-document-type | Re-verified 2026-08-17: Settings → Invoice & UPI → "Document Prefixes" now has 9 separate prefix fields — Sale Invoice (INV), Purchase/Bill (BILL), Estimate (EST), Sale Order (SO), Proforma Invoice (PI), Credit Note (CN), Delivery Challan (DC), Payment Receipt (RCP), Expense (EXP). Matches (and slightly exceeds) IppoBill's 9-field parity target. |
+| 🔴 Critical | ✅ **FIXED (2026-08-21)** — Printed Sale invoice showed a blank page | Root-caused and fixed two separate blank-print bugs found live: (1) `SaleViewPage.tsx`/`POSTab.tsx` printed the invoice via `window.print()` on the whole host page relying on `@media print` CSS to hide everything else — broke once the invoice was nested deep under app-shell wrappers, and separately broke again inside `POSTab.tsx`'s post-checkout `Dialog` because Radix's auto-centered `position:fixed` content wrapper is not reflowed correctly by Chrome's print pagination even when `display:block` is set. (2) Fixed permanently by switching `InvoicePrint.tsx`'s own print button to build an isolated hidden `<iframe>` containing only the invoice's own DOM + copied stylesheets and calling `window.print()` inside that iframe — structurally eliminates this whole bug class rather than patching each place it recurred. Verified live on both the POS post-checkout dialog and Sales History reprint. |
+| 🟠 High | ✅ **FIXED (2026-08-21)** — Settings → Print & Layout toggles didn't affect the real printed bill | Previously only ~10 of ~48 `branding.print_show_*` fields were actually read by `InvoicePrint.tsx` (the component behind every real printed Sale invoice) — the rest were configurable in Settings but silently ignored on the real bill (party-detail sub-toggles, all 13 item-table column toggles individually, tax-display toggles, most totals-block row toggles, shop PAN, customer address, etc.). Wired every toggle that has real backing data into `InvoicePrint.tsx`; toggles with no real data source (MRP price, Received/Balance Due/Change Returned, customer PAN, shipping address, due date, delivery note, place of supply) were deliberately left inert rather than fabricating placeholder values. |
+| 🟡 Medium | ✅ **FIXED (2026-08-21)** — Real printed bill looked visually different from the Settings "Test Print" preview | `InvoicePrint.tsx` used a different visual language than `SettingsPage.tsx`'s reference preview (gray-* vs zinc-* colors, fixed px vs relative em font sizing, solid vs dashed section dividers, gridded vs open-rule tables). Restyled `InvoicePrint.tsx` section-by-section to match the reference exactly, with all real print/tax logic (per-line GST math, discount handling) provably unchanged. **Not yet closed**: this is a one-time hand-synced visual match, not automatic Settings→bill propagation — a future edit to the Settings preview will silently drift from the real invoice again unless the two are refactored to share one component (deliberately deferred, larger scope). Border thickness and QR code size were also explicitly left untouched pending a real thermal-printer test — see CLAUDE.md's "Invoice visual parity" section for the follow-up plan. |
 
-**Suggested split:** Closed — no further work needed on this item.
+**Suggested split:** The prefix and blank-print-page items are closed. Settings-parity is closed
+for every toggle with real data (documented gaps are intentional, not bugs). Visual-parity is
+closed for the current design snapshot but should be revisited alongside a shared-component
+refactor if "Settings always drives every printed bill automatically" becomes a hard requirement —
+and alongside a border-thickness/QR-size pass once real thermal-printer test results come back.
 
 ---
 
@@ -233,11 +240,15 @@ them:
 
 ## Priority scoreboard
 
+_Updated 2026-08-21: added 3 new §8 Invoicing items found and fixed this session (blank print bug,_
+_Settings print-toggle parity, visual-design parity) — unrelated to the 2026-08-17 re-check pass_
+_below, which remains otherwise unchanged._
+
 | Tier | Count | Fixed | Partially fixed | Still open |
 |------|-------|-------|------------------|------------|
-| 🔴 Critical | 3 | 0 | 0 | 3 (GSTR-1 not re-checked this pass, duplicate roles confirmed still broken, form-validation audit not started) — Upgrade CTA moved out of Critical, see below |
-| 🟠 High | 7 | 5 | 2 | 0 |
-| 🟡 Medium | 4 | 0 | 0 | 4 (unchanged, not part of this re-check pass) |
+| 🔴 Critical | 4 | 1 (blank print page, §8) | 0 | 3 (GSTR-1 not re-checked this pass, duplicate roles confirmed still broken, form-validation audit not started) — Upgrade CTA moved out of Critical, see below |
+| 🟠 High | 8 | 6 (5 from 2026-08-17 pass + Settings print-toggle parity, §8) | 2 | 0 |
+| 🟡 Medium | 5 | 1 (visual-design parity, §8 — closed for current snapshot, see caveat in §8) | 0 | 4 (unchanged, not part of this re-check pass) |
 | 🔵 Low/Watch | 1 | — | — | unchanged |
 | Verification only | 1 (Super Admin internals) | — | — | still needs a real `super_admin` account |
 | Stale-doc corrections | 4 | — | — | unchanged |
