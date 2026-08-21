@@ -1,80 +1,36 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Loader2, Receipt, TrendingDown } from 'lucide-react'
+import { Plus, Trash2, Loader2, Receipt, Eye, Pencil, Search, X } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
+import { formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { toast } from '@/hooks/use-toast'
 import { logActivity } from '@/lib/activityLog'
-import { formatDateTime } from '@/lib/utils'
-
-const CATEGORIES = [
-  'Rent',
-  'Salary',
-  'Electricity',
-  'Water',
-  'Internet',
-  'Transport',
-  'Packaging',
-  'Maintenance',
-  'Marketing',
-  'Miscellaneous',
-]
-
-const CATEGORY_COLORS: Record<string, string> = {
-  Rent: 'bg-red-500/10 text-red-400 border-red-500/20',
-  Salary: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  Electricity: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-  Water: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
-  Internet: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  Transport: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  Packaging: 'bg-green-500/10 text-green-400 border-green-500/20',
-  Maintenance: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
-  Marketing: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
-  Miscellaneous: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
-}
-
-interface Expense {
-  id: string
-  description: string
-  amount: number
-  category: string
-  expense_date: string
-  notes: string | null
-  created_at: string
-}
+import { ExpenseFormDialog } from '@/components/expenses/ExpenseFormDialog'
+import { ExpenseCategoriesTab } from '@/components/expenses/ExpenseCategoriesTab'
+import type { Expense, ExpenseCategory } from '@/components/expenses/types'
 
 export function ExpensesPage() {
-  const { org } = useAuth()
+  const { org, role } = useAuth()
   const orgId = org?.id
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const canManage = role === 'owner' || role === 'manager'
 
   const [showDialog, setShowDialog] = useState(false)
-  const [description, setDescription] = useState('')
-  const [amount, setAmount] = useState('')
-  const [category, setCategory] = useState('Miscellaneous')
-  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0])
-  const [notes, setNotes] = useState('')
-  const [filterCategory, setFilterCategory] = useState('All')
+  const [editTarget, setEditTarget] = useState<Expense | null>(null)
+  const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'direct' | 'indirect'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'unpaid'>('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ['expenses', orgId],
@@ -82,52 +38,13 @@ export function ExpensesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('expenses')
-        .select('*')
+        .select('*, suppliers(name)')
         .eq('organization_id', orgId!)
         .order('expense_date', { ascending: false })
         .order('created_at', { ascending: false })
       if (error) throw error
-      return (data ?? []) as Expense[]
+      return (data ?? []) as (Expense & { suppliers: { name: string } | null })[]
     },
-  })
-
-  const addMutation = useMutation({
-    mutationFn: async () => {
-      const amt = parseFloat(amount)
-      if (!description.trim()) throw new Error('Description required')
-      if (isNaN(amt) || amt <= 0) throw new Error('Enter a valid amount')
-
-      const { data: exp, error } = await supabase.from('expenses').insert({
-        organization_id: orgId!,
-        description: description.trim(),
-        amount: amt,
-        category,
-        expense_date: expenseDate,
-        notes: notes.trim() || null,
-      }).select().single()
-      if (error) throw error
-
-      await logActivity({
-        organizationId: orgId!,
-        action: 'created',
-        entity: 'expense',
-        entityId: exp?.id,
-        metadata: {
-          description: description.trim(),
-          amount: amt,
-          category,
-          date: expenseDate,
-        },
-      })
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses', orgId] })
-      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
-      toast.success('Expense added')
-      resetForm()
-      setShowDialog(false)
-    },
-    onError: (err: Error) => toast.error('Failed to add expense', err.message),
   })
 
   const deleteMutation = useMutation({
@@ -150,32 +67,58 @@ export function ExpensesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses', orgId] })
       queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['expense_category_counts', orgId] })
       toast.success('Expense deleted')
     },
     onError: (err: Error) => toast.error('Delete failed', err.message),
   })
 
-  const resetForm = () => {
-    setDescription('')
-    setAmount('')
-    setCategory('Miscellaneous')
-    setExpenseDate(new Date().toISOString().split('T')[0])
-    setNotes('')
-  }
+  const toggleStatusMutation = useMutation({
+    mutationFn: async (expense: Expense) => {
+      const nextStatus = expense.status === 'paid' ? 'unpaid' : 'paid'
+      const { error } = await supabase.from('expenses').update({ status: nextStatus }).eq('id', expense.id).eq('organization_id', orgId!)
+      if (error) throw error
+      return nextStatus
+    },
+    onSuccess: (nextStatus) => {
+      queryClient.invalidateQueries({ queryKey: ['expenses', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['expense-detail', orgId] })
+      toast.success(nextStatus === 'paid' ? 'Marked as paid' : 'Marked as unpaid')
+    },
+    onError: (err: Error) => toast.error('Failed to update status', err.message),
+  })
 
-  const filtered = filterCategory === 'All' ? expenses : expenses.filter((e) => e.category === filterCategory)
-  const totalThisMonth = expenses.filter((e) => {
-    const d = new Date(e.expense_date)
-    const now = new Date()
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-  }).reduce((sum, e) => sum + e.amount, 0)
+  const { data: allCategories = [] } = useQuery({
+    queryKey: ['expense_categories', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('expense_categories')
+        .select('*')
+        .eq('organization_id', orgId!)
+        .order('name')
+      if (error) throw error
+      return (data ?? []) as ExpenseCategory[]
+    },
+  })
+
+  const filtered = expenses.filter((e) => {
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      const matches = e.description?.toLowerCase().includes(q) || e.expense_no?.toLowerCase().includes(q) || e.category?.toLowerCase().includes(q)
+      if (!matches) return false
+    }
+    if (dateFrom && e.expense_date < dateFrom) return false
+    if (dateTo && e.expense_date > dateTo) return false
+    if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
+    if (typeFilter !== 'all' && e.expense_type !== typeFilter) return false
+    if (statusFilter !== 'all' && e.status !== statusFilter) return false
+    return true
+  })
 
   const totalAll = expenses.reduce((sum, e) => sum + e.amount, 0)
-
-  const categoryTotals = CATEGORIES.map((cat) => ({
-    cat,
-    total: expenses.filter((e) => e.category === cat).reduce((s, e) => s + e.amount, 0),
-  })).filter((c) => c.total > 0).sort((a, b) => b.total - a.total)
+  const totalPaid = expenses.filter((e) => e.status === 'paid').reduce((sum, e) => sum + e.amount, 0)
+  const totalUnpaid = expenses.filter((e) => e.status === 'unpaid').reduce((sum, e) => sum + e.amount, 0)
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
@@ -183,198 +126,202 @@ export function ExpensesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-foreground">Expenses</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Track your daily business expenses</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Track and manage your business expenses</p>
         </div>
-        <Button onClick={() => setShowDialog(true)}>
-          <Plus className="h-4 w-4" />
-          Add Expense
-        </Button>
-      </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-lg border border-border bg-card p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <TrendingDown className="h-4 w-4 text-red-400" />
-            <span className="text-xs text-muted-foreground">This Month</span>
-          </div>
-          <p className="text-2xl font-bold text-foreground">{formatINR(totalThisMonth)}</p>
-        </div>
-        <div className="rounded-lg border border-border bg-card p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Receipt className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Total Expenses</span>
-          </div>
-          <p className="text-2xl font-bold text-foreground">{formatINR(totalAll)}</p>
-        </div>
-        <div className="rounded-lg border border-border bg-card p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Receipt className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Total Records</span>
-          </div>
-          <p className="text-2xl font-bold text-foreground">{expenses.length}</p>
-        </div>
-      </div>
-
-      {/* Category breakdown */}
-      {categoryTotals.length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-4">
-          <p className="text-sm font-medium text-foreground mb-3">By Category</p>
-          <div className="flex flex-wrap gap-2">
-            {categoryTotals.map(({ cat, total }) => (
-              <div
-                key={cat}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs cursor-pointer transition-all ${CATEGORY_COLORS[cat] ?? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'} ${filterCategory === cat ? 'ring-2 ring-primary' : ''}`}
-                onClick={() => setFilterCategory(filterCategory === cat ? 'All' : cat)}
-              >
-                <span className="font-medium">{cat}</span>
-                <span className="opacity-70">{formatINR(total)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Filter */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button
-          onClick={() => setFilterCategory('All')}
-          className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${filterCategory === 'All' ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}
-        >
-          All
-        </button>
-        {CATEGORIES.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => setFilterCategory(filterCategory === cat ? 'All' : cat)}
-            className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${filterCategory === cat ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}
-          >
-            {cat}
-          </button>
-        ))}
-      </div>
-
-      {/* Table */}
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-32">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-center">
-            <Receipt className="h-8 w-8 text-zinc-600 mb-2" />
-            <p className="text-sm text-muted-foreground">No expenses recorded</p>
-            <p className="text-xs text-zinc-600 mt-1">Click "Add Expense" to get started</p>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Description</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((exp) => (
-                <TableRow key={exp.id}>
-                  <TableCell>
-                    <p className="text-sm font-medium text-foreground">{exp.description}</p>
-                    {exp.notes && <p className="text-xs text-muted-foreground mt-0.5">{exp.notes}</p>}
-                  </TableCell>
-                  <TableCell>
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${CATEGORY_COLORS[exp.category] ?? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'}`}>
-                      {exp.category}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(exp.expense_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold text-foreground">
-                    {formatINR(exp.amount)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <button
-                      onClick={() => deleteMutation.mutate(exp)}
-                      className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        {canManage && (
+          <Button onClick={() => { setEditTarget(null); setShowDialog(true) }}>
+            <Plus className="h-4 w-4" />
+            Add Expense
+          </Button>
         )}
       </div>
 
-      {/* Add Expense Dialog */}
-      <Dialog open={showDialog} onOpenChange={(o) => { setShowDialog(o); if (!o) resetForm() }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Add Expense</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>Description *</Label>
-              <Input
-                placeholder="e.g. Monthly shop rent"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
+      <Tabs defaultValue="expenses">
+        <TabsList>
+          <TabsTrigger value="expenses">Expenses</TabsTrigger>
+          <TabsTrigger value="categories">Categories</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="expenses" className="mt-4 space-y-4">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+              <span className="text-xs text-red-400">Total Expenses</span>
+              <p className="text-2xl font-bold text-red-400 mt-1">{formatINR(totalAll)}</p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Amount (₹) *</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Date</Label>
-                <Input
-                  type="date"
-                  value={expenseDate}
-                  onChange={(e) => setExpenseDate(e.target.value)}
-                />
-              </div>
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <span className="text-xs text-emerald-400">Paid</span>
+              <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(totalPaid)}</p>
             </div>
-            <div className="space-y-1.5">
-              <Label>Category</Label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notes (optional)</Label>
-              <Input
-                placeholder="Any additional details..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+              <span className="text-xs text-amber-400">Unpaid</span>
+              <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(totalUnpaid)}</p>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowDialog(false); resetForm() }}>Cancel</Button>
-            <Button onClick={() => addMutation.mutate()} disabled={addMutation.isPending}>
-              {addMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" />Adding...</> : 'Add Expense'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search expenses..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 h-9"
+              />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 w-auto" />
+            <span className="text-xs text-muted-foreground">to</span>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 w-auto" />
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">All Categories</option>
+              {allCategories.map((cat) => (
+                <option key={cat.id} value={cat.name}>{cat.name}</option>
+              ))}
+            </select>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">All Types</option>
+              <option value="direct">Direct</option>
+              <option value="indirect">Indirect</option>
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">All Status</option>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
+          </div>
+
+          {/* Table */}
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
+            {isLoading ? (
+              <div className="flex items-center justify-center h-32">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-32 text-center">
+                <Receipt className="h-8 w-8 text-zinc-600 mb-2" />
+                <p className="text-sm text-muted-foreground">No expenses recorded</p>
+                <p className="text-xs text-zinc-600 mt-1">Click "Add Expense" to get started</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Expense No</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Payment</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((exp) => (
+                      <TableRow key={exp.id} className="cursor-pointer" onClick={() => navigate(`/expenses/${exp.id}`)}>
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{formatDate(exp.expense_date)}</TableCell>
+                        <TableCell className="font-mono text-xs text-indigo-300">{exp.expense_no ?? '—'}</TableCell>
+                        <TableCell>
+                          <p className="text-sm font-medium text-foreground">{exp.description}</p>
+                          {exp.suppliers?.name && <p className="text-xs text-muted-foreground mt-0.5">{exp.suppliers.name}</p>}
+                          {exp.notes && <p className="text-xs text-muted-foreground mt-0.5 italic">{exp.notes}</p>}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{exp.category}</TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800/50 px-2 py-0.5 text-xs font-medium capitalize text-zinc-300">
+                            {exp.expense_type}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{exp.payment_mode}</TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {canManage ? (
+                            <button
+                              type="button"
+                              title={exp.status === 'paid' ? 'Click to mark as unpaid' : 'Click to mark as paid'}
+                              onClick={() => toggleStatusMutation.mutate(exp)}
+                              disabled={toggleStatusMutation.isPending}
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize transition-colors cursor-pointer disabled:opacity-50 ${exp.status === 'paid' ? 'bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25' : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'}`}
+                            >
+                              {exp.status}
+                            </button>
+                          ) : (
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${exp.status === 'paid' ? 'bg-indigo-500/15 text-indigo-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                              {exp.status}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold text-foreground">{formatINR(exp.amount)}</TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => navigate(`/expenses/${exp.id}`)}
+                              className="p-1.5 rounded text-zinc-500 hover:text-foreground hover:bg-zinc-800 transition-colors"
+                              title="View"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                            {canManage && (
+                              <>
+                                <button
+                                  onClick={() => { setEditTarget(exp); setShowDialog(true) }}
+                                  className="p-1.5 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 transition-colors"
+                                  title="Edit"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => deleteMutation.mutate(exp)}
+                                  className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+          {filtered.length > 0 && (
+            <p className="text-xs text-muted-foreground">Showing 1 to {filtered.length} of {filtered.length} records</p>
+          )}
+        </TabsContent>
+
+        <TabsContent value="categories" className="mt-4">
+          <ExpenseCategoriesTab />
+        </TabsContent>
+      </Tabs>
+
+      <ExpenseFormDialog
+        open={showDialog}
+        onOpenChange={(o) => { setShowDialog(o); if (!o) setEditTarget(null) }}
+        editTarget={editTarget}
+      />
     </div>
   )
 }
