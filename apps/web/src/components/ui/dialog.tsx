@@ -60,7 +60,7 @@ const DialogContent = React.forwardRef<
       // Force no ring/outline regardless of brand color CSS variable injection
       style={{ outline: 'none', boxShadow: 'var(--tw-shadow)', ring: 'none' } as React.CSSProperties}
       className={cn(
-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-zinc-700 bg-zinc-900 p-6 shadow-xl duration-200 outline-none ring-0 focus:ring-0 focus-visible:ring-0 focus:outline-none',
+        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg max-h-[90vh] overflow-y-auto translate-x-[-50%] translate-y-[-50%] gap-4 border border-zinc-700 bg-zinc-900 p-6 shadow-xl duration-200 outline-none ring-0 focus:ring-0 focus-visible:ring-0 focus:outline-none',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',

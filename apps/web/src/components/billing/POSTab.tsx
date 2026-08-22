@@ -34,6 +34,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
+import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
 import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
@@ -62,7 +63,6 @@ interface CustomerOption {
   address?: string | null
 }
 
-const SCANNER_THRESHOLD_MS = 75
 const HELD_BILLS_KEY = 'billscape_held_bills'
 
 interface HeldBill {
@@ -169,13 +169,6 @@ export function POSTab() {
 
   // Warn before in-app navigation away (sidebar links, sign out, etc.) with an unsaved cart
   useRegisterNavigationGuard(useCallback(() => cartRef.current.length > 0, []))
-
-  // Scanner state
-  const scanInputRef = useRef<HTMLInputElement>(null)
-  const scanBuffer = useRef('')
-  const lastKeystrokeTime = useRef(0)
-  const lastScannedCode = useRef('')
-  const scanDebounceTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // GST context
   const gstContext: GSTContext = useMemo(() => ({
@@ -335,15 +328,6 @@ export function POSTab() {
     }
   }, [recentSales, lastSale])
 
-  // Focus scan input on mount and after dialog closes
-  const focusScanInput = useCallback(() => {
-    setTimeout(() => scanInputRef.current?.focus(), 50)
-  }, [])
-
-  useEffect(() => {
-    focusScanInput()
-  }, [focusScanInput])
-
   // Add item to cart by product data
   // Supabase returns single-row FK joins (inventory, unit, secondary_unit) as an object or a
   // 1-element array depending on how the relation was declared — normalize both shapes here.
@@ -416,51 +400,18 @@ export function POSTab() {
   }, [])
 
   // USB scanner keyboard wedge handler
-  const handleScanKeydown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      const now = Date.now()
-      const delta = now - lastKeystrokeTime.current
-      lastKeystrokeTime.current = now
-
-      if (e.key === 'Enter') {
-        const code = scanBuffer.current.trim()
-        scanBuffer.current = ''
-
-        if (!code) return
-
-        // Debounce same barcode within 500ms
-        if (code === lastScannedCode.current) return
-        lastScannedCode.current = code
-        clearTimeout(scanDebounceTimer.current)
-        scanDebounceTimer.current = setTimeout(() => {
-          lastScannedCode.current = ''
-        }, 500)
-
-        // Lookup product
-        const found = products?.find((p) => p.barcode_value === code)
-        if (found) {
-          addToCart(found)
-        } else {
-          toast({ title: `Product not found: ${code}`, variant: 'warning' })
-        }
-
-        focusScanInput()
-        return
-      }
-
-      if (delta < SCANNER_THRESHOLD_MS) {
-        // Scanner input: buffer
-        if (e.key.length === 1) {
-          scanBuffer.current += e.key
-        }
-        e.preventDefault()
+  const handleBarcodeScan = useCallback(
+    (code: string) => {
+      const found = products?.find((p) => p.barcode_value === code)
+      if (found) {
+        addToCart(found)
       } else {
-        // Keyboard input: reset buffer
-        scanBuffer.current = e.key.length === 1 ? e.key : ''
+        toast({ title: `Product not found: ${code}`, variant: 'warning' })
       }
     },
-    [products, addToCart, focusScanInput],
+    [products, addToCart],
   )
+  const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(handleBarcodeScan)
 
   const updateQty = useCallback((productId: string, qty: number) => {
     if (qty <= 0) {
@@ -718,7 +669,6 @@ export function POSTab() {
         className="absolute opacity-0 w-0 h-0 pointer-events-none"
         onKeyDown={handleScanKeydown}
         readOnly
-        aria-hidden
         tabIndex={-1}
       />
 
