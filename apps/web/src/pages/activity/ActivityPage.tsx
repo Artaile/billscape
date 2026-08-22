@@ -53,10 +53,24 @@ function getActionBadgeStyle(action: string): string {
   return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
 }
 
+type ActionBucket = 'all' | 'created' | 'updated' | 'deleted' | 'sales'
+
+function bucketOf(action: string): Exclude<ActionBucket, 'all'> | null {
+  const a = (action || '').toLowerCase()
+  if (a.includes('creat') || a.includes('add') || a.includes('insert')) return 'created'
+  if (a.includes('updat') || a.includes('edit') || a.includes('restor') || a.includes('mod')) return 'updated'
+  if (a.includes('delet') || a.includes('void') || a.includes('cancel') || a.includes('remove')) return 'deleted'
+  return null
+}
+
 export function ActivityPage() {
   const { org } = useAuth()
   const orgId = org?.id
   const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [actionFilter, setActionFilter] = useState<ActionBucket>('all')
+  const [actorFilter, setActorFilter] = useState('all')
 
   const { data: logs = [], isLoading } = useQuery({
     queryKey: ['activity_log', orgId],
@@ -95,14 +109,32 @@ export function ActivityPage() {
     return a.includes('sale') || a.includes('invoice') || a.includes('bill') || e === 'sale' || e === 'sales' || e === 'invoice'
   }).length
 
+  const actors = Array.from(new Set(logs.map((l) => getActorDisplayName(l)))).sort()
+
   const filtered = logs.filter((l) => {
-    if (!search.trim()) return true
-    const q = search.toLowerCase()
-    const actor = getActorDisplayName(l).toLowerCase()
-    const action = (l.action || '').toLowerCase()
-    const entity = (l.entity || '').toLowerCase()
-    const meta = l.metadata ? JSON.stringify(l.metadata).toLowerCase() : ''
-    return actor.includes(q) || action.includes(q) || entity.includes(q) || meta.includes(q)
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      const actor = getActorDisplayName(l).toLowerCase()
+      const action = (l.action || '').toLowerCase()
+      const entity = (l.entity || '').toLowerCase()
+      const meta = l.metadata ? JSON.stringify(l.metadata).toLowerCase() : ''
+      if (!(actor.includes(q) || action.includes(q) || entity.includes(q) || meta.includes(q))) return false
+    }
+    if (dateFrom && l.created_at < dateFrom) return false
+    if (dateTo && l.created_at.slice(0, 10) > dateTo) return false
+    if (actionFilter !== 'all') {
+      const bucket = bucketOf(l.action)
+      if (actionFilter === 'sales') {
+        const a = (l.action || '').toLowerCase()
+        const e = (l.entity || '').toLowerCase()
+        const isSales = a.includes('sale') || a.includes('invoice') || a.includes('bill') || e === 'sale' || e === 'sales' || e === 'invoice'
+        if (!isSales) return false
+      } else if (bucket !== actionFilter) {
+        return false
+      }
+    }
+    if (actorFilter !== 'all' && getActorDisplayName(l) !== actorFilter) return false
+    return true
   })
 
   return (
@@ -134,15 +166,41 @@ export function ActivityPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search actor, action, entity, details..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search actor, action, entity, details..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 w-auto" />
+        <span className="text-xs text-muted-foreground">to</span>
+        <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 w-auto" />
+        <select
+          value={actionFilter}
+          onChange={(e) => setActionFilter(e.target.value as ActionBucket)}
+          className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">All Actions</option>
+          <option value="created">Created</option>
+          <option value="updated">Updated / Edited</option>
+          <option value="deleted">Deleted / Voided</option>
+          <option value="sales">Sales & Billing</option>
+        </select>
+        <select
+          value={actorFilter}
+          onChange={(e) => setActorFilter(e.target.value)}
+          className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">All Actors</option>
+          {actors.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
       </div>
 
       {/* Table */}
