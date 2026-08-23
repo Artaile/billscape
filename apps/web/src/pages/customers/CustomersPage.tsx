@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Plus, ChevronRight, Phone, Mail, CreditCard, X } from 'lucide-react'
+import { Search, Plus, ChevronRight, Phone, Mail, CreditCard, X, Download, Upload, FileSpreadsheet, ArrowUpDown, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { logActivity } from '@/lib/activityLog'
+import { exportToCSV, parseCSV } from '@/lib/csvUtils'
 import type { Customer } from '@billscape/core'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -88,6 +89,11 @@ export function CustomersPage() {
   const [showForm, setShowForm] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerWithLastSale | null>(null)
 
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'balance-desc' | 'balance-asc' | 'date-newest' | 'date-oldest'>('name-asc')
+  const [balanceFilter, setBalanceFilter] = useState('all')
+  const [isImporting, setIsImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const {
     register,
     handleSubmit,
@@ -97,24 +103,137 @@ export function CustomersPage() {
     resolver: zodResolver(customerSchema) as any,
   })
 
-  const { data: customers, isLoading } = useQuery({
-    queryKey: ['customers', orgId, search],
+  const { data: rawCustomers = [], isLoading } = useQuery({
+    queryKey: ['customers', orgId],
     enabled: !!orgId,
     queryFn: async () => {
-      let query = supabase
+      const { data, error } = await supabase
         .from('customers')
         .select('*')
         .eq('organization_id', orgId!)
         .order('name')
-
-      if (search) {
-        query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`)
-      }
-
-      const { data } = await query
+      if (error) throw error
       return (data ?? []) as CustomerWithLastSale[]
     },
   })
+
+  // Filter & Sort
+  const customers = rawCustomers
+    .filter((c) => {
+      if (search.trim()) {
+        const q = search.toLowerCase()
+        const matchSearch =
+          c.name.toLowerCase().includes(q) ||
+          c.phone?.includes(q) ||
+          c.email?.toLowerCase().includes(q) ||
+          c.gstin?.toLowerCase().includes(q)
+        if (!matchSearch) return false
+      }
+      if (balanceFilter === 'due' && Number(c.balance ?? 0) <= 0) return false
+      if (balanceFilter === 'advance' && Number(c.balance ?? 0) >= 0) return false
+      if (balanceFilter === 'zero' && Number(c.balance ?? 0) !== 0) return false
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc':
+          return a.name.localeCompare(b.name)
+        case 'name-desc':
+          return b.name.localeCompare(a.name)
+        case 'balance-desc':
+          return Number(b.balance ?? 0) - Number(a.balance ?? 0)
+        case 'balance-asc':
+          return Number(a.balance ?? 0) - Number(b.balance ?? 0)
+        case 'date-newest':
+          return (b.created_at || '').localeCompare(a.created_at || '')
+        case 'date-oldest':
+          return (a.created_at || '').localeCompare(b.created_at || '')
+        default:
+          return 0
+      }
+    })
+
+  const handleExportCSV = () => {
+    if (!customers.length) {
+      toast.error('No customers to export')
+      return
+    }
+    const headers = ['Name', 'Phone', 'Email', 'GSTIN', 'State Code', 'Address', 'Current Balance']
+    const rows = customers.map((c) => [
+      c.name,
+      c.phone ?? '',
+      c.email ?? '',
+      c.gstin ?? '',
+      c.state_code ?? '',
+      c.address ?? '',
+      c.balance ?? 0,
+    ])
+    const dateStr = new Date().toISOString().slice(0, 10)
+    exportToCSV(`customers-${dateStr}`, headers, rows)
+    toast.success('Customers exported to CSV')
+  }
+
+  const handleDownloadTemplate = () => {
+    const headers = ['Name', 'Phone', 'Email', 'GSTIN', 'State Code', 'Address', 'Opening Balance']
+    const sampleRows = [
+      ['Anand Textiles', '9876543210', 'anand@example.com', '33AAAAA0000A1Z5', 'TN', '123 Main St, Chennai', '1500'],
+      ['Bala Traders', '9123456789', 'bala@example.com', '', 'TN', '45 Cross St, Madurai', '0'],
+    ]
+    exportToCSV('customers_import_template', headers, sampleRows)
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    setIsImporting(true)
+    try {
+      const records = await parseCSV(file)
+      if (!records.length) {
+        toast.error('Import Failed', 'CSV file is empty or invalid format')
+        return
+      }
+
+      let importedCount = 0
+      for (const row of records) {
+        const name = row['name'] || row['customer name'] || row['party name'] || ''
+        if (!name.trim()) continue
+
+        const rawPhone = row['phone'] || row['mobile'] || row['phone number'] || ''
+        const phoneDigits = rawPhone.replace(/\D/g, '').slice(0, 10)
+        const email = row['email'] || row['email address'] || ''
+        const gstin = row['gstin'] || row['gst'] || ''
+        const stateCode = row['state code'] || row['state'] || ''
+        const address = row['address'] || ''
+        const balance = parseFloat(row['current balance'] || row['opening balance'] || row['balance'] || '0') || 0
+
+        await supabase.from('customers').insert({
+          organization_id: orgId,
+          name: name.trim(),
+          phone: phoneDigits || null,
+          email: email.trim() || null,
+          gstin: gstin.trim().toUpperCase() || null,
+          state_code: stateCode.trim().toUpperCase() || null,
+          address: address.trim() || null,
+          balance: balance,
+        })
+        importedCount++
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['customers', orgId] })
+      await logActivity({
+        organizationId: orgId,
+        action: 'imported',
+        entity: 'customer',
+        metadata: { count: importedCount, filename: file.name },
+      })
+      toast.success(`Import Complete`, `Successfully imported ${importedCount} customers!`)
+    } catch (err: any) {
+      toast.error('Import Failed', err.message || 'Failed to parse CSV file')
+    } finally {
+      setIsImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   // Customer purchase history
   const { data: customerSales } = useQuery({
@@ -177,26 +296,75 @@ export function CustomersPage() {
 
   return (
     <div className="p-4 lg:p-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-xl font-bold text-white">Customers</h1>
-          <p className="text-sm text-zinc-400 mt-0.5">{customers?.length ?? 0} customers</p>
+          <p className="text-sm text-zinc-400 mt-0.5">{customers.length} customers listed</p>
         </div>
-        <Button onClick={() => setShowForm(true)}>
-          <Plus className="h-4 w-4" />
-          Add Customer
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".csv"
+            className="hidden"
+          />
+          <Button variant="outline" size="sm" onClick={handleDownloadTemplate} title="Download CSV Template">
+            <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-400" /> Template
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+            {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
+            Import CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
+          </Button>
+          <Button onClick={() => setShowForm(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Add Customer
+          </Button>
+        </div>
       </div>
 
-      {/* Search */}
-      <div className="relative mb-4 max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-        <Input
-          placeholder="Search by name or phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      {/* Filters & Sort Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+          <Input
+            placeholder="Search by name, phone, email or GSTIN..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+            >
+              <option value="name-asc">Sort: Name (A to Z)</option>
+              <option value="name-desc">Sort: Name (Z to A)</option>
+              <option value="balance-desc">Sort: Due Balance (High to Low)</option>
+              <option value="balance-asc">Sort: Advance Balance (High to Low)</option>
+              <option value="date-newest">Sort: Created (Newest)</option>
+              <option value="date-oldest">Sort: Created (Oldest)</option>
+            </select>
+          </div>
+
+          <select
+            value={balanceFilter}
+            onChange={(e) => setBalanceFilter(e.target.value)}
+            className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+          >
+            <option value="all">All Balances</option>
+            <option value="due">Pending Due (&gt; ₹0)</option>
+            <option value="advance">Advance Credit (&lt; ₹0)</option>
+            <option value="zero">Zero Balance (₹0)</option>
+          </select>
+        </div>
       </div>
 
       {/* Table */}

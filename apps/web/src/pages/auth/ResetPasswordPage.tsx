@@ -119,7 +119,7 @@ export function ResetPasswordPage() {
               <div>
                 <h2 className="text-lg font-semibold text-white">Password updated</h2>
                 <p className="text-sm text-zinc-400 mt-2">
-                  Your password has been reset successfully. You can now sign in with your new password.
+                  Your password has been reset successfully. You can now log in with your new password.
                 </p>
               </div>
               <Button
@@ -130,7 +130,7 @@ export function ResetPasswordPage() {
                   navigate('/login', { replace: true })
                 }}
               >
-                Go to Sign In
+                Go to Log In
               </Button>
             </div>
           ) : !hasRecoverySession ? (
@@ -149,7 +149,7 @@ export function ResetPasswordPage() {
                 className="w-full h-10 text-sm font-semibold"
                 onClick={() => navigate('/login', { replace: true })}
               >
-                Back to Sign In
+                Back to Log In
               </Button>
             </div>
           ) : (

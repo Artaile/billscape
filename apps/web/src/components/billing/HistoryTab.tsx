@@ -35,7 +35,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DateRangeFilter } from '@/components/ui/date-range-filter'
 import { toast } from '@/hooks/use-toast'
-import { formatDateTime, cn } from '@/lib/utils'
+import { formatDateTime, parseBilledBy, cn } from '@/lib/utils'
 
 interface SaleRow {
   id: string
@@ -46,6 +46,7 @@ interface SaleRow {
   payment_mode: string
   grand_total: number
   net_payable: number
+  notes?: string | null
   voided_at: string | null
   void_reason: string | null
   purge_after: string | null
@@ -225,6 +226,7 @@ export function HistoryTab() {
                 <TableHead>Invoice No</TableHead>
                 <TableHead>Date/Time</TableHead>
                 <TableHead>Customer</TableHead>
+                <TableHead>Billed By</TableHead>
                 <TableHead>Payment</TableHead>
                 <TableHead className="text-right">Grand Total</TableHead>
                 <TableHead className="text-right">Payable</TableHead>
@@ -239,6 +241,9 @@ export function HistoryTab() {
                   <TableCell className="text-xs text-zinc-400">{formatDateTime(sale.created_at)}</TableCell>
                   <TableCell className="text-xs">
                     {sale.customers?.name ?? <span className="text-zinc-600">Walk-in</span>}
+                  </TableCell>
+                  <TableCell className="text-xs font-medium text-indigo-300">
+                    {parseBilledBy(sale.notes, user?.user_metadata?.full_name || user?.email?.split('@')[0], role ?? 'cashier')}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className="capitalize">{sale.payment_mode}</Badge>

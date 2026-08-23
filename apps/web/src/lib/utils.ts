@@ -55,3 +55,21 @@ export function debounce<T extends (...args: unknown[]) => unknown>(fn: T, ms: n
     timer = setTimeout(() => fn(...args), ms)
   }
 }
+
+export function parseBilledBy(notes?: string | null, fallbackUser?: string, fallbackRole?: string): string {
+  if (notes && notes.includes('[BILLED_BY:')) {
+    const match = notes.match(/\[BILLED_BY:\s*"?(.*?)"?\s*\]/)
+    if (match && match[1]) {
+      const val = match[1]
+      if ((val === 'Cashier' || val === 'User' || !val.includes('(')) && fallbackUser) {
+        const rLabel = fallbackRole ? (fallbackRole.charAt(0).toUpperCase() + fallbackRole.slice(1)) : 'Cashier'
+        const uName = (val !== 'Cashier' && val !== 'User') ? val : fallbackUser
+        return `${uName} (${rLabel})`
+      }
+      return val
+    }
+  }
+  const uName = fallbackUser || 'User'
+  const rLabel = fallbackRole ? (fallbackRole.charAt(0).toUpperCase() + fallbackRole.slice(1)) : 'Cashier'
+  return `${uName} (${rLabel})`
+}

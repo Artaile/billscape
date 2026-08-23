@@ -1,13 +1,13 @@
 import { useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Printer, Download, Eye, Loader2, Building2, FileText, Calendar, MoreVertical, Pencil, Trash2 } from 'lucide-react'
+import { ArrowLeft, Printer, Download, Eye, Loader2, Building2, FileText, Calendar, MoreVertical, Pencil, Trash2, UserCheck } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { getSaleWithItems, voidSale } from '@billscape/api'
 import { formatINR } from '@billscape/core'
 import type { CartItem, InvoiceTotals } from '@billscape/core'
-import { formatDateTime } from '@/lib/utils'
+import { formatDateTime, parseBilledBy } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -73,56 +73,56 @@ export function SaleViewPage() {
 
   const totals: InvoiceTotals | null = sale
     ? (() => {
-        const taxInclusive = org?.branding?.tax_inclusive ?? false
-        const cgstTotal = items.reduce((sum, it) => sum + Number(it.cgst_amount ?? 0), 0)
-        const sgstTotal = items.reduce((sum, it) => sum + Number(it.sgst_amount ?? 0), 0)
-        const igstTotal = items.reduce((sum, it) => sum + Number(it.igst_amount ?? 0), 0)
-        const isInterstate = igstTotal > 0
+      const taxInclusive = org?.branding?.tax_inclusive ?? false
+      const cgstTotal = items.reduce((sum, it) => sum + Number(it.cgst_amount ?? 0), 0)
+      const sgstTotal = items.reduce((sum, it) => sum + Number(it.sgst_amount ?? 0), 0)
+      const igstTotal = items.reduce((sum, it) => sum + Number(it.igst_amount ?? 0), 0)
+      const isInterstate = igstTotal > 0
 
-        const breakupMap = new Map<number, { tax_rate: number; taxable_amount: number; cgst: number; sgst: number; igst: number }>()
-        for (const it of items) {
-          const lineDiscount = it.discount_type === 'flat' ? Number(it.discount_amount ?? 0) : (Number(it.unit_price) * Number(it.qty)) * (Number(it.discount_pct) / 100)
-          const grossLine = Number(it.unit_price) * Number(it.qty) - lineDiscount
-          const lineTax = Number(it.cgst_amount ?? 0) + Number(it.sgst_amount ?? 0) + Number(it.igst_amount ?? 0)
-          // When prices are tax-inclusive, unit_price already contains tax, so the taxable
-          // base is the gross line total minus the tax already computed for it at sale time.
-          const lineTaxable = taxInclusive ? grossLine - lineTax : grossLine
-          const existing = breakupMap.get(it.tax_rate)
-          if (existing) {
-            existing.taxable_amount += lineTaxable
-            existing.cgst += Number(it.cgst_amount ?? 0)
-            existing.sgst += Number(it.sgst_amount ?? 0)
-            existing.igst += Number(it.igst_amount ?? 0)
-          } else {
-            breakupMap.set(it.tax_rate, {
-              tax_rate: it.tax_rate,
-              taxable_amount: lineTaxable,
-              cgst: Number(it.cgst_amount ?? 0),
-              sgst: Number(it.sgst_amount ?? 0),
-              igst: Number(it.igst_amount ?? 0),
-            })
-          }
+      const breakupMap = new Map<number, { tax_rate: number; taxable_amount: number; cgst: number; sgst: number; igst: number }>()
+      for (const it of items) {
+        const lineDiscount = it.discount_type === 'flat' ? Number(it.discount_amount ?? 0) : (Number(it.unit_price) * Number(it.qty)) * (Number(it.discount_pct) / 100)
+        const grossLine = Number(it.unit_price) * Number(it.qty) - lineDiscount
+        const lineTax = Number(it.cgst_amount ?? 0) + Number(it.sgst_amount ?? 0) + Number(it.igst_amount ?? 0)
+        // When prices are tax-inclusive, unit_price already contains tax, so the taxable
+        // base is the gross line total minus the tax already computed for it at sale time.
+        const lineTaxable = taxInclusive ? grossLine - lineTax : grossLine
+        const existing = breakupMap.get(it.tax_rate)
+        if (existing) {
+          existing.taxable_amount += lineTaxable
+          existing.cgst += Number(it.cgst_amount ?? 0)
+          existing.sgst += Number(it.sgst_amount ?? 0)
+          existing.igst += Number(it.igst_amount ?? 0)
+        } else {
+          breakupMap.set(it.tax_rate, {
+            tax_rate: it.tax_rate,
+            taxable_amount: lineTaxable,
+            cgst: Number(it.cgst_amount ?? 0),
+            sgst: Number(it.sgst_amount ?? 0),
+            igst: Number(it.igst_amount ?? 0),
+          })
         }
+      }
 
-        const breakupValues = Array.from(breakupMap.values())
-        const taxableAmount = breakupValues.reduce((sum, b) => sum + b.taxable_amount, 0)
+      const breakupValues = Array.from(breakupMap.values())
+      const taxableAmount = breakupValues.reduce((sum, b) => sum + b.taxable_amount, 0)
 
-        return {
-          subtotal: sale.subtotal,
-          discount_total: sale.discount_total,
-          taxable_amount: taxableAmount,
-          tax_breakup: breakupValues as InvoiceTotals['tax_breakup'],
-          cgst_total: cgstTotal,
-          sgst_total: sgstTotal,
-          igst_total: igstTotal,
-          tax_total: sale.tax_total,
-          grand_total: sale.grand_total,
-          is_interstate: isInterstate,
-          order_discount_amount: sale.order_discount_amount ?? 0,
-          loyalty_redeem_amount: sale.loyalty_redeem_amount ?? 0,
-          net_payable: sale.net_payable ?? sale.grand_total,
-        }
-      })()
+      return {
+        subtotal: sale.subtotal,
+        discount_total: sale.discount_total,
+        taxable_amount: taxableAmount,
+        tax_breakup: breakupValues as InvoiceTotals['tax_breakup'],
+        cgst_total: cgstTotal,
+        sgst_total: sgstTotal,
+        igst_total: igstTotal,
+        tax_total: sale.tax_total,
+        grand_total: sale.grand_total,
+        is_interstate: isInterstate,
+        order_discount_amount: sale.order_discount_amount ?? 0,
+        loyalty_redeem_amount: sale.loyalty_redeem_amount ?? 0,
+        net_payable: sale.net_payable ?? sale.grand_total,
+      }
+    })()
     : null
 
   const invoicePrintProps = sale && totals ? {
@@ -142,6 +142,7 @@ export function SaleViewPage() {
     items: cartItems,
     totals,
     paymentMode: sale.payment_mode,
+    billedBy: parseBilledBy(sale.notes, user?.user_metadata?.full_name || user?.email?.split('@')[0], role ?? 'cashier'),
     branding: org?.branding,
     invoiceTemplate: (org as any)?.invoice_template,
     hidePrintButton: true,
@@ -327,6 +328,10 @@ export function SaleViewPage() {
                 <div>
                   <p className="text-muted-foreground text-xs">Payment Mode</p>
                   <p className="font-medium text-foreground capitalize">{sale.payment_mode}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs flex items-center gap-1"><UserCheck className="h-3 w-3 text-indigo-400" />Billed By</p>
+                  <p className="font-semibold text-white-300">{parseBilledBy(sale.notes, user?.user_metadata?.full_name || user?.email?.split('@')[0], role ?? 'cashier')}</p>
                 </div>
               </div>
             </div>

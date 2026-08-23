@@ -30,6 +30,9 @@ import {
   ArrowDownToLine,
   Star,
   Gift,
+  Tag,
+  Percent,
+  Sparkles,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -47,6 +50,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from '@/components/ui/dialog'
 import { CartItemRow } from '@/components/billing/CartItem'
 import { InvoicePrint } from '@/components/billing/InvoicePrint'
@@ -84,7 +88,7 @@ interface CompletedSale {
 }
 
 export function POSTab() {
-  const { org, user } = useAuth()
+  const { org, user, role } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
 
@@ -143,6 +147,129 @@ export function POSTab() {
   // Loyalty redemption (applied post order-discount, on net_payable)
   const [redeemLoyalty, setRedeemLoyalty] = useState(false)
   const [loyaltyRedeemValue, setLoyaltyRedeemValue] = useState('')
+
+  // Coupon & Promotion state
+  const [couponCodeInput, setCouponCodeInput] = useState('')
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    promotion: {
+      id: string
+      name: string
+      code: string | null
+      type: 'percentage' | 'flat'
+      value: number
+      scope: string
+      target_id: string | null
+      min_order_amount: number | null
+      max_discount_amount: number | null
+      max_uses: number | null
+      usage_count: number
+      valid_from: string | null
+      valid_until: string | null
+      is_active: boolean
+    }
+    discountAmount: number
+  } | null>(null)
+  const [showCouponModal, setShowCouponModal] = useState(false)
+
+  const { data: promotions = [] } = useQuery({
+    queryKey: ['promotions', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('promotions')
+        .select('*')
+        .eq('organization_id', orgId!)
+        .eq('is_active', true)
+      if (error) throw error
+      return (data ?? []) as any[]
+    },
+  })
+
+  const applyCoupon = (target: string | any) => {
+    let promo: any
+    if (typeof target === 'string') {
+      const cleanCode = target.trim().toUpperCase()
+      if (!cleanCode) return
+      promo = promotions.find((p) => (p.code || '').toUpperCase() === cleanCode || p.name.toUpperCase() === cleanCode)
+      if (!promo) {
+        toast.error('Invalid Coupon', `Coupon code "${target}" not found or inactive.`)
+        return
+      }
+    } else {
+      promo = target
+    }
+
+    const now = new Date()
+    if (promo.valid_from && new Date(promo.valid_from) > now) {
+      toast.error('Coupon Not Started', `Coupon starts on ${new Date(promo.valid_from).toLocaleDateString('en-IN')}`)
+      return
+    }
+    if (promo.valid_until && new Date(promo.valid_until) < now) {
+      toast.error('Coupon Expired', `Coupon expired on ${new Date(promo.valid_until).toLocaleDateString('en-IN')}`)
+      return
+    }
+
+    if (promo.max_uses !== null && (promo.usage_count || 0) >= promo.max_uses) {
+      toast.error('Coupon Limit Reached', 'This coupon has reached its maximum usage limit.')
+      return
+    }
+
+    const cartSubtotal = cart.reduce((sum, item) => sum + item.unit_price * item.qty, 0)
+
+    if (promo.min_order_amount && cartSubtotal < promo.min_order_amount) {
+      toast.error(
+        'Minimum Order Required',
+        `Coupon "${promo.code || promo.name}" requires a minimum order of ${formatINR(promo.min_order_amount)}. (Cart total: ${formatINR(cartSubtotal)})`
+      )
+      return
+    }
+
+    let discount = 0
+    if (promo.scope === 'order' || promo.scope === 'store') {
+      if (promo.type === 'percentage') {
+        discount = (cartSubtotal * promo.value) / 100
+      } else {
+        discount = promo.value
+      }
+    } else if (promo.scope === 'product' && promo.target_id) {
+      const matchingItems = cart.filter((it) => it.product_id === promo.target_id)
+      if (!matchingItems.length) {
+        toast.error('Coupon Not Applicable', 'Cart does not contain the required product for this coupon.')
+        return
+      }
+      const productTotal = matchingItems.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
+      discount = promo.type === 'percentage' ? (productTotal * promo.value) / 100 : promo.value
+    } else if (promo.scope === 'category' && promo.target_id) {
+      const matchingItems = cart.filter((it) => (it as any).category_id === promo.target_id)
+      if (!matchingItems.length) {
+        toast.error('Coupon Not Applicable', 'Cart does not contain products from the required category for this coupon.')
+        return
+      }
+      const categoryTotal = matchingItems.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
+      discount = promo.type === 'percentage' ? (categoryTotal * promo.value) / 100 : promo.value
+    }
+
+    if (promo.max_discount_amount && discount > promo.max_discount_amount) {
+      discount = promo.max_discount_amount
+    }
+
+    discount = Math.min(discount, cartSubtotal)
+
+    if (discount <= 0) {
+      toast.error('Coupon Not Applicable', 'Calculated discount is ₹0 for current cart items.')
+      return
+    }
+
+    setOrderDiscountType('flat')
+    setOrderDiscountValue(discount.toFixed(2))
+    setAppliedCoupon({
+      promotion: promo,
+      discountAmount: discount,
+    })
+    setShowCouponModal(false)
+    setCouponCodeInput('')
+    toast.success('Coupon Applied!', `Coupon "${promo.code || promo.name}" saved you ${formatINR(discount)}.`)
+  }
 
   // Any change of customer (search-select, quick-add, or resuming a held bill for someone
   // else) must drop a previous customer's redemption — otherwise a stale points amount can
@@ -578,6 +705,10 @@ export function POSTab() {
         loyaltyCustomerId = enrolled?.id
       }
 
+      const operatorName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'
+      const roleLabel = role ? (role.charAt(0).toUpperCase() + role.slice(1)) : 'Cashier'
+      const operatorWithRole = `${operatorName} (${roleLabel})`
+
       const result = await createSale(supabase as Parameters<typeof createSale>[0], {
         organization_id: orgId,
         customer_id: selectedCustomer?.id,
@@ -585,6 +716,7 @@ export function POSTab() {
         ...paymentFields,
         gst_context: gstContext,
         created_by: user.id,
+        billed_by_name: operatorWithRole,
         invoice_template: (org as any)?.invoice_template,
         order_discount_type: resolvedOrderDiscountValue > 0 ? orderDiscountType : undefined,
         order_discount_value: resolvedOrderDiscountValue > 0 ? resolvedOrderDiscountValue : undefined,
@@ -596,8 +728,13 @@ export function POSTab() {
         loyalty_points_earned: pointsToEarn > 0 ? pointsToEarn : undefined,
       })
 
-      if (result.error || !result.data) {
-        throw result.error ?? new Error('Sale creation failed')
+      if (appliedCoupon?.promotion?.id) {
+        try {
+          await supabase
+            .from('promotions')
+            .update({ usage_count: (appliedCoupon.promotion.usage_count || 0) + 1 })
+            .eq('id', appliedCoupon.promotion.id)
+        } catch {}
       }
 
       return result.data
@@ -629,11 +766,14 @@ export function POSTab() {
       setSplitPayment(false)
       setSplitAmounts({ cash: '', card: '', upi: '' })
       setOrderDiscountValue('')
+      setAppliedCoupon(null)
+      setCouponCodeInput('')
       setRedeemLoyalty(false)
       setLoyaltyRedeemValue('')
       queryClient.invalidateQueries({ queryKey: ['billing-products', orgId] })
       queryClient.invalidateQueries({ queryKey: ['today-summary', orgId] })
       queryClient.invalidateQueries({ queryKey: ['loyalty-customer', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['promotions', orgId] })
       toast.success(`Sale complete! Invoice: ${d.sale.invoice_no}`)
       // Reset customer only after invoice is closed (keep for display in invoice)
     },
@@ -977,10 +1117,85 @@ export function POSTab() {
                   step={orderDiscountType === 'percent' ? 0.5 : 1}
                   placeholder="0"
                   value={orderDiscountValue}
-                  onChange={(e) => setOrderDiscountValue(e.target.value)}
+                  onChange={(e) => {
+                    setOrderDiscountValue(e.target.value)
+                    setAppliedCoupon(null)
+                  }}
                   className="h-5 w-14 rounded border border-zinc-700 bg-zinc-900 px-1 text-center text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
+
+              {/* Coupon / Promo Code Section */}
+              <div className="pt-1.5 border-t border-zinc-800/60">
+                {appliedCoupon ? (
+                  <div className="flex items-center justify-between bg-emerald-950/50 border border-emerald-800/60 rounded px-2 py-1 text-xs text-emerald-400">
+                    <span className="flex items-center gap-1.5 font-medium truncate">
+                      <Tag className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                      <span className="truncate">Coupon {appliedCoupon.promotion.code || appliedCoupon.promotion.name}</span>
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                      <span className="font-bold">-{formatINR(appliedCoupon.discountAmount)}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAppliedCoupon(null)
+                          setOrderDiscountValue('')
+                          toast.success('Coupon removed')
+                        }}
+                        className="text-emerald-400/70 hover:text-emerald-200"
+                        title="Remove Coupon"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <div className="relative flex-1">
+                        <Tag className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500" />
+                        <input
+                          type="text"
+                          placeholder="Coupon Code..."
+                          value={couponCodeInput}
+                          onChange={(e) => setCouponCodeInput(e.target.value.toUpperCase())}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              applyCoupon(couponCodeInput)
+                            }
+                          }}
+                          className="h-6 w-full rounded border border-zinc-700 bg-zinc-900 pl-6 pr-1 text-[11px] text-zinc-100 uppercase focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-6 px-2 text-[10px] font-semibold"
+                        onClick={() => applyCoupon(couponCodeInput)}
+                        disabled={!couponCodeInput.trim()}
+                      >
+                        Apply
+                      </Button>
+                      {promotions.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1.5 text-[10px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40"
+                          onClick={() => setShowCouponModal(true)}
+                          title="Browse Active Coupons"
+                        >
+                          <Sparkles className="h-3 w-3 mr-0.5" />
+                          Coupons
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {totals.order_discount_amount > 0 && (
                 <div className="flex justify-between text-emerald-400">
                   <span>Discount Applied</span>
@@ -1373,6 +1588,72 @@ export function POSTab() {
           queryClient.invalidateQueries({ queryKey: ['billing-customers', orgId] })
         }}
       />
+
+      {/* Browse Coupons Modal */}
+      <Dialog open={showCouponModal} onOpenChange={setShowCouponModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Tag className="h-4 w-4 text-indigo-400" />
+              Available Promotions &amp; Coupons
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+            {promotions.length === 0 ? (
+              <p className="text-xs text-zinc-400 text-center py-6">No active promotions or coupons available.</p>
+            ) : (
+              promotions.map((promo) => {
+                const discountText =
+                  promo.type === 'percentage'
+                    ? `${promo.value}% OFF`
+                    : `${formatINR(promo.value)} OFF`
+
+                const scopeText =
+                  promo.scope === 'order' || promo.scope === 'store'
+                    ? 'Entire Bill'
+                    : promo.scope === 'product'
+                    ? 'Selected Product'
+                    : 'Selected Category'
+
+                return (
+                  <div
+                    key={promo.id}
+                    className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/30 hover:border-indigo-500/50 transition-colors gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-indigo-400 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20">
+                          {promo.code || promo.name}
+                        </span>
+                        <span className="text-xs font-semibold text-emerald-400">{discountText}</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1 truncate">
+                        Scope: {scopeText}
+                        {promo.min_order_amount ? ` · Min: ${formatINR(promo.min_order_amount)}` : ''}
+                        {promo.max_discount_amount ? ` · Max: ${formatINR(promo.max_discount_amount)}` : ''}
+                      </p>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs font-semibold shrink-0"
+                      onClick={() => applyCoupon(promo)}
+                    >
+                      Apply
+                    </Button>
+                  </div>
+                )
+              })
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setShowCouponModal(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

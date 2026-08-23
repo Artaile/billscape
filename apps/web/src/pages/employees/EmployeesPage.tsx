@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Loader2, UserCog, Search, Pencil, Trash2, Phone, Mail } from 'lucide-react'
+import { Plus, Loader2, UserCog, Search, Pencil, Trash2, Phone, Mail, Download, Upload, FileSpreadsheet, ArrowUpDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,8 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { logActivity } from '@/lib/activityLog'
+import { exportToCSV, parseCSV } from '@/lib/csvUtils'
 
 interface Employee {
   id: string
@@ -46,6 +48,12 @@ export function EmployeesPage() {
   const [editing, setEditing] = useState<Employee | null>(null)
   const [form, setForm] = useState(EMPTY)
 
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'role' | 'status-active' | 'status-inactive' | 'date-newest' | 'date-oldest'>('name-asc')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [isImporting, setIsImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const { data: employees = [], isLoading } = useQuery({
     queryKey: ['employees', orgId],
     enabled: !!orgId,
@@ -60,13 +68,130 @@ export function EmployeesPage() {
     },
   })
 
-  const filtered = search.trim()
-    ? employees.filter((e) =>
-        e.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        e.email?.toLowerCase().includes(search.toLowerCase()) ||
-        e.phone?.includes(search)
-      )
-    : employees
+  // Filter & Sort Logic
+  const filtered = employees
+    .filter((e) => {
+      if (search.trim()) {
+        const q = search.toLowerCase()
+        const matchSearch =
+          e.full_name.toLowerCase().includes(q) ||
+          e.email?.toLowerCase().includes(q) ||
+          e.phone?.includes(q)
+        if (!matchSearch) return false
+      }
+      if (roleFilter !== 'all' && e.role !== roleFilter) return false
+      if (statusFilter === 'active' && !e.is_active) return false
+      if (statusFilter === 'inactive' && e.is_active) return false
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc':
+          return a.full_name.localeCompare(b.full_name)
+        case 'name-desc':
+          return b.full_name.localeCompare(a.full_name)
+        case 'role':
+          return a.role.localeCompare(b.role)
+        case 'status-active':
+          return (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0)
+        case 'status-inactive':
+          return (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0)
+        case 'date-newest':
+          return (b.joined_date || b.created_at || '').localeCompare(a.joined_date || a.created_at || '')
+        case 'date-oldest':
+          return (a.joined_date || a.created_at || '').localeCompare(b.joined_date || b.created_at || '')
+        default:
+          return 0
+      }
+    })
+
+  const handleExportCSV = () => {
+    if (!filtered.length) {
+      toast.error('No employees to export')
+      return
+    }
+    const headers = ['Full Name', 'Phone', 'Email', 'Role', 'Status', 'Joined Date', 'Notes']
+    const rows = filtered.map((e) => [
+      e.full_name,
+      e.phone ?? '',
+      e.email ?? '',
+      e.role.charAt(0).toUpperCase() + e.role.slice(1),
+      e.is_active ? 'Active' : 'Inactive',
+      e.joined_date ?? '',
+      e.notes ?? '',
+    ])
+    const dateStr = new Date().toISOString().slice(0, 10)
+    exportToCSV(`employees-${dateStr}`, headers, rows)
+    toast.success('Employees exported to CSV')
+  }
+
+  const handleDownloadTemplate = () => {
+    const headers = ['Full Name', 'Phone', 'Email', 'Role', 'Status', 'Joined Date', 'Notes']
+    const sampleRows = [
+      ['Ravi Kumar', '9876543210', 'ravi@example.com', 'Cashier', 'Active', '2026-01-15', 'Shift cashier'],
+      ['Priya Sharma', '9123456789', 'priya@example.com', 'Manager', 'Active', '2025-11-01', 'Store manager'],
+    ]
+    exportToCSV('employees_import_template', headers, sampleRows)
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    setIsImporting(true)
+    try {
+      const records = await parseCSV(file)
+      if (!records.length) {
+        toast.error('Import Failed', 'CSV file is empty or invalid format')
+        return
+      }
+
+      let importedCount = 0
+      for (const row of records) {
+        const fullName = row['full name'] || row['fullname'] || row['name'] || row['employee name'] || ''
+        if (!fullName.trim()) continue
+
+        const rawPhone = row['phone'] || row['mobile'] || row['phone number'] || ''
+        const phoneDigits = rawPhone.replace(/\D/g, '').slice(0, 10)
+        const email = row['email'] || row['email address'] || ''
+
+        let roleVal: 'owner' | 'manager' | 'cashier' = 'cashier'
+        const rawRole = (row['role'] || '').toLowerCase()
+        if (rawRole.includes('owner')) roleVal = 'owner'
+        else if (rawRole.includes('manager')) roleVal = 'manager'
+
+        const rawStatus = (row['status'] || row['is active'] || '').toLowerCase()
+        const isActive = !(rawStatus.includes('inactive') || rawStatus === 'false' || rawStatus === '0')
+        const joinedDate = row['joined date'] || row['joined_date'] || row['date'] || null
+        const notes = row['notes'] || row['note'] || null
+
+        await supabase.from('employees').insert({
+          organization_id: orgId,
+          full_name: fullName.trim(),
+          phone: phoneDigits || null,
+          email: email.trim() || null,
+          role: roleVal,
+          is_active: isActive,
+          joined_date: joinedDate,
+          notes: notes,
+        })
+        importedCount++
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['employees', orgId] })
+      await logActivity({
+        organizationId: orgId,
+        action: 'imported',
+        entity: 'employee',
+        metadata: { count: importedCount, filename: file.name },
+      })
+      toast.success(`Import Complete`, `Successfully imported ${importedCount} employees!`)
+    } catch (err: any) {
+      toast.error('Import Failed', err.message || 'Failed to parse CSV file')
+    } finally {
+      setIsImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   function openNew() {
     setEditing(null)
@@ -91,10 +216,14 @@ export function EmployeesPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!form.full_name.trim()) throw new Error('Employee name is required')
+      const phoneDigits = form.phone?.replace(/\D/g, '') || ''
+      if (phoneDigits && phoneDigits.length !== 10) {
+        throw new Error('Enter a valid 10-digit Indian mobile number')
+      }
       const payload = {
         organization_id: orgId!,
         full_name: form.full_name.trim(),
-        phone: form.phone?.trim() || null,
+        phone: phoneDigits || null,
         email: form.email?.trim() || null,
         role: form.role,
         is_active: form.is_active,
@@ -104,13 +233,28 @@ export function EmployeesPage() {
       if (editing) {
         const { error } = await supabase.from('employees').update(payload).eq('id', editing.id)
         if (error) throw error
+        await logActivity({
+          organizationId: orgId!,
+          action: 'updated',
+          entity: 'employee',
+          entityId: editing.id,
+          metadata: { employee_name: form.full_name.trim(), role: form.role },
+        })
       } else {
-        const { error } = await supabase.from('employees').insert(payload)
+        const { data: inserted, error } = await supabase.from('employees').insert(payload).select('id').single()
         if (error) throw error
+        await logActivity({
+          organizationId: orgId!,
+          action: 'created',
+          entity: 'employee',
+          entityId: inserted?.id,
+          metadata: { employee_name: form.full_name.trim(), role: form.role },
+        })
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success(editing ? 'Employee updated' : 'Employee added')
       setShowDialog(false)
     },
@@ -119,11 +263,20 @@ export function EmployeesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
+      const targetEmp = employees.find((e) => e.id === id)
       const { error } = await supabase.from('employees').delete().eq('id', id)
       if (error) throw error
+      await logActivity({
+        organizationId: orgId!,
+        action: 'deleted',
+        entity: 'employee',
+        entityId: id,
+        metadata: { employee_name: targetEmp?.full_name || 'Employee' },
+      })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Employee removed')
     },
     onError: (err: Error) => toast.error('Failed to delete', err.message),
@@ -131,10 +284,21 @@ export function EmployeesPage() {
 
   const toggleActive = useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
+      const targetEmp = employees.find((e) => e.id === id)
       const { error } = await supabase.from('employees').update({ is_active }).eq('id', id)
       if (error) throw error
+      await logActivity({
+        organizationId: orgId!,
+        action: is_active ? 'activated' : 'deactivated',
+        entity: 'employee',
+        entityId: id,
+        metadata: { employee_name: targetEmp?.full_name || 'Employee', is_active },
+      })
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees', orgId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
+    },
   })
 
   const active = employees.filter((e) => e.is_active).length
@@ -143,14 +307,33 @@ export function EmployeesPage() {
   return (
     <div className="p-4 lg:p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground">Employees</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Manage your staff and their roles</p>
         </div>
-        <Button onClick={openNew}>
-          <Plus className="h-4 w-4" /> Add Employee
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".csv"
+            className="hidden"
+          />
+          <Button variant="outline" size="sm" onClick={handleDownloadTemplate} title="Download CSV Template">
+            <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-400" /> Template
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+            {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
+            Import CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
+          </Button>
+          <Button onClick={openNew}>
+            <Plus className="h-4 w-4 mr-1" /> Add Employee
+          </Button>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -169,11 +352,57 @@ export function EmployeesPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Search by name, email or phone..." value={search}
-          onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      {/* Filters & Sort Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, email or phone..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+            >
+              <option value="name-asc">Sort: Name (A to Z)</option>
+              <option value="name-desc">Sort: Name (Z to A)</option>
+              <option value="role">Sort: By Role</option>
+              <option value="status-active">Sort: Active First</option>
+              <option value="status-inactive">Sort: Inactive First</option>
+              <option value="date-newest">Sort: Joined (Newest)</option>
+              <option value="date-oldest">Sort: Joined (Oldest)</option>
+            </select>
+          </div>
+
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+          >
+            <option value="all">All Roles</option>
+            <option value="owner">Owner</option>
+            <option value="manager">Manager</option>
+            <option value="cashier">Cashier</option>
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+          >
+            <option value="all">All Status</option>
+            <option value="active">Active Only</option>
+            <option value="inactive">Inactive Only</option>
+          </select>
+        </div>
       </div>
 
       {/* Employee cards */}
@@ -273,9 +502,16 @@ export function EmployeesPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Phone</Label>
-                <Input placeholder="9876543210" value={form.phone ?? ''}
-                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+                <Label>Phone (10-digit mobile)</Label>
+                <Input
+                  placeholder="9876543210"
+                  maxLength={10}
+                  value={form.phone ?? ''}
+                  onChange={(e) => {
+                    const sanitized = e.target.value.replace(/\D/g, '').slice(0, 10)
+                    setForm((f) => ({ ...f, phone: sanitized }))
+                  }}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Email</Label>
