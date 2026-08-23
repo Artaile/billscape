@@ -120,6 +120,7 @@ export function PurchaseFormPage() {
   const draftId = (location.state as { draftId?: string } | null)?.draftId
   const { org, user } = useAuth()
   const orgId = org?.id
+  const taxInclusive = org?.branding?.tax_inclusive ?? false
   const queryClient = useQueryClient()
   const { requestNavigation } = useNavigationGuard()
 
@@ -839,7 +840,7 @@ export function PurchaseFormPage() {
                     <Label className="text-xs">Purchase Rate</Label>
                     <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
                       onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                    {parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
+                    {taxInclusive && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
                       const { base, tax } = splitInclusiveGST(parseNum(entry.unit_cost), entry.tax_rate)
                       return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                     })()}
@@ -1032,12 +1033,23 @@ export function PurchaseFormPage() {
                         <div className="space-y-2">
                           <label className="flex items-center gap-2 cursor-pointer w-fit">
                             <div
-                              onClick={() => setEntry((p) => ({
-                                ...p, has_batches: !p.has_batches,
-                                batches: !p.has_batches && p.batches.length === 0
-                                  ? [{ batch_no: '', expiry_date: '', qty: '' }]
-                                  : p.batches,
-                              }))}
+                              onClick={() => setEntry((p) => {
+                                const turningOn = !p.has_batches
+                                return {
+                                  ...p,
+                                  has_batches: turningOn,
+                                  // Force batch quantities to be entered in the base unit (unit_id), never the
+                                  // secondary unit — batchQtyTotal() has no unit-conversion awareness, so mixing
+                                  // units here would silently mis-scale the synced Qty (see rowBaseQty's own
+                                  // base-unit-only assumption for money math).
+                                  entry_unit_id: turningOn ? p.unit_id : p.entry_unit_id,
+                                  // Seed the first batch row with whatever Qty was already typed, instead of
+                                  // starting at '' (which syncs Qty to 0 and silently discards the typed value).
+                                  batches: turningOn && p.batches.length === 0
+                                    ? [{ batch_no: '', expiry_date: '', qty: p.qty !== '0' ? p.qty : '' }]
+                                    : p.batches,
+                                }
+                              })}
                               className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_batches ? 'bg-indigo-600' : 'bg-zinc-700')}
                             >
                               <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_batches ? 'translate-x-4' : 'translate-x-0')} />

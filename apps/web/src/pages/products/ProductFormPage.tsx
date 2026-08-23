@@ -104,6 +104,7 @@ export function ProductFormPage() {
   const queryClient = useQueryClient()
   const { org } = useAuth()
   const orgId = org?.id
+  const taxInclusive = org?.branding?.tax_inclusive ?? false
 
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -664,7 +665,7 @@ export function ProductFormPage() {
                   {...register('price', { valueAsNumber: true })}
                 />
                 {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
-                {watchedPrice > 0 && watchedTaxRate > 0 && (() => {
+                {taxInclusive && watchedPrice > 0 && watchedTaxRate > 0 && (() => {
                   const { base, tax } = splitInclusiveGST(watchedPrice, watchedTaxRate)
                   return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                 })()}
@@ -680,7 +681,7 @@ export function ProductFormPage() {
                   {...register('cost_price', { valueAsNumber: true })}
                 />
                 {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
-                {watchedCostPrice > 0 && watchedTaxRate > 0 && (() => {
+                {taxInclusive && watchedCostPrice > 0 && watchedTaxRate > 0 && (() => {
                   const { base, tax } = splitInclusiveGST(watchedCostPrice, watchedTaxRate)
                   return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                 })()}

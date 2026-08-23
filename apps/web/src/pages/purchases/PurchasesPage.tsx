@@ -265,6 +265,23 @@ export function PurchasesPage() {
     onError: (err: Error) => toast.error('Failed to record payment', err.message),
   })
 
+  const deletePaymentMutation = useMutation({
+    mutationFn: async (paymentId: string) => {
+      const { error } = await supabase
+        .from('purchase_payments')
+        .delete()
+        .eq('id', paymentId)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase_payment_summaries', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['purchase_payments', paymentTarget?.id] })
+      toast.success('Payment entry removed')
+    },
+    onError: (err: Error) => toast.error('Failed to remove payment', err.message),
+  })
+
   const handleImportFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -711,9 +728,20 @@ export function PurchasesPage() {
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Payment History ({targetPaymentHistory.length})</p>
                     <div className="space-y-1 max-h-24 overflow-y-auto">
                       {targetPaymentHistory.map((p: PurchasePayment) => (
-                        <div key={p.id} className="flex justify-between text-xs text-zinc-400 py-0.5">
+                        <div key={p.id} className="flex items-center justify-between text-xs text-zinc-400 py-0.5">
                           <span>{new Date(p.paid_at).toLocaleDateString('en-IN')} • {p.mode.toUpperCase()} {p.reference ? `(${p.reference})` : ''}</span>
-                          <span className="font-semibold text-emerald-400">{formatINR(p.amount)}</span>
+                          <span className="flex items-center gap-2">
+                            <span className="font-semibold text-emerald-400">{formatINR(p.amount)}</span>
+                            <button
+                              type="button"
+                              title="Remove this payment entry"
+                              onClick={() => deletePaymentMutation.mutate(p.id)}
+                              disabled={deletePaymentMutation.isPending}
+                              className="text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-50"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -732,6 +760,14 @@ export function PurchasesPage() {
                   return
                 }
                 if (paymentTarget) {
+                  const balanceDue = paymentInfoFor(paymentTarget).balanceDue
+                  if (amt > balanceDue) {
+                    toast.error(
+                      'Amount exceeds balance due',
+                      `Balance due is ${formatINR(balanceDue)} — remove the extra payment entry from history if you enter this in error.`,
+                    )
+                    return
+                  }
                   recordPaymentMutation.mutate({
                     purchase: paymentTarget,
                     amount: amt,
