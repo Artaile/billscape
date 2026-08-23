@@ -38,6 +38,65 @@ import { cn } from '@/lib/utils'
 
 const GST_RATES = [0, 5, 12, 18, 28] as const
 
+function VariantBarcodePreview({
+  value,
+  onGenerate,
+  onChange,
+  onPrint,
+}: {
+  value: string
+  onGenerate: () => void
+  onChange: (v: string) => void
+  onPrint: () => void
+}) {
+  const ref = useRef<SVGSVGElement>(null)
+
+  useEffect(() => {
+    if (value && ref.current) {
+      try {
+        JsBarcode(ref.current, value, {
+          format: 'CODE128',
+          width: 1.3,
+          height: 32,
+          displayValue: true,
+          fontSize: 9,
+          background: 'transparent',
+          lineColor: '#e4e4e7',
+          fontOptions: 'bold',
+        })
+      } catch {
+        // Invalid barcode value — leave preview blank rather than throwing.
+      }
+    }
+  }, [value])
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex gap-1">
+        <Input
+          placeholder="Barcode"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 text-xs font-mono"
+        />
+        <button type="button" title="Auto-generate" onClick={onGenerate}
+          className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+          <RefreshCw className="h-3 w-3" />
+        </button>
+      </div>
+      {value && (
+        <div className="flex items-center gap-2">
+          <svg ref={ref} className="max-w-[140px]" />
+          <button type="button" onClick={onPrint}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded border border-zinc-700 text-[11px] text-zinc-400 hover:text-white hover:border-zinc-600">
+            <Printer className="h-3 w-3" />Print
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ProductFormPage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
@@ -826,15 +885,16 @@ export function ProductFormPage() {
 
             {hasVariants && (
               <div className="space-y-2">
-                <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
+                <div className="grid grid-cols-6 gap-2 text-xs text-zinc-500 px-1">
                   <span>Size</span>
                   <span>Color</span>
                   <span>Price +/-</span>
                   <span>Stock</span>
+                  <span>Barcode</span>
                   <span></span>
                 </div>
                 {variants.map((v, i) => (
-                  <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                  <div key={i} className="grid grid-cols-6 gap-2 items-start">
                     <Input
                       placeholder="S / M / L"
                       value={v.size}
@@ -862,6 +922,16 @@ export function ProductFormPage() {
                       value={v.stock_qty}
                       onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, stock_qty: Number(e.target.value) } : x))}
                       className="h-8 text-xs"
+                    />
+                    <VariantBarcodePreview
+                      value={v.barcode_value}
+                      onChange={(val) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, barcode_value: val } : x))}
+                      onGenerate={() => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, barcode_value: generateBarcode() } : x))}
+                      onPrint={() => printBarcodeLabel(
+                        [v.size, v.color].filter(Boolean).join(' / ') || watch('name') || 'Variant',
+                        v.barcode_value,
+                        watch('price') + (v.price_delta || 0),
+                      )}
                     />
                     <Button
                       type="button"
