@@ -87,6 +87,10 @@ function rowBaseQty(r: PurchaseRow): number {
   return toBaseQty(entered, { unitId: r.unit_id, secondaryUnitId: r.secondary_unit_id, conversionFactor: r.conversion_factor })
 }
 
+function batchQtyTotal(batches: BatchRow[]): number {
+  return batches.reduce((sum, b) => sum + (parseNum(b.qty) || 0), 0)
+}
+
 // Mirrors ProductSchema.hsn_code in packages/core/src/validation/index.ts — 4, 6, or 8 digits.
 function hsnCodeError(value: string): string | undefined {
   if (!value) return undefined
@@ -127,6 +131,18 @@ export function PurchaseFormPage() {
   const [showAddSupplier, setShowAddSupplier] = useState(false)
 
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
+
+  // When batch tracking is enabled for the entry row, Qty becomes a read-only rollup of
+  // the batch quantities below it (matches IppoBill's "Allocated from batches below" pattern) —
+  // keeps the two numbers from silently drifting apart. Non-batch-tracked rows are unaffected;
+  // Qty stays freely editable, matching the common case.
+  useEffect(() => {
+    if (entry.has_batches && entry.batches.length > 0) {
+      const total = batchQtyTotal(entry.batches)
+      setEntry((p) => (p.has_batches ? { ...p, qty: String(total) } : p))
+    }
+  }, [entry.has_batches, entry.batches])
+
   const [entrySearch, setEntrySearch] = useState('')
   const [entryDropdownOpen, setEntryDropdownOpen] = useState(false)
   const [rows, setRows] = useState<PurchaseRow[]>([])
@@ -828,7 +844,12 @@ export function PurchaseFormPage() {
                   <div className="space-y-1">
                     <Label className="text-xs">Qty *</Label>
                     <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm text-center" />
+                      disabled={entry.has_batches}
+                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))}
+                      className={cn('h-9 text-sm text-center', entry.has_batches && 'opacity-60 cursor-not-allowed')} />
+                    {entry.has_batches && (
+                      <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
+                    )}
                   </div>
                 </div>
 
@@ -1047,6 +1068,11 @@ export function PurchaseFormPage() {
                                 </div>
                                 )
                               })}
+                              {entry.batches.length > 0 && (
+                                <p className="text-[11px] text-zinc-500 pl-1">
+                                  Total batch qty: {batchQtyTotal(entry.batches)} {unitOf(entry.unit_id)?.symbol ?? 'units'}
+                                </p>
+                              )}
                               <Button type="button" variant="outline" size="sm" className="text-xs"
                                 onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
                                 <Plus className="h-3.5 w-3.5" /> Add Batch
