@@ -9,6 +9,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
+import { recordPurchasePayment, getPurchasePayments, type PurchasePayment } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
 import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
 import { logActivity } from '@/lib/activityLog'
@@ -46,38 +47,6 @@ interface Purchase {
   supplier_id: string | null
   suppliers: { name: string } | null
   purchase_items: { id: string }[]
-}
-
-export interface PaymentRecord {
-  amount: number
-  mode: string
-  date: string
-  ref?: string
-}
-
-export function parsePurchasePayment(p: Purchase): {
-  paidAmount: number
-  balanceDue: number
-  status: 'paid' | 'partial' | 'pending'
-  payments: PaymentRecord[]
-} {
-  try {
-    if (p.notes && p.notes.includes('[PAYMENT:')) {
-      const match = p.notes.match(/\[PAYMENT:\s*(\{.*?\})\s*\]/)
-      if (match && match[1]) {
-        const parsed = JSON.parse(match[1])
-        const paid = Number(parsed.paid) || 0
-        const payments = (parsed.history as PaymentRecord[]) || []
-        const total = p.total_amount || 0
-        const due = Math.max(0, total - paid)
-        const status = due <= 0 ? 'paid' : paid > 0 ? 'partial' : 'pending'
-        return { paidAmount: paid, balanceDue: due, status, payments }
-      }
-    }
-  } catch {}
-
-  // Fallback: fully paid
-  return { paidAmount: p.total_amount || 0, balanceDue: 0, status: 'paid', payments: [] }
 }
 
 interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
@@ -176,6 +145,42 @@ export function PurchasesPage() {
     },
   })
 
+  const { data: paymentSummaries } = useQuery({
+    queryKey: ['purchase_payment_summaries', orgId, purchases?.map((p) => p.id).join(',')],
+    enabled: !!orgId && !!purchases && purchases.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('purchase_payments')
+        .select('purchase_id, amount')
+        .eq('organization_id', orgId!)
+        .in('purchase_id', purchases!.map((p) => p.id))
+      if (error) throw error
+      const paidByPurchase = new Map<string, number>()
+      for (const row of data ?? []) {
+        paidByPurchase.set(row.purchase_id, (paidByPurchase.get(row.purchase_id) ?? 0) + row.amount)
+      }
+      return paidByPurchase
+    },
+  })
+
+  function paymentInfoFor(p: Purchase): { paidAmount: number; balanceDue: number; status: 'paid' | 'partial' | 'pending' } {
+    const paidAmount = paymentSummaries?.get(p.id) ?? 0
+    const total = p.total_amount || 0
+    const balanceDue = Math.max(0, total - paidAmount)
+    const status: 'paid' | 'partial' | 'pending' = balanceDue <= 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'pending'
+    return { paidAmount, balanceDue, status }
+  }
+
+  const { data: targetPaymentHistory } = useQuery({
+    queryKey: ['purchase_payments', paymentTarget?.id],
+    enabled: !!paymentTarget && !!orgId,
+    queryFn: async () => {
+      const { data, error } = await getPurchasePayments(supabase, orgId!, paymentTarget!.id)
+      if (error) throw error
+      return data
+    },
+  })
+
   const filteredPurchases = (purchases ?? []).filter((p) => {
     if (search.trim()) {
       const q = search.trim().toLowerCase()
@@ -222,26 +227,15 @@ export function PurchasesPage() {
       reference?: string
       notes?: string
     }) => {
-      const current = parsePurchasePayment(purchase)
-      const newPaid = current.paidAmount + amount
-      const newPayment: PaymentRecord = {
+      const { error } = await recordPurchasePayment(supabase, {
+        organization_id: orgId!,
+        purchase_id: purchase.id,
         amount,
         mode,
-        date: new Date().toISOString(),
-        ref: reference || undefined,
-      }
-      const updatedPayments = [...current.payments, newPayment]
-
-      const cleanUserNotes = (purchase.notes || '').replace(/\[PAYMENT:\s*\{.*?\}\s*\]/g, '').trim()
-      const paymentTag = `[PAYMENT: ${JSON.stringify({ paid: newPaid, history: updatedPayments })}]`
-      const updatedNotes = cleanUserNotes ? `${cleanUserNotes}\n${paymentTag}` : paymentTag
-
-      const { error } = await supabase
-        .from('purchases')
-        .update({ notes: updatedNotes })
-        .eq('id', purchase.id)
-        .eq('organization_id', orgId!)
-
+        reference,
+        notes,
+        created_by: user!.id,
+      })
       if (error) throw error
 
       await logActivity({
@@ -253,14 +247,14 @@ export function PurchasesPage() {
           purchase_no: purchase.purchase_no,
           supplier: purchase.suppliers?.name,
           amount_paid: amount,
-          total_paid: newPaid,
           mode,
           reference,
         },
       })
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['purchases', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['purchase_payment_summaries', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['purchase_payments', paymentTarget?.id] })
       queryClient.invalidateQueries({ queryKey: ['activity_log', orgId] })
       toast.success('Payment recorded successfully')
       setPaymentTarget(null)
@@ -297,7 +291,7 @@ export function PurchasesPage() {
   // ── Totals Calculation ──
   const summary = (purchases ?? []).reduce(
     (acc, p) => {
-      const pay = parsePurchasePayment(p)
+      const pay = paymentInfoFor(p)
       acc.totalAmount += p.total_amount || 0
       acc.totalPaid += pay.paidAmount
       acc.totalDue += pay.balanceDue
@@ -432,7 +426,7 @@ export function PurchasesPage() {
             </TableHeader>
             <TableBody>
               {filteredPurchases.length > 0 ? filteredPurchases.map((p) => {
-                const pay = parsePurchasePayment(p)
+                const pay = paymentInfoFor(p)
                 return (
                   <TableRow key={p.id}>
                     <TableCell className="font-mono text-xs text-indigo-300 whitespace-nowrap">
@@ -629,7 +623,7 @@ export function PurchasesPage() {
             </DialogTitle>
           </DialogHeader>
           {paymentTarget && (() => {
-            const pay = parsePurchasePayment(paymentTarget)
+            const pay = paymentInfoFor(paymentTarget)
             return (
               <div className="space-y-4 py-2">
                 {/* Bill Summary */}
@@ -712,13 +706,13 @@ export function PurchasesPage() {
                 </div>
 
                 {/* Previous Payments List */}
-                {pay.payments.length > 0 && (
+                {targetPaymentHistory && targetPaymentHistory.length > 0 && (
                   <div className="space-y-1.5 pt-2 border-t border-border">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Payment History ({pay.payments.length})</p>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Payment History ({targetPaymentHistory.length})</p>
                     <div className="space-y-1 max-h-24 overflow-y-auto">
-                      {pay.payments.map((p, idx) => (
-                        <div key={idx} className="flex justify-between text-xs text-zinc-400 py-0.5">
-                          <span>{new Date(p.date).toLocaleDateString('en-IN')} • {p.mode.toUpperCase()} {p.ref ? `(${p.ref})` : ''}</span>
+                      {targetPaymentHistory.map((p: PurchasePayment) => (
+                        <div key={p.id} className="flex justify-between text-xs text-zinc-400 py-0.5">
+                          <span>{new Date(p.paid_at).toLocaleDateString('en-IN')} • {p.mode.toUpperCase()} {p.reference ? `(${p.reference})` : ''}</span>
                           <span className="font-semibold text-emerald-400">{formatINR(p.amount)}</span>
                         </div>
                       ))}
