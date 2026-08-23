@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Truck, Phone, Mail, Search, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Truck, Phone, Mail, Search, X, Download, Upload, FileSpreadsheet, ArrowUpDown, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -23,12 +23,15 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
+import { formatDate } from '@/lib/utils'
 import { logActivity } from '@/lib/activityLog'
+import { exportToCSV, parseCSV } from '@/lib/csvUtils'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 
 interface Supplier extends SupplierOption {
   organization_id: string
   created_at: string
+  state_code?: string | null
 }
 
 export function SuppliersPage() {
@@ -40,6 +43,12 @@ export function SuppliersPage() {
   const [editTarget, setEditTarget] = useState<Supplier | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Supplier | null>(null)
   const [search, setSearch] = useState('')
+
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'date-newest' | 'date-oldest'>('name-asc')
+  const [gstFilter, setGstFilter] = useState('all')
+  const [isImporting, setIsImporting] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: suppliers, isLoading } = useQuery({
     queryKey: ['suppliers', orgId],
@@ -55,15 +64,116 @@ export function SuppliersPage() {
     },
   })
 
-  const filteredSuppliers = (suppliers ?? []).filter((s) => {
-    if (!search.trim()) return true
-    const q = search.trim().toLowerCase()
-    return (
-      s.name.toLowerCase().includes(q) ||
-      (s.phone ?? '').toLowerCase().includes(q) ||
-      (s.gstin ?? '').toLowerCase().includes(q)
-    )
-  })
+  const filteredSuppliers = (suppliers ?? [])
+    .filter((s) => {
+      if (search.trim()) {
+        const q = search.trim().toLowerCase()
+        const matchSearch =
+          s.name.toLowerCase().includes(q) ||
+          (s.phone ?? '').toLowerCase().includes(q) ||
+          (s.gstin ?? '').toLowerCase().includes(q)
+        if (!matchSearch) return false
+      }
+      if (gstFilter === 'with-gst' && !s.gstin) return false
+      if (gstFilter === 'without-gst' && s.gstin) return false
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc':
+          return a.name.localeCompare(b.name)
+        case 'name-desc':
+          return b.name.localeCompare(a.name)
+        case 'date-newest':
+          return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        case 'date-oldest':
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        default:
+          return 0
+      }
+    })
+
+  const handleDownloadTemplate = () => {
+    const headers = ['Name', 'Phone', 'Email', 'GSTIN', 'State Code', 'Address']
+    const sampleRows = [
+      ['Apex Distributors', '9876543210', 'apex@example.com', '33ABCDE1234F1Z5', 'TN', '12 Industrial Estate, Chennai'],
+      ['Balaji Wholesalers', '9123456789', 'balaji@example.com', '', 'TN', '45 Main Market, Madurai'],
+    ]
+    exportToCSV('suppliers_import_template', headers, sampleRows)
+  }
+
+  const handleExportCSV = () => {
+    const listToExport = filteredSuppliers.length > 0 ? filteredSuppliers : (suppliers ?? [])
+    if (listToExport.length === 0) {
+      toast.error('No suppliers to export')
+      return
+    }
+
+    const headers = ['Name', 'Phone', 'Email', 'GSTIN', 'State Code', 'Address', 'Created Date']
+    const rows = listToExport.map((s) => [
+      s.name,
+      s.phone ?? '',
+      s.email ?? '',
+      s.gstin ?? '',
+      s.state_code ?? '',
+      s.address ?? '',
+      formatDate(s.created_at),
+    ])
+
+    exportToCSV(`suppliers_export_${new Date().toISOString().split('T')[0]}.csv`, headers, rows)
+    toast.success(`Exported ${listToExport.length} suppliers`)
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    setIsImporting(true)
+    try {
+      const records = await parseCSV(file)
+      if (!records.length) {
+        toast.error('Import Failed', 'CSV file is empty or invalid format')
+        return
+      }
+
+      let importedCount = 0
+      for (const row of records) {
+        const name = row['name'] || row['supplier name'] || row['party name'] || ''
+        if (!name.trim()) continue
+
+        const rawPhone = row['phone'] || row['mobile'] || row['phone number'] || ''
+        const phoneDigits = rawPhone.replace(/\D/g, '').slice(0, 10)
+        const email = row['email'] || row['email address'] || ''
+        const gstin = row['gstin'] || row['gst'] || ''
+        const stateCode = row['state code'] || row['state'] || ''
+        const address = row['address'] || ''
+
+        await supabase.from('suppliers').insert({
+          organization_id: orgId,
+          name: name.trim(),
+          phone: phoneDigits || null,
+          email: email.trim() || null,
+          gstin: gstin.trim().toUpperCase() || null,
+          state_code: stateCode.trim().toUpperCase() || null,
+          address: address.trim() || null,
+        })
+        importedCount++
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['suppliers', orgId] })
+      await logActivity({
+        organizationId: orgId,
+        action: 'imported',
+        entity: 'supplier',
+        metadata: { count: importedCount, filename: file.name },
+      })
+      toast.success(`Import Complete`, `Successfully imported ${importedCount} suppliers!`)
+    } catch (err: any) {
+      toast.error('Import Failed', err.message || 'Failed to parse CSV file')
+    } finally {
+      setIsImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   function openAdd() {
     setEditTarget(null)
@@ -125,30 +235,67 @@ export function SuppliersPage() {
           <h1 className="text-xl font-bold text-white">Suppliers</h1>
           <p className="text-sm text-zinc-400 mt-0.5">{suppliers?.length ?? 0} suppliers</p>
         </div>
-        <Button onClick={openAdd}>
-          <Plus className="h-4 w-4" />
-          Add Supplier
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} disabled={isImporting}>
+            {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
+            Import CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
+          </Button>
+          <Button onClick={openAdd}>
+            <Plus className="h-4 w-4 mr-1" /> Add Supplier
+          </Button>
+        </div>
       </div>
 
-      <div className="relative max-w-sm mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search name, phone or GSTIN..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9 pr-9"
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => setSearch('')}
-            aria-label="Clear search"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+      {/* Filters & Sort Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search name, phone or GSTIN..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 pr-9"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+            >
+              <option value="name-asc">Sort: Name (A to Z)</option>
+              <option value="name-desc">Sort: Name (Z to A)</option>
+              <option value="date-newest">Sort: Created (Newest)</option>
+              <option value="date-oldest">Sort: Created (Oldest)</option>
+            </select>
+          </div>
+
+          <select
+            value={gstFilter}
+            onChange={(e) => setGstFilter(e.target.value)}
+            className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
           >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
+            <option value="all">All GST Status</option>
+            <option value="with-gst">With GSTIN</option>
+            <option value="without-gst">Without GSTIN</option>
+          </select>
+        </div>
       </div>
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -290,6 +437,85 @@ export function SuppliersPage() {
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
             >
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Suppliers Modal */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-100">
+              <FileSpreadsheet className="h-5 w-5 text-indigo-400" />
+              Import Suppliers from CSV
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Step 1 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  1
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Download the template</p>
+                    <p className="text-[11px] text-zinc-400">Sample CSV format with column headers and example supplier rows</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadTemplate}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    Download Template (CSV)
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  2
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Upload your filled CSV file</p>
+                    <p className="text-[11px] text-zinc-400">Select your completed supplier CSV file to batch import records</p>
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => {
+                      handleFileChange(e)
+                      setShowImport(false)
+                    }}
+                    accept=".csv"
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 text-indigo-400" />}
+                    Choose CSV file
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setShowImport(false)}>
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>

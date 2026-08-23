@@ -179,12 +179,14 @@ function NavLinkItem({
   brandColor,
   onNavigate,
   compact,
+  forceShowText,
 }: {
   item: NavItem
   isActive: boolean
   brandColor: string
   onNavigate: (href: string) => void
   compact?: boolean
+  forceShowText?: boolean
 }) {
   const Icon = item.icon
   return (
@@ -197,7 +199,8 @@ function NavLinkItem({
           onNavigate(item.href)
         }}
         className={cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 justify-center md:justify-start lg:justify-start',
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+          forceShowText ? 'justify-start' : 'justify-center md:justify-start lg:justify-start',
           compact && 'py-1.5 text-[13px]',
           isActive
             ? 'text-white shadow-sm'
@@ -206,26 +209,28 @@ function NavLinkItem({
         style={isActive ? { backgroundColor: brandColor } : undefined}
       >
         <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-3.5 w-3.5')} />
-        <span className="truncate md:hidden lg:inline">{item.label}</span>
+        <span className={cn('truncate', forceShowText ? 'inline' : 'md:hidden lg:inline')}>{item.label}</span>
         {item.badge && (
           <span
-            className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold md:hidden lg:inline"
+            className={cn('ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold', forceShowText ? 'inline' : 'md:hidden lg:inline')}
             style={{ backgroundColor: `${brandColor}30`, color: brandColor }}
           >
             {item.badge}
           </span>
         )}
       </Link>
-      {/* Tooltip on md screens when icon-only */}
-      <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-3 hidden md:group-hover/nav:flex lg:group-hover/nav:hidden items-center gap-1.5 z-50 rounded-lg bg-zinc-950/95 border border-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 shadow-2xl backdrop-blur-md whitespace-nowrap">
-        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-0 h-0 border-y-[5px] border-y-transparent border-r-[6px] border-r-zinc-800" />
-        <span>{item.label}</span>
-        {item.badge && (
-          <span className="rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 text-[10px]">
-            {item.badge}
-          </span>
-        )}
-      </div>
+      {/* Tooltip on md screens when icon-only and not hover-expanded */}
+      {!forceShowText && (
+        <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-3 hidden md:group-hover/nav:flex lg:group-hover/nav:hidden items-center gap-1.5 z-50 rounded-lg bg-zinc-950/95 border border-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 shadow-2xl backdrop-blur-md whitespace-nowrap">
+          <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-0 h-0 border-y-[5px] border-y-transparent border-r-[6px] border-r-zinc-800" />
+          <span>{item.label}</span>
+          {item.badge && (
+            <span className="rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 text-[10px]">
+              {item.badge}
+            </span>
+          )}
+        </div>
+      )}
     </li>
   )
 }
@@ -257,6 +262,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const { user, org, role, permissions, signOut } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
 
@@ -526,154 +532,184 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     onError: (err: Error) => toast.error('Failed to process expense', err.message)
   })
 
-  const SidebarContent = () => (
-    <>
-      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-sidebar-border">
-        {org?.branding?.logo_url ? (
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg overflow-hidden border border-border bg-white dark:bg-zinc-900 p-0.5 shrink-0 shadow-sm">
-            <img
-              src={org.branding.logo_url}
-              alt={org?.name || 'Shop Logo'}
-              className="h-full w-full object-contain"
-            />
+  const SidebarContent = ({ forceExpanded }: { forceExpanded?: boolean }) => {
+    const isExpanded = forceExpanded || false
+    return (
+      <>
+        <div className="flex items-center gap-2.5 px-4 py-5 border-b border-sidebar-border">
+          {org?.branding?.logo_url ? (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg overflow-hidden border border-border bg-white dark:bg-zinc-900 p-0.5 shrink-0 shadow-sm">
+              <img
+                src={org.branding.logo_url}
+                alt={org?.name || 'Shop Logo'}
+                className="h-full w-full object-contain"
+              />
+            </div>
+          ) : (
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
+              style={{ backgroundColor: brandColor }}
+            >
+              <Store className="h-4 w-4 text-white" />
+            </div>
+          )}
+          <div className={cn("flex flex-col min-w-0", isExpanded ? "flex" : "md:hidden lg:flex")}>
+            <span className="text-sm font-bold text-foreground tracking-wide truncate">BillScape</span>
+            <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+              {org?.name ?? 'Your Shop'}
+            </span>
           </div>
-        ) : (
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
-            style={{ backgroundColor: brandColor }}
-          >
-            <Store className="h-4 w-4 text-white" />
-          </div>
-        )}
-        <div className="flex flex-col min-w-0 md:hidden lg:flex">
-          <span className="text-sm font-bold text-foreground tracking-wide truncate">BillScape</span>
-          <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
-            {org?.name ?? 'Your Shop'}
-          </span>
         </div>
-      </div>
 
-      <nav className="flex-1 overflow-y-auto py-4 px-2">
-        <ul className="space-y-0.5">
-          {NAV_ENTRIES.map((entry) => {
-            if (entry.kind === 'item') {
-              if (entry.item.permissionKey && permissions?.[entry.item.permissionKey] === false) return null
-              return (
-                <NavLinkItem
-                  key={entry.item.href}
-                  item={entry.item}
-                  isActive={isNavItemActive(entry.item, location.pathname, location.search)}
-                  brandColor={brandColor}
-                  onNavigate={(href) => {
-                    if (isNavItemActive(entry.item, location.pathname, location.search)) {
-                      setSidebarOpen(false)
-                      return
-                    }
-                    requestNavigation(() => {
-                      setSidebarOpen(false)
-                      navigate(href)
-                    })
-                  }}
-                />
+        <nav className="flex-1 overflow-y-auto py-4 px-2">
+          <ul className="space-y-0.5">
+            {NAV_ENTRIES.map((entry) => {
+              if (entry.kind === 'item') {
+                if (entry.item.permissionKey && permissions?.[entry.item.permissionKey] === false) return null
+                return (
+                  <NavLinkItem
+                    key={entry.item.href}
+                    item={entry.item}
+                    isActive={isNavItemActive(entry.item, location.pathname, location.search)}
+                    brandColor={brandColor}
+                    forceShowText={isExpanded}
+                    onNavigate={(href) => {
+                      if (isNavItemActive(entry.item, location.pathname, location.search)) {
+                        setSidebarOpen(false)
+                        return
+                      }
+                      requestNavigation(() => {
+                        setSidebarOpen(false)
+                        navigate(href)
+                      })
+                    }}
+                  />
+                )
+              }
+
+              const visibleItems = entry.group.items.filter(
+                (item) => !item.permissionKey || permissions?.[item.permissionKey] !== false
               )
-            }
+              if (visibleItems.length === 0) return null
+              const GroupIcon = entry.group.icon
+              const isOpen = openGroups[entry.group.label] ?? false
+              const groupActive = isGroupActive(entry.group)
 
-            const visibleItems = entry.group.items.filter(
-              (item) => !item.permissionKey || permissions?.[item.permissionKey] !== false
-            )
-            if (visibleItems.length === 0) return null
-            const GroupIcon = entry.group.icon
-            const isOpen = openGroups[entry.group.label] ?? false
-            const groupActive = isGroupActive(entry.group)
+              return (
+                <li key={entry.group.label} className="relative group/nav">
+                  <button
+                    onClick={() => toggleGroup(entry.group.label)}
+                    title={entry.group.label}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+                      isExpanded ? 'justify-start' : 'justify-center md:justify-start lg:justify-start',
+                      groupActive ? 'text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                    )}
+                  >
+                    <GroupIcon className="h-4 w-4 shrink-0" />
+                    <span className={cn("flex-1 text-left truncate", isExpanded ? "inline" : "md:hidden lg:inline")}>
+                      {entry.group.label}
+                    </span>
+                    <ChevronRight
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0 transition-transform',
+                        isExpanded ? 'block' : 'md:hidden lg:block',
+                        isOpen && 'rotate-90'
+                      )}
+                    />
+                  </button>
 
-            return (
-              <li key={entry.group.label} className="relative group/nav">
-                <button
-                  onClick={() => toggleGroup(entry.group.label)}
-                  title={entry.group.label}
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 justify-center md:justify-start lg:justify-start',
-                    groupActive ? 'text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                  {/* Submenu Flyout for md (icon-only) screens when NOT hover-expanded */}
+                  {!isExpanded && (
+                    <div className="absolute left-full top-0 ml-3 hidden md:group-hover/nav:flex lg:group-hover/nav:hidden flex-col z-50 min-w-[180px] rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 shadow-2xl backdrop-blur-md transition-all">
+                      <div className="px-3 py-1.5 text-[11px] font-semibold text-zinc-400 border-b border-zinc-800/80 mb-1 flex items-center gap-2">
+                        <GroupIcon className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                        <span className="truncate">{entry.group.label}</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        {visibleItems.map((item) => {
+                          const ItemIcon = item.icon
+                          const active = isNavItemActive(item, location.pathname, location.search)
+                          return (
+                            <button
+                              key={item.href}
+                              onClick={() => {
+                                if (active) return
+                                requestNavigation(() => navigate(item.href))
+                              }}
+                              className={cn(
+                                'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors w-full text-left',
+                                active
+                                  ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                                  : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
+                              )}
+                            >
+                              <ItemIcon className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{item.label}</span>
+                              {item.badge && (
+                                <span className="ml-auto rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 text-[9px]">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                   )}
-                >
-                  <GroupIcon className="h-4 w-4 shrink-0" />
-                  <span className="flex-1 text-left truncate md:hidden lg:inline">{entry.group.label}</span>
-                  <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform md:hidden lg:block', isOpen && 'rotate-90')} />
-                </button>
-                {/* Floating Submenu Flyout for md (icon-only) screens */}
-                <div className="absolute left-full top-0 ml-3 hidden md:group-hover/nav:flex lg:group-hover/nav:hidden flex-col z-50 min-w-[180px] rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 shadow-2xl backdrop-blur-md transition-all">
-                  <div className="px-3 py-1.5 text-[11px] font-semibold text-zinc-400 border-b border-zinc-800/80 mb-1 flex items-center gap-2">
-                    <GroupIcon className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-                    <span className="truncate">{entry.group.label}</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    {visibleItems.map((item) => {
-                      const ItemIcon = item.icon
-                      const active = isNavItemActive(item, location.pathname, location.search)
-                      return (
-                        <button
-                          key={item.href}
-                          onClick={() => {
-                            if (active) return
-                            requestNavigation(() => navigate(item.href))
-                          }}
-                          className={cn(
-                            'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors w-full text-left',
-                            active
-                              ? 'bg-indigo-600 text-white font-semibold shadow-sm'
-                              : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
-                          )}
-                        >
-                          <ItemIcon className="h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{item.label}</span>
-                          {item.badge && (
-                            <span className="ml-auto rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 text-[9px]">
-                              {item.badge}
-                            </span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
 
-                {/* Standard Inline Accordion for lg (full text) screens */}
-                {isOpen && (
-                  <ul className="mt-0.5 space-y-0.5 border-l border-border ml-5 pl-2 hidden lg:block">
-                    {visibleItems.map((item) => (
-                      <NavLinkItem
-                        key={item.href}
-                        item={item}
-                        isActive={isNavItemActive(item, location.pathname, location.search)}
-                        brandColor={brandColor}
-                        compact
-                        onNavigate={(href) => {
-                          if (isNavItemActive(item, location.pathname, location.search)) {
-                            setSidebarOpen(false)
-                            return
-                          }
-                          requestNavigation(() => {
-                            setSidebarOpen(false)
-                            navigate(href)
-                          })
-                        }}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      </nav>
-    </>
-  )
+                  {/* Standard Inline Accordion for lg (full text) screens or when hover-expanded */}
+                  {isOpen && (
+                    <ul className={cn("mt-0.5 space-y-0.5 border-l border-border ml-5 pl-2", isExpanded ? "block" : "hidden lg:block")}>
+                      {visibleItems.map((item) => (
+                        <NavLinkItem
+                          key={item.href}
+                          item={item}
+                          isActive={isNavItemActive(item, location.pathname, location.search)}
+                          brandColor={brandColor}
+                          compact
+                          forceShowText={isExpanded}
+                          onNavigate={(href) => {
+                            if (isNavItemActive(item, location.pathname, location.search)) {
+                              setSidebarOpen(false)
+                              return
+                            }
+                            requestNavigation(() => {
+                              setSidebarOpen(false)
+                              navigate(href)
+                            })
+                          }}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </nav>
+      </>
+    )
+  }
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      {/* Desktop sidebar (Icon-only on md: 64px, Full on lg: 224px) */}
-      <aside className="hidden md:flex flex-col w-16 lg:w-56 shrink-0 bg-sidebar border-r border-border no-print transition-all duration-200">
-        <SidebarContent />
+      {/* Desktop sidebar (Fixed layout width w-16 lg:w-56; floats absolutely on hover so main content width never shrinks) */}
+      <aside
+        onMouseEnter={() => setIsSidebarHovered(true)}
+        onMouseLeave={() => setIsSidebarHovered(false)}
+        className="hidden md:flex flex-col w-16 lg:w-56 shrink-0 bg-sidebar border-r border-border no-print relative z-40"
+      >
+        <div
+          className={cn(
+            "flex flex-col h-full bg-sidebar border-r border-border transition-all duration-300",
+            isSidebarHovered
+              ? "absolute left-0 top-0 w-56 shadow-2xl z-50 bg-sidebar"
+              : "w-full"
+          )}
+        >
+          <SidebarContent forceExpanded={isSidebarHovered} />
+        </div>
       </aside>
 
       {/* Mobile sidebar overlay */}

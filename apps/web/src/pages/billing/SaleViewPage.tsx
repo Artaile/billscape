@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useRef, useState, useEffect } from 'react'
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Printer, Download, Eye, Loader2, Building2, FileText, Calendar, MoreVertical, Pencil, Trash2, UserCheck } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -23,7 +23,11 @@ export function SaleViewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const backTo = (location.state as { from?: string } | null)?.from ?? '/billing?tab=history'
+  const isAutoPrint = (location.state as { autoPrint?: boolean } | null)?.autoPrint || searchParams.get('print') === 'true'
+  const autoPrintedRef = useRef(false)
+
   const { org, user, role } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -212,6 +216,15 @@ export function SaleViewPage() {
     `)
     doc.close()
   }
+
+  useEffect(() => {
+    if (!isAutoPrint || !sale || !totals || autoPrintedRef.current) return
+    autoPrintedRef.current = true
+    const timer = setTimeout(() => {
+      handlePrint()
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [isAutoPrint, sale, totals])
 
   const handleDownloadPdf = async () => {
     if (!printRef.current) return

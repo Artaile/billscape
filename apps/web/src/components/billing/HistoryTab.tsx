@@ -34,6 +34,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DateRangeFilter } from '@/components/ui/date-range-filter'
+import { InvoicePrint } from '@/components/billing/InvoicePrint'
 import { toast } from '@/hooks/use-toast'
 import { formatDateTime, parseBilledBy, cn } from '@/lib/utils'
 
@@ -80,6 +81,157 @@ export function HistoryTab() {
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null)
   const [deletingSale, setDeletingSale] = useState<SaleRow | null>(null)
   const [voidReason, setVoidReason] = useState('')
+
+  const [reprintingSaleId, setReprintingSaleId] = useState<string | null>(null)
+  const [reprintData, setReprintData] = useState<{
+    sale: any
+    items: CartItem[]
+    totals: InvoiceTotals
+  } | null>(null)
+
+  const handleDirectReprint = async (saleId: string) => {
+    if (!orgId) return
+    setReprintingSaleId(saleId)
+    try {
+      const res = await getSaleWithItems(supabase as Parameters<typeof getSaleWithItems>[0], orgId, saleId)
+      if (!res?.sale) {
+        toast.error('Failed to load bill for reprint')
+        setReprintingSaleId(null)
+        return
+      }
+
+      const sale = res.sale as any
+      const items = (res.items ?? []) as any[]
+
+      const cartItems: CartItem[] = items.map((it) => ({
+        product_id: it.product_id,
+        product_name: it.product_name,
+        hsn_code: it.hsn_code ?? undefined,
+        tax_rate: it.tax_rate,
+        unit_price: it.unit_price,
+        qty: it.qty,
+        discount_pct: it.discount_pct,
+        discount_type: it.discount_type,
+        discount_amount: it.discount_amount,
+      }))
+
+      const taxInclusive = org?.branding?.tax_inclusive ?? false
+      const cgstTotal = items.reduce((sum, it) => sum + Number(it.cgst_amount ?? 0), 0)
+      const sgstTotal = items.reduce((sum, it) => sum + Number(it.sgst_amount ?? 0), 0)
+      const igstTotal = items.reduce((sum, it) => sum + Number(it.igst_amount ?? 0), 0)
+      const isInterstate = igstTotal > 0
+
+      const breakupMap = new Map<number, { tax_rate: number; taxable_amount: number; cgst: number; sgst: number; igst: number }>()
+      for (const it of items) {
+        const lineDiscount = it.discount_type === 'flat' ? Number(it.discount_amount ?? 0) : (Number(it.unit_price) * Number(it.qty)) * (Number(it.discount_pct) / 100)
+        const grossLine = Number(it.unit_price) * Number(it.qty) - lineDiscount
+        const lineTax = Number(it.cgst_amount ?? 0) + Number(it.sgst_amount ?? 0) + Number(it.igst_amount ?? 0)
+        const lineTaxable = taxInclusive ? grossLine - lineTax : grossLine
+        const existing = breakupMap.get(it.tax_rate)
+        if (existing) {
+          existing.taxable_amount += lineTaxable
+          existing.cgst += Number(it.cgst_amount ?? 0)
+          existing.sgst += Number(it.sgst_amount ?? 0)
+          existing.igst += Number(it.igst_amount ?? 0)
+        } else {
+          breakupMap.set(it.tax_rate, {
+            tax_rate: it.tax_rate,
+            taxable_amount: lineTaxable,
+            cgst: Number(it.cgst_amount ?? 0),
+            sgst: Number(it.sgst_amount ?? 0),
+            igst: Number(it.igst_amount ?? 0),
+          })
+        }
+      }
+      const breakupValues = Array.from(breakupMap.values())
+      const taxableAmount = breakupValues.reduce((sum, b) => sum + b.taxable_amount, 0)
+
+      const totals: InvoiceTotals = {
+        subtotal: sale.subtotal,
+        discount_total: sale.discount_total,
+        taxable_amount: taxableAmount,
+        tax_breakup: breakupValues as InvoiceTotals['tax_breakup'],
+        cgst_total: cgstTotal,
+        sgst_total: sgstTotal,
+        igst_total: igstTotal,
+        tax_total: sale.tax_total,
+        grand_total: sale.grand_total,
+        is_interstate: isInterstate,
+        order_discount_amount: sale.order_discount_amount ?? 0,
+        loyalty_redeem_amount: sale.loyalty_redeem_amount ?? 0,
+        net_payable: sale.net_payable ?? sale.grand_total,
+      }
+
+      setReprintData({ sale, items: cartItems, totals })
+    } catch (err: any) {
+      toast.error('Failed to load bill for reprint', err?.message)
+      setReprintingSaleId(null)
+    }
+  }
+
+  useEffect(() => {
+    if (!reprintData) return
+    const timer = setTimeout(() => {
+      const elem = document.getElementById('history-reprint-root')
+      if (elem) {
+        const iframe = document.createElement('iframe')
+        iframe.style.position = 'fixed'
+        iframe.style.right = '0'
+        iframe.style.bottom = '0'
+        iframe.style.width = '0'
+        iframe.style.height = '0'
+        iframe.style.border = '0'
+        document.body.appendChild(iframe)
+
+        const doc = iframe.contentWindow?.document
+        if (doc) {
+          let styles = ''
+          document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+            styles += node.outerHTML
+          })
+          doc.open()
+          doc.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Invoice ${reprintData.sale.invoice_no}</title>
+                ${styles}
+                <style>
+                  @page { margin: 10mm 12mm; }
+                  html, body { margin: 0 !important; padding: 0 !important; background: #ffffff !important; color: #000000 !important; }
+                </style>
+              </head>
+              <body>
+                ${elem.innerHTML}
+                <script>
+                  window.onload = () => {
+                    setTimeout(() => {
+                      window.focus();
+                      window.print();
+                      setTimeout(() => {
+                        window.frameElement?.remove();
+                      }, 1000);
+                    }, 250);
+                  };
+                </script>
+              </body>
+            </html>
+          `)
+          doc.close()
+        } else {
+          window.print()
+        }
+      } else {
+        window.print()
+      }
+
+      setTimeout(() => {
+        setReprintData(null)
+        setReprintingSaleId(null)
+      }, 2500)
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [reprintData])
 
   const allowManage = canEditDelete(role)
 
@@ -264,8 +416,13 @@ export function HistoryTab() {
                         <Eye className="h-3.5 w-3.5" />
                       </Button>
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Reprint"
-                        onClick={() => navigate(`/billing/sales/${sale.id}`)}>
-                        <Printer className="h-3.5 w-3.5" />
+                        disabled={reprintingSaleId === sale.id}
+                        onClick={() => handleDirectReprint(sale.id)}>
+                        {reprintingSaleId === sale.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+                        ) : (
+                          <Printer className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                       {view === 'list' && allowManage && (
                         <>
@@ -346,6 +503,34 @@ export function HistoryTab() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {reprintData && (
+        <div className="fixed left-[-9999px] top-0 bg-white" aria-hidden>
+          <InvoicePrint
+            rootId="history-reprint-root"
+            invoiceNo={reprintData.sale.invoice_no}
+            date={reprintData.sale.created_at}
+            shopName={org?.name ?? 'BillScape Shop'}
+            shopAddress={org?.address}
+            shopGstin={org?.gstin}
+            shopPan={org?.pan}
+            shopLogoUrl={org?.branding?.logo_url}
+            shopPhone={org?.phone}
+            shopEmail={org?.email}
+            customerName={reprintData.sale.customers?.name}
+            customerPhone={reprintData.sale.customers?.phone ?? undefined}
+            customerGstin={reprintData.sale.customers?.gstin ?? undefined}
+            customerAddress={reprintData.sale.customers?.address ?? undefined}
+            items={reprintData.items}
+            totals={reprintData.totals}
+            paymentMode={reprintData.sale.payment_mode}
+            billedBy={parseBilledBy(reprintData.sale.notes, user?.user_metadata?.full_name || user?.email?.split('@')[0], role ?? 'cashier')}
+            branding={org?.branding}
+            invoiceTemplate={(org as any)?.invoice_template}
+            hidePrintButton
+          />
+        </div>
+      )}
     </div>
   )
 }

@@ -12,6 +12,7 @@ import { formatINR } from '@billscape/core'
 import { formatDate } from '@/lib/utils'
 import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
 import { logActivity } from '@/lib/activityLog'
+import { exportToCSV } from '@/lib/csvUtils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -292,6 +293,47 @@ export function PurchasesPage() {
     e.target.value = ''
   }, [navigate])
 
+  const handleExportCSV = () => {
+    const listToExport = filteredPurchases.length > 0 ? filteredPurchases : (purchases ?? [])
+    if (listToExport.length === 0) {
+      toast.error('No purchase records to export')
+      return
+    }
+
+    const headers = [
+      'Purchase No',
+      'Invoice No',
+      'Supplier',
+      'Date',
+      'Total Amount (Rs)',
+      'Paid Amount (Rs)',
+      'Balance Due (Rs)',
+      'Payment Status',
+      'Items Count',
+      'Notes',
+    ]
+
+    const rows = listToExport.map((p) => {
+      const pay = parsePurchasePayment(p)
+      const cleanNotes = (p.notes || '').replace(/\[PAYMENT:\s*\{.*?\}\s*\]/g, '').trim()
+      return [
+        p.purchase_no ?? '',
+        p.invoice_no ?? '',
+        p.suppliers?.name ?? 'Walk-in',
+        formatDate(p.created_at),
+        p.total_amount || 0,
+        pay.paidAmount,
+        pay.balanceDue,
+        pay.status.toUpperCase(),
+        p.purchase_items?.length ?? 0,
+        cleanNotes,
+      ]
+    })
+
+    exportToCSV(`purchases_export_${new Date().toISOString().split('T')[0]}.csv`, headers, rows)
+    toast.success(`Exported ${listToExport.length} purchase records`)
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   // ── Totals Calculation ──
@@ -327,6 +369,9 @@ export function PurchasesPage() {
               </span>
             </Button>
           )}
+          <Button variant="outline" onClick={handleExportCSV}>
+            <Download className="h-4 w-4 mr-1" />Export CSV
+          </Button>
           <Button variant="outline" onClick={() => { setImportErrors([]); setShowImport(true) }}>
             <Upload className="h-4 w-4 mr-1" />Import CSV
           </Button>

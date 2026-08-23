@@ -50,6 +50,7 @@ export function LoyaltyPage() {
   const [sortBy, setSortBy] = useState<'points-desc' | 'points-asc' | 'earned-desc' | 'redeemed-desc' | 'name-asc' | 'name-desc' | 'date-newest' | 'date-oldest'>('points-desc')
   const [pointsFilter, setPointsFilter] = useState('all')
   const [isImporting, setIsImporting] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: rawCustomers = [], isLoading } = useQuery({
@@ -268,19 +269,18 @@ export function LoyaltyPage() {
   const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [newName, setNewName] = useState('')
   const [newPhone, setNewPhone] = useState('')
-  const [selectedEmpId, setSelectedEmpId] = useState('')
+  const [selectedCustId, setSelectedCustId] = useState('')
   const [historyCustomer, setHistoryCustomer] = useState<LoyaltyCustomer | null>(null)
 
-  const { data: employees = [] } = useQuery({
-    queryKey: ['employees', orgId],
+  const { data: existingCustomers = [] } = useQuery({
+    queryKey: ['existing_customers', orgId],
     enabled: !!orgId,
     queryFn: async () => {
       const { data } = await supabase
-        .from('employees')
-        .select('id, full_name, phone, role')
+        .from('customers')
+        .select('id, name, phone')
         .eq('organization_id', orgId!)
-        .eq('is_active', true)
-        .order('full_name')
+        .order('name')
       return data ?? []
     },
   })
@@ -308,17 +308,7 @@ export function LoyaltyPage() {
           <p className="text-sm text-muted-foreground mt-0.5">Reward customers with points on every purchase</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".csv"
-            className="hidden"
-          />
-          <Button variant="outline" size="sm" onClick={handleDownloadTemplate} title="Download CSV Template">
-            <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-400" /> Template
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} disabled={isImporting}>
             {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
             Import CSV
           </Button>
@@ -457,36 +447,36 @@ export function LoyaltyPage() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Add Loyalty Member</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            {employees.length > 0 && (
+            {existingCustomers.length > 0 && (
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground flex items-center justify-between">
-                  <span>Select from Staff / Employees</span>
+                  <span>Select from Existing Customers</span>
                   <span className="text-[10px] text-indigo-400 font-semibold">Optional</span>
                 </Label>
                 <select
-                  value={selectedEmpId}
+                  value={selectedCustId}
                   onChange={(e) => {
-                    const empId = e.target.value
-                    setSelectedEmpId(empId)
-                    const emp = employees.find((x) => x.id === empId)
-                    if (emp) {
-                      setNewName(emp.full_name)
-                      setNewPhone(emp.phone ?? '')
+                    const custId = e.target.value
+                    setSelectedCustId(custId)
+                    const cust = existingCustomers.find((x) => x.id === custId)
+                    if (cust) {
+                      setNewName(cust.name)
+                      setNewPhone(cust.phone ?? '')
                     }
                   }}
                   className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
                 >
-                  <option value="">-- Choose Employee --</option>
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.full_name} ({emp.role.charAt(0).toUpperCase() + emp.role.slice(1)}) {emp.phone ? `• ${emp.phone}` : ''}
+                  <option value="">-- Choose Customer --</option>
+                  {existingCustomers.map((cust) => (
+                    <option key={cust.id} value={cust.id}>
+                      {cust.name} {cust.phone ? `• ${cust.phone}` : ''}
                     </option>
                   ))}
                 </select>
               </div>
             )}
 
-            {employees.length > 0 && (
+            {existingCustomers.length > 0 && (
               <div className="relative border-t border-border my-1">
                 <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-[10px] text-muted-foreground uppercase">
                   Or Enter Details
@@ -501,7 +491,7 @@ export function LoyaltyPage() {
                 value={newName}
                 onChange={(e) => {
                   setNewName(e.target.value)
-                  setSelectedEmpId('')
+                  setSelectedCustId('')
                 }}
               />
             </div>
@@ -516,12 +506,12 @@ export function LoyaltyPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAddCustomer(false); setSelectedEmpId(''); setNewName(''); setNewPhone('') }}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setShowAddCustomer(false); setSelectedCustId(''); setNewName(''); setNewPhone('') }}>Cancel</Button>
             <Button
               onClick={() => {
                 addCustomerMutation.mutate({ name: newName, phone: newPhone })
                 setShowAddCustomer(false)
-                setSelectedEmpId('')
+                setSelectedCustId('')
                 setNewName('')
                 setNewPhone('')
               }}
@@ -649,6 +639,85 @@ export function LoyaltyPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSettings(false)}>Cancel</Button>
             <Button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}>Save Settings</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Loyalty Members Modal */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-100">
+              <FileSpreadsheet className="h-5 w-5 text-indigo-400" />
+              Import Loyalty Members from CSV
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Step 1 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  1
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Download the template</p>
+                    <p className="text-[11px] text-zinc-400">Sample CSV format with column headers and example loyalty member rows</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadTemplate}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    Download Template (CSV)
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  2
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Upload your filled CSV file</p>
+                    <p className="text-[11px] text-zinc-400">Select your completed member CSV file to batch import records</p>
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => {
+                      handleFileChange(e)
+                      setShowImport(false)
+                    }}
+                    accept=".csv"
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 text-indigo-400" />}
+                    Choose CSV file
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setShowImport(false)}>
+              Cancel
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

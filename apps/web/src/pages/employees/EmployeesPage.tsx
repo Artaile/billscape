@@ -52,6 +52,7 @@ export function EmployeesPage() {
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [isImporting, setIsImporting] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: employees = [], isLoading } = useQuery({
@@ -313,17 +314,7 @@ export function EmployeesPage() {
           <p className="text-sm text-muted-foreground mt-0.5">Manage your staff and their roles</p>
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".csv"
-            className="hidden"
-          />
-          <Button variant="outline" size="sm" onClick={handleDownloadTemplate} title="Download CSV Template">
-            <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-400" /> Template
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isImporting}>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} disabled={isImporting}>
             {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
             Import CSV
           </Button>
@@ -550,6 +541,85 @@ export function EmployeesPage() {
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancel</Button>
             <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
               {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : editing ? 'Update' : 'Add Employee'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Employees Modal */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-100">
+              <FileSpreadsheet className="h-5 w-5 text-indigo-400" />
+              Import Employees from CSV
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Step 1 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  1
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Download the template</p>
+                    <p className="text-[11px] text-zinc-400">Sample CSV format with column headers and example staff rows</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadTemplate}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    Download Template (CSV)
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  2
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Upload your filled CSV file</p>
+                    <p className="text-[11px] text-zinc-400">Select your completed employee CSV file to batch import records</p>
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => {
+                      handleFileChange(e)
+                      setShowImport(false)
+                    }}
+                    accept=".csv"
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 text-indigo-400" />}
+                    Choose CSV file
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setShowImport(false)}>
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>
