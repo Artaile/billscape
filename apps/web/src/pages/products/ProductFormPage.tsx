@@ -24,7 +24,7 @@ import {
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { ProductSchema, type ProductInput, formatINR } from '@billscape/core'
+import { ProductSchema, type ProductInput, formatINR, splitInclusiveGST } from '@billscape/core'
 import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
@@ -664,6 +664,10 @@ export function ProductFormPage() {
                   {...register('price', { valueAsNumber: true })}
                 />
                 {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
+                {watchedPrice > 0 && watchedTaxRate > 0 && (() => {
+                  const { base, tax } = splitInclusiveGST(watchedPrice, watchedTaxRate)
+                  return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                })()}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="cost_price">Cost Price (₹)</Label>
@@ -676,6 +680,10 @@ export function ProductFormPage() {
                   {...register('cost_price', { valueAsNumber: true })}
                 />
                 {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
+                {watchedCostPrice > 0 && watchedTaxRate > 0 && (() => {
+                  const { base, tax } = splitInclusiveGST(watchedCostPrice, watchedTaxRate)
+                  return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                })()}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="mrp">MRP (₹)</Label>

@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
-  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit,
+  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitInclusiveGST,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
@@ -839,6 +839,10 @@ export function PurchaseFormPage() {
                     <Label className="text-xs">Purchase Rate</Label>
                     <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
                       onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
+                    {parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
+                      const { base, tax } = splitInclusiveGST(parseNum(entry.unit_cost), entry.tax_rate)
+                      return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                    })()}
                   </div>
 
                   <div className="space-y-1">
