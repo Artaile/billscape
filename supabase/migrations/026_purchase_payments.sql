@@ -17,13 +17,13 @@ create index if not exists purchase_payments_org_id_idx on purchase_payments(org
 alter table purchase_payments enable row level security;
 
 create policy "purchase_payments_select" on purchase_payments for select
-  using (organization_id in (select organization_id from memberships where user_id = auth.uid()));
+  using (organization_id in (select organization_id from my_org_ids()));
 
 create policy "purchase_payments_insert" on purchase_payments for insert
-  with check (organization_id in (select organization_id from memberships where user_id = auth.uid()));
+  with check (organization_id in (select organization_id from my_org_ids()));
 
 create policy "purchase_payments_delete" on purchase_payments for delete
-  using (organization_id in (select organization_id from memberships where user_id = auth.uid()));
+  using (organization_id in (select organization_id from my_org_ids()));
 
 -- One-time backfill: migrate existing [PAYMENT: {...}] JSON blobs out of purchases.notes
 -- into real rows, then strip the tag from notes so the text field only ever holds
