@@ -833,7 +833,10 @@ export function PurchaseFormPage() {
                     <ScanBarcodeDialog
                       open={scanOpen}
                       onOpenChange={setScanOpen}
-                      onScan={(code) => setEntry((p) => ({ ...p, barcode_value: code, barcodeManuallyEdited: true }))}
+                      onScan={(code) => {
+                        setEntry((p) => ({ ...p, barcode_value: code, barcodeManuallyEdited: true }))
+                        checkCodeUnique('barcode_value', code, (msg) => setEntry((p) => ({ ...p, codeError: msg })))
+                      }}
                     />
                   </div>
 
