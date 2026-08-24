@@ -756,9 +756,8 @@ export function PurchaseFormPage() {
             </div>
           </div>
 
-          {/* Two-column body: item entry + table on the left, bill summary sticky on the right */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-5">
-            <div className="space-y-5 min-w-0">
+          {/* Full-width body: item entry, items table, bill summary (bottom bar) */}
+          <div className="space-y-5">
               {/* Entry strip */}
               <div className="rounded-lg border border-border bg-card p-5 space-y-3">
                 <div className="flex items-center justify-between">
@@ -1168,32 +1167,50 @@ export function PurchaseFormPage() {
                 </Table>
                 </div>
               </div>
-            </div>
 
-            {/* Right column: sticky bill summary + actions */}
-            <div className="space-y-5 lg:sticky lg:top-4">
-              <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-                  <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
-                </h2>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-zinc-500">Taxable Amount</span><span className="text-zinc-200 font-medium">{formatINR(totals.taxable_amount)}</span></div>
+            {/* Bill Summary: sticky horizontal strip pinned to viewport bottom */}
+            <div className="sticky bottom-0 -mx-4 lg:-mx-6 px-4 lg:px-6 py-3 bg-zinc-950/95 backdrop-blur border-t border-zinc-800">
+              <div className="flex items-center justify-between rounded-lg border border-border bg-card px-5 py-4 flex-wrap gap-y-3">
+                <div className="flex items-center flex-wrap gap-x-5 gap-y-2">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                    <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
+                  </h2>
+
+                  <div className="w-px h-8 bg-zinc-800" />
+
+                  <div className="text-sm">
+                    <span className="text-zinc-500 mr-1.5">Taxable Amount</span>
+                    <span className="text-zinc-200 font-medium">{formatINR(totals.taxable_amount)}</span>
+                  </div>
+
+                  <div className="w-px h-8 bg-zinc-800" />
+
                   {interstate ? (
-                    <div className="flex justify-between"><span className="text-zinc-500">IGST</span><span className="text-zinc-200 font-medium">{formatINR(totals.igst_total)}</span></div>
+                    <div className="text-sm">
+                      <span className="text-zinc-500 mr-1.5">IGST</span>
+                      <span className="text-zinc-200 font-medium">{formatINR(totals.igst_total)}</span>
+                    </div>
                   ) : (
-                    <>
-                      <div className="flex justify-between"><span className="text-zinc-500">CGST</span><span className="text-zinc-200 font-medium">{formatINR(totals.cgst_total)}</span></div>
-                      <div className="flex justify-between"><span className="text-zinc-500">SGST</span><span className="text-zinc-200 font-medium">{formatINR(totals.sgst_total)}</span></div>
-                    </>
+                    <div className="text-sm">
+                      <span className="text-zinc-500 mr-1.5">CGST</span>
+                      <span className="text-zinc-200 font-medium">{formatINR(totals.cgst_total)}</span>
+                      <span className="text-zinc-500 mx-1.5">·</span>
+                      <span className="text-zinc-500 mr-1.5">SGST</span>
+                      <span className="text-zinc-200 font-medium">{formatINR(totals.sgst_total)}</span>
+                    </div>
                   )}
-                  <div className="flex justify-between"><span className="text-zinc-500">Tax Total</span><span className="text-zinc-200 font-medium">{formatINR(totals.tax_total)}</span></div>
-                </div>
 
-                <Separator />
+                  <div className="w-px h-8 bg-zinc-800" />
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label className="text-xs">Bill Discount</Label>
+                  <div className="text-sm">
+                    <span className="text-zinc-500 mr-1.5">Tax Total</span>
+                    <span className="text-zinc-200 font-medium">{formatINR(totals.tax_total)}</span>
+                  </div>
+
+                  <div className="w-px h-8 bg-zinc-800" />
+
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs whitespace-nowrap">Bill Discount</Label>
                     <div className="flex items-center gap-1">
                       <select value={billDiscountType} onChange={(e) => setBillDiscountType(e.target.value as 'flat' | 'percent')}
                         className="h-8 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
@@ -1204,40 +1221,42 @@ export function PurchaseFormPage() {
                         onChange={(e) => setBillDiscountValue(e.target.value.replace(/[^0-9.]/g, '') || '0')} className="h-8 w-20 text-sm" />
                     </div>
                   </div>
-                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+
+                  <div className="w-px h-8 bg-zinc-800" />
+
+                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer whitespace-nowrap">
                     <input type="checkbox" checked={roundOffEnabled} onChange={(e) => setRoundOffEnabled(e.target.checked)} />
                     Round Off
                   </label>
-                </div>
 
-                <Separator />
+                  <div className="w-px h-8 bg-zinc-800" />
 
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-400">Total Bill Amount</span>
-                  <span className="text-xl font-bold text-white">{formatINR(grandTotal)}</span>
-                </div>
-              </div>
-
-              {justSavedNewProducts.length > 0 ? (
-                <div className="rounded-lg border border-indigo-700 bg-indigo-950/30 p-4 space-y-3">
-                  <p className="text-sm text-zinc-200">
-                    Purchase saved. {justSavedNewProducts.length} new product{justSavedNewProducts.length > 1 ? 's' : ''} created — print barcode labels now?
-                  </p>
-                  <div className="flex gap-2">
-                    <Button type="button" variant="outline" size="sm" className="flex-1" onClick={handlePrintNewProductLabels}>
-                      <Printer className="h-3.5 w-3.5 mr-1" />Print Labels
-                    </Button>
-                    <Button type="button" size="sm" className="flex-1" onClick={() => navigate('/purchases')}>Continue</Button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-zinc-400">Total Bill Amount</span>
+                    <span className="text-xl font-bold text-white">{formatINR(grandTotal)}</span>
                   </div>
                 </div>
-              ) : (
-                <div className="flex gap-3">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => requestNavigation(() => navigate('/purchases'))}>Cancel</Button>
-                  <Button type="button" className="flex-1" disabled={saveMutation.isPending || rows.length === 0} onClick={() => saveMutation.mutate()}>
-                    {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
-                  </Button>
-                </div>
-              )}
+
+                {justSavedNewProducts.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm text-zinc-200">
+                      Purchase saved. {justSavedNewProducts.length} new product{justSavedNewProducts.length > 1 ? 's' : ''} created —{' '}
+                      print barcode labels now?
+                    </p>
+                    <Button type="button" variant="outline" size="sm" onClick={handlePrintNewProductLabels}>
+                      <Printer className="h-3.5 w-3.5 mr-1" />Print Labels
+                    </Button>
+                    <Button type="button" size="sm" onClick={() => navigate('/purchases')}>Continue</Button>
+                  </div>
+                ) : (
+                  <div className="flex gap-3">
+                    <Button type="button" variant="outline" onClick={() => requestNavigation(() => navigate('/purchases'))}>Cancel</Button>
+                    <Button type="button" disabled={saveMutation.isPending || rows.length === 0} onClick={() => saveMutation.mutate()}>
+                      {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
