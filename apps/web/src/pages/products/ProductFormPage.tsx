@@ -25,7 +25,7 @@ import {
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { ProductSchema, type ProductInput, formatINR, splitInclusiveGST } from '@billscape/core'
+import { ProductSchema, type ProductInput, type GSTRate, formatINR, splitInclusiveGST } from '@billscape/core'
 import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
@@ -37,67 +37,9 @@ import { Separator } from '@/components/ui/separator'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
+import { VariantEditor, emptyVariantRow, type VariantFormRow } from '@/components/products/VariantEditor'
 
 const GST_RATES = [0, 5, 12, 18, 28] as const
-
-function VariantBarcodePreview({
-  value,
-  onGenerate,
-  onChange,
-  onPrint,
-}: {
-  value: string
-  onGenerate: () => void
-  onChange: (v: string) => void
-  onPrint: () => void
-}) {
-  const ref = useRef<SVGSVGElement>(null)
-
-  useEffect(() => {
-    if (value && ref.current) {
-      try {
-        JsBarcode(ref.current, value, {
-          format: 'CODE128',
-          width: 1.3,
-          height: 32,
-          displayValue: true,
-          fontSize: 9,
-          background: 'transparent',
-          lineColor: '#e4e4e7',
-          fontOptions: 'bold',
-        })
-      } catch {
-        // Invalid barcode value — leave preview blank rather than throwing.
-      }
-    }
-  }, [value])
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex gap-1">
-        <Input
-          placeholder="Barcode"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-8 text-xs font-mono"
-        />
-        <button type="button" title="Auto-generate" onClick={onGenerate}
-          className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-          <RefreshCw className="h-3 w-3" />
-        </button>
-      </div>
-      {value && (
-        <div className="flex items-center gap-2">
-          <svg ref={ref} className="max-w-[140px]" />
-          <button type="button" onClick={onPrint}
-            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded border border-zinc-700 text-[11px] text-zinc-400 hover:text-white hover:border-zinc-600">
-            <Printer className="h-3 w-3" />Print
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
 
 export function ProductFormPage() {
   const navigate = useNavigate()
@@ -120,7 +62,7 @@ export function ProductFormPage() {
 
   // Variants state
   const [hasVariants, setHasVariants] = useState(false)
-  const [variants, setVariants] = useState<{ size: string; color: string; price_delta: number; stock_qty: number; barcode_value: string }[]>([])
+  const [variants, setVariants] = useState<VariantFormRow[]>([])
 
   // Batch tracking state
   const [hasBatches, setHasBatches] = useState(false)
@@ -307,11 +249,16 @@ export function ProductFormPage() {
   useEffect(() => {
     if (existingVariants && existingVariants.length > 0) {
       setVariants(existingVariants.map((v: any) => ({
-        size: v.size ?? '',
-        color: v.color ?? '',
-        price_delta: v.price_delta ?? 0,
-        stock_qty: v.stock_qty ?? 0,
+        variant_name: v.variant_name ?? [v.size, v.color].filter(Boolean).join(' · '),
         barcode_value: v.barcode_value ?? '',
+        sku: v.sku ?? '',
+        tax_rate: (v.tax_rate ?? watchedTaxRate) as GSTRate,
+        sale_price: v.sale_price != null ? String(v.sale_price) : '',
+        sale_gst_mode: v.sale_gst_mode ?? 'include',
+        purchase_price: v.purchase_price != null ? String(v.purchase_price) : '',
+        purchase_gst_mode: v.purchase_gst_mode ?? 'include',
+        qty: v.qty != null ? String(v.qty) : (v.stock_qty != null ? String(v.stock_qty) : ''),
+        expiry_date: v.expiry_date ?? '',
       })))
     }
   }, [existingVariants])
@@ -447,17 +394,23 @@ export function ProductFormPage() {
       if (hasVariants && productId && variants.length > 0) {
         // Delete old variants then re-insert
         await supabase.from('product_variants').delete().eq('product_id', productId).eq('organization_id', orgId!)
-        const validVariants = variants.filter((v) => v.size || v.color)
+        const validVariants = variants.filter((v) => v.variant_name.trim())
         if (validVariants.length > 0) {
           await supabase.from('product_variants').insert(
             validVariants.map((v) => ({
               product_id: productId!,
               organization_id: orgId!,
-              size: v.size || null,
-              color: v.color || null,
-              price_delta: v.price_delta ?? 0,
-              stock_qty: v.stock_qty ?? 0,
+              variant_name: v.variant_name,
               barcode_value: v.barcode_value || null,
+              sku: v.sku || null,
+              tax_rate: v.tax_rate,
+              sale_price: v.sale_price ? Number(v.sale_price) : null,
+              sale_gst_mode: v.sale_gst_mode,
+              purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
+              purchase_gst_mode: v.purchase_gst_mode,
+              qty: v.qty ? Number(v.qty) : 0,
+              stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
+              expiry_date: v.expiry_date || null,
             }))
           )
         }
@@ -511,8 +464,8 @@ export function ProductFormPage() {
 
   const onSubmit = handleSubmit((values) => {
     if (hasVariants) {
-      if (variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) {
-        toast.error('Incomplete variant', 'Each variant row needs a Size or Color — remove empty rows before saving.')
+      if (variants.some((v) => !v.variant_name.trim())) {
+        toast.error('Incomplete variant', 'Each variant needs a name before saving.')
         return
       }
     }
@@ -532,7 +485,7 @@ export function ProductFormPage() {
       ? ((watchedPrice - watchedCostPrice) / watchedPrice) * 100
       : null
 
-  const validVariantCount = variants.filter((v) => v.size || v.color).length
+  const validVariantCount = variants.filter((v) => v.variant_name.trim()).length
   const validBatchCount = batches.filter((b) => b.batch_no.trim()).length
 
   return (
@@ -882,7 +835,7 @@ export function ProductFormPage() {
                   onClick={() => {
                     setHasVariants((v) => !v)
                     if (!hasVariants && variants.length === 0) {
-                      setVariants([{ size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])
+                      setVariants([emptyVariantRow(watchedTaxRate)])
                     }
                   }}
                   className={cn(
@@ -896,76 +849,7 @@ export function ProductFormPage() {
             </div>
 
             {hasVariants && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-6 gap-2 text-xs text-zinc-500 px-1">
-                  <span>Size</span>
-                  <span>Color</span>
-                  <span>Price +/-</span>
-                  <span>Stock</span>
-                  <span>Barcode</span>
-                  <span></span>
-                </div>
-                {variants.map((v, i) => (
-                  <div key={i} className="grid grid-cols-6 gap-2 items-start">
-                    <Input
-                      placeholder="S / M / L"
-                      value={v.size}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, size: e.target.value } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      placeholder="Red / Blue"
-                      value={v.color}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={v.price_delta}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, price_delta: Number(e.target.value) } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={v.stock_qty}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, stock_qty: Number(e.target.value) } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <VariantBarcodePreview
-                      value={v.barcode_value}
-                      onChange={(val) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, barcode_value: val } : x))}
-                      onGenerate={() => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, barcode_value: generateBarcode() } : x))}
-                      onPrint={() => printBarcodeLabel(
-                        [v.size, v.color].filter(Boolean).join(' / ') || watch('name') || 'Variant',
-                        v.barcode_value,
-                        watch('price') + (v.price_delta || 0),
-                      )}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-red-400 hover:text-red-300"
-                      onClick={() => setVariants((prev) => prev.filter((_, j) => j !== i))}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setVariants((prev) => [...prev, { size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])}
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add Variant
-                </Button>
-              </div>
+              <VariantEditor variants={variants} onChange={setVariants} defaultTaxRate={watchedTaxRate} />
             )}
           </div>
 
