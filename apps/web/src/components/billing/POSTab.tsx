@@ -36,7 +36,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
-import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
+import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer, getVariantStockMap } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
 import { Button } from '@/components/ui/button'
@@ -249,7 +249,7 @@ export function POSTab() {
     queryFn: async () => {
       let query = supabase
         .from('products')
-        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -261,6 +261,34 @@ export function POSTab() {
 
       const { data } = await query
       return data ?? []
+    },
+  })
+
+  // Read-only variant picker: opened when a product with has_variants is clicked. Shows only
+  // name/sale price/real per-variant stock — never purchase price or tax-rate editing, per the
+  // cashier cost-visibility rule (CLAUDE.md rule 5).
+  const [variantPickerProduct, setVariantPickerProduct] = useState<{ id: string; name: string } | null>(null)
+
+  const { data: productVariants } = useQuery({
+    queryKey: ['product_variants_pos', variantPickerProduct?.id],
+    enabled: !!variantPickerProduct,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('product_variants')
+        .select('id, variant_name, barcode_value, sale_price, tax_rate')
+        .eq('product_id', variantPickerProduct!.id)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+      return data ?? []
+    },
+  })
+
+  const { data: variantStockMap } = useQuery({
+    queryKey: ['variant_stock_pos', variantPickerProduct?.id, productVariants?.map((v) => v.id).join(',')],
+    enabled: !!orgId && !!productVariants && productVariants.length > 0,
+    queryFn: async () => {
+      const { data } = await getVariantStockMap(supabase, orgId!, productVariants!.map((v) => v.id))
+      return data
     },
   })
 
@@ -354,21 +382,33 @@ export function POSTab() {
     unit?: unknown
     secondary_unit?: unknown
     conversion_factor?: number | null
+    variant_id?: string
+    variant_name?: string
   }) => {
     const stock = getStock(product.inventory)
     const unit = getUnit(product.unit)
     const secondaryUnit = getUnit(product.secondary_unit)
     const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+    // A variant line's real stock is tracked in variant_inventory, not the parent product's own
+    // `inventory` row (which goes stale for any has_variants product — see Task 6 design
+    // decision). The variant picker dialog already checked real per-variant stock before ever
+    // calling addToCart, so the parent-inventory-based checks below must be skipped entirely for
+    // a variant line — otherwise a parent whose own inventory has drained to 0 (an expected,
+    // accepted side effect of selling variants) would wrongly block adding an in-stock variant.
+    const isVariantLine = !!product.variant_id
 
-    if (!allowNegativeStock && product.track_stock && stock <= 0) {
+    if (!isVariantLine && !allowNegativeStock && product.track_stock && stock <= 0) {
       toast.error(`Out of stock: ${product.name}`, 'Negative stock billing is disabled in Settings > Inventory.')
       return
     }
 
     setCart((prev) => {
-      const existing = prev.find((c) => c.product_id === product.id)
+      // A variant line is matched by product_id + variant_id together — two different variants
+      // of the same parent product must never merge into one cart line just because they share
+      // a product_id.
+      const existing = prev.find((c) => c.product_id === product.id && c.variant_id === product.variant_id)
       if (existing) {
-        if (!allowNegativeStock && product.track_stock && existing.qty >= stock) {
+        if (!isVariantLine && !allowNegativeStock && product.track_stock && existing.qty >= stock) {
           toast.error(`Insufficient stock: ${product.name}`, `Only ${stock} units available in inventory.`)
           return prev
         }
@@ -376,7 +416,7 @@ export function POSTab() {
         // decimal-allowed units like Kg) — first add below always starts at a full 1 unit.
         const step = qtyStepForUnit(existing.unit?.allow_decimal ?? false)
         return prev.map((c) =>
-          c.product_id === product.id ? { ...c, qty: c.qty + step } : c,
+          c.product_id === product.id && c.variant_id === product.variant_id ? { ...c, qty: c.qty + step } : c,
         )
       }
       const newItem: CartItem = {
@@ -393,6 +433,8 @@ export function POSTab() {
         unit,
         secondary_unit: secondaryUnit,
         conversion_factor: product.conversion_factor ?? undefined,
+        variant_id: product.variant_id,
+        variant_name: product.variant_name,
       }
       return [...prev, newItem]
     })
@@ -704,21 +746,36 @@ export function POSTab() {
               ?.filter((product) => {
                 const showOutOfStock = (org as any)?.feature_flags?.show_out_of_stock_in_billing ?? true
                 if (showOutOfStock) return true
+                // has_variants products are never hidden by this parent-inventory check — the
+                // parent's own stock row is stale once variant stock is tracked separately (see
+                // Task 6 design decision); the picker dialog enforces real stock per variant.
+                if ((product as any).has_variants) return true
                 if (!product.track_stock) return true
                 return getStock(product.inventory) > 0
               })
               .map((product) => {
+                const hasVariants = !!(product as any).has_variants
                 const stock = getStock(product.inventory)
                 const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
                 const lowStockThreshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
-                const isOutOfStock = product.track_stock && stock <= 0
-                const isLowStock = product.track_stock && stock > 0 && stock <= lowStockThreshold
+                // For a has_variants product, the parent's own `inventory` row goes stale the
+                // moment variant stock is tracked separately (see variant_inventory / Task 6
+                // design decision) — never gate the tile's clickability or badge off it. The
+                // variant picker dialog does its own real per-variant stock check instead.
+                const isOutOfStock = !hasVariants && product.track_stock && stock <= 0
+                const isLowStock = !hasVariants && product.track_stock && stock > 0 && stock <= lowStockThreshold
                 const isDisabled = !allowNegativeStock && isOutOfStock
 
                 return (
                   <button
                     key={product.id}
-                    onClick={() => (!isDisabled || allowNegativeStock) && addToCart(product)}
+                    onClick={() => {
+                      if (hasVariants) {
+                        setVariantPickerProduct({ id: product.id, name: product.name })
+                        return
+                      }
+                      if (!isDisabled || allowNegativeStock) addToCart(product)
+                    }}
                     disabled={isDisabled}
                     className={cn(
                       'relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all',
@@ -734,7 +791,11 @@ export function POSTab() {
                       {product.name}
                     </p>
                     <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>
-                    {product.track_stock && (
+                    {hasVariants ? (
+                      <div className="mt-auto">
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0">Variants</Badge>
+                      </div>
+                    ) : product.track_stock ? (
                       <div className="mt-auto">
                         {isOutOfStock ? (
                           <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
@@ -742,7 +803,7 @@ export function POSTab() {
                           <Badge variant="warning" className="text-[9px] px-1.5 py-0">{stock} left</Badge>
                         ) : null}
                       </div>
-                    )}
+                    ) : null}
                   </button>
                 )
               })}
@@ -1355,6 +1416,82 @@ export function POSTab() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Variant picker dialog — read-only: name + sale price + real per-variant stock only.
+          Never shows purchase price, tax-rate editing, or any cost figure (cashiers must never
+          see cost/profit, CLAUDE.md rule 5). */}
+      <Dialog open={!!variantPickerProduct} onOpenChange={(open) => !open && setVariantPickerProduct(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-4 w-4 text-indigo-400" /> {variantPickerProduct?.name} — Select Variant
+            </DialogTitle>
+          </DialogHeader>
+          {!productVariants ? (
+            <p className="text-center text-sm text-muted-foreground py-6">Loading variants…</p>
+          ) : productVariants.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-6">No variants found for this product.</p>
+          ) : (
+            <div className="space-y-1.5 max-h-96 overflow-y-auto">
+              {productVariants.map((variant) => {
+                const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+                const stock = variantStockMap?.get(variant.id) ?? 0
+                const isOutOfStock = !allowNegativeStock && stock <= 0
+                // variant_name is nullable in the DB — fall back to a placeholder rather than
+                // rendering a blank row or "— null" in the cart/receipt.
+                const displayName = variant.variant_name || 'Variant'
+
+                return (
+                  <button
+                    key={variant.id}
+                    disabled={isOutOfStock}
+                    onClick={() => {
+                      if (isOutOfStock) return
+                      const parentProduct = products?.find((p) => p.id === variantPickerProduct!.id)
+                      addToCart({
+                        id: variantPickerProduct!.id,
+                        name: `${variantPickerProduct!.name} — ${displayName}`,
+                        price: variant.sale_price ?? 0,
+                        // A variant's own tax_rate can be null (not every variant has one set —
+                        // seen in real test data) — fall back to the parent product's tax_rate
+                        // rather than passing null through to computeGST/computeLineTax.
+                        tax_rate: variant.tax_rate ?? parentProduct?.tax_rate ?? 0,
+                        hsn_code: parentProduct?.hsn_code,
+                        inventory: parentProduct?.inventory,
+                        track_stock: parentProduct?.track_stock ?? false,
+                        unit: parentProduct?.unit,
+                        secondary_unit: parentProduct?.secondary_unit,
+                        conversion_factor: parentProduct?.conversion_factor,
+                        variant_id: variant.id,
+                        variant_name: displayName,
+                      })
+                      setVariantPickerProduct(null)
+                    }}
+                    className={cn(
+                      'flex w-full items-center justify-between rounded-lg border p-3 text-left transition-all',
+                      isOutOfStock
+                        ? 'border-zinc-800 bg-zinc-900/30 opacity-50 cursor-not-allowed'
+                        : 'border-zinc-800 bg-card hover:border-indigo-500 hover:bg-indigo-600/5 cursor-pointer',
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-zinc-200 truncate">{displayName}</p>
+                      <p className="text-sm font-bold text-indigo-300">{formatINR(variant.sale_price ?? 0)}</p>
+                    </div>
+                    <div className="shrink-0">
+                      {isOutOfStock ? (
+                        <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0">{stock} in stock</Badge>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           )}
         </DialogContent>

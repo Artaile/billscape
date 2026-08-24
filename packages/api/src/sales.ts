@@ -1,6 +1,7 @@
 import type { TypedSupabaseClient } from './client'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals } from '@billscape/core'
 import { applyLoyaltyRedemption, applyOrderDiscount, applyRoundOff, computeGST, computeLineTax, formatDocumentNumber } from '@billscape/core'
+import { recordVariantSale } from './variantInventory'
 
 async function getActorName(client: TypedSupabaseClient, userId: string): Promise<string> {
   if (!userId) return 'User'
@@ -204,6 +205,26 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
     } catch (loyaltyError) {
       console.error('Loyalty bookkeeping failed for sale', sale.id, loyaltyError)
     }
+  }
+
+  // Variant stock is tracked separately from the product-level inventory trigger (see
+  // variant_inventory / Task 1 of the variant-redesign plan) — best-effort, mirrors the existing
+  // loyalty bookkeeping's non-blocking pattern in this same function: a variant-stock failure must
+  // never roll back or fail the sale itself.
+  try {
+    for (const item of input.items) {
+      if (item.variant_id) {
+        await recordVariantSale(client, {
+          organizationId: input.organization_id,
+          variantId: item.variant_id,
+          qty: item.qty,
+          referenceId: sale.id,
+          createdBy: input.created_by,
+        })
+      }
+    }
+  } catch {
+    // Best-effort — sale already committed successfully above.
   }
 
   const actorName = await getActorName(client, input.created_by)
