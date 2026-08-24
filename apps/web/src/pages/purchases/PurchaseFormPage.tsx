@@ -491,8 +491,24 @@ export function PurchaseFormPage() {
   const codeCheckTimer = useRef<ReturnType<typeof setTimeout>>()
   function checkCodeUnique(field: 'sku' | 'barcode_value', value: string, setError: (msg: string | undefined) => void) {
     clearTimeout(codeCheckTimer.current)
+    if (!value.trim()) { setError(undefined); return }
+
+    // Check against sibling rows already sitting in THIS purchase's own list first — these are
+    // new, not-yet-saved products, so a DB query can never see the collision between them. Every
+    // "New" row in this purchase eventually calls createProductForLine on save, so two rows
+    // sharing a code/barcode is exactly as invalid as one colliding with a real saved product,
+    // just not something the products-table query below can ever catch. Checked synchronously
+    // (no debounce needed — it's an in-memory array, not a network round-trip) and takes priority
+    // over the DB check so the user sees the more actionable "already used by row X" message.
+    const siblingIndex = rows.findIndex((r, i) => i !== editingIndex && r.is_new_product && r[field] === value)
+    if (siblingIndex !== -1) {
+      const label = field === 'sku' ? 'code' : 'barcode'
+      setError(`This ${label} is already used by "${rows[siblingIndex].product_name}" in this purchase`)
+      return
+    }
+
     codeCheckTimer.current = setTimeout(async () => {
-      if (!value.trim() || !orgId) { setError(undefined); return }
+      if (!orgId) { setError(undefined); return }
       const { data } = await supabase.from('products').select('id').eq('organization_id', orgId).eq(field, value).maybeSingle()
       setError(data ? `This ${field === 'sku' ? 'code' : 'barcode'} already exists` : undefined)
     }, 400)
@@ -504,6 +520,11 @@ export function PurchaseFormPage() {
     if (entry.is_new_product && !entry.unit_id) return false
     if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) return false
     if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) return false
+    // A known duplicate code/barcode (sibling row or a real saved product) must block adding —
+    // otherwise this exact row sails past validation here only to fail with an opaque DB
+    // constraint error later at Save Purchase, once it's too late to tell which row was the
+    // problem. See checkCodeUnique for how this gets set (both sibling-row and DB collisions).
+    if (entry.is_new_product && entry.codeError) return false
     return true
   }
 
@@ -516,6 +537,8 @@ export function PurchaseFormPage() {
         msg = 'Each variant needs a name before it can be added — remove empty rows or fill them in'
       } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) {
         msg = 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in'
+      } else if (entry.is_new_product && entry.codeError) {
+        msg = entry.codeError
       }
       toast.error('Incomplete row', msg)
       return
