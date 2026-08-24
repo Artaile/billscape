@@ -11,6 +11,7 @@ import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
 const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 
 export interface VariantFormRow {
+  id?: string
   variant_name: string
   barcode_value: string
   sku: string

@@ -249,6 +249,7 @@ export function ProductFormPage() {
   useEffect(() => {
     if (existingVariants && existingVariants.length > 0) {
       setVariants(existingVariants.map((v: any) => ({
+        id: v.id,
         variant_name: v.variant_name ?? [v.size, v.color].filter(Boolean).join(' · '),
         barcode_value: v.barcode_value ?? '',
         sku: v.sku ?? '',
@@ -390,32 +391,56 @@ export function ProductFormPage() {
         }
       }
 
-      // Save variants
-      if (hasVariants && productId && variants.length > 0) {
-        // Capture each existing variant's real per-variant stock (variant_inventory.stock_qty,
-        // the source of truth written by purchases/sales) BEFORE the delete below — the
-        // product_variants -> variant_inventory FK is ON DELETE CASCADE, so re-inserting variants
-        // by deleting-then-recreating would otherwise silently wipe real stock to 0 on every
-        // product edit, not just ones that actually change a variant. Editing a product's
-        // variant fields (name/price/etc.) must never move stock — only Purchases/POS do that.
+      // Save variants — diff by id (not delete+reinsert-by-name) so an existing variant's
+      // stock and stock_movements history is never touched by an edit, no matter what the
+      // user renames it to or whether another row shares its name. product_variants ->
+      // variant_inventory / variant_stock_movements are both ON DELETE CASCADE, so a row
+      // must only ever be deleted when the user genuinely removed it in the UI — never as a
+      // byproduct of saving edits to its own fields. Editing a product's variant fields
+      // (name/price/etc.) must never move stock — only Purchases/POS do that.
+      if (hasVariants && productId) {
+        const validVariants = variants.filter((v) => v.variant_name.trim())
+        const keepIds = new Set(validVariants.filter((v) => v.id).map((v) => v.id!))
+
         const { data: existingVariantRows } = await supabase
           .from('product_variants')
-          .select('variant_name, variant_inventory(stock_qty)')
+          .select('id')
           .eq('product_id', productId)
           .eq('organization_id', orgId!)
-        const stockByVariantName = new Map<string, number>(
-          (existingVariantRows ?? []).map((r: any) => [
-            r.variant_name,
-            Array.isArray(r.variant_inventory) ? (r.variant_inventory[0]?.stock_qty ?? 0) : (r.variant_inventory?.stock_qty ?? 0),
-          ]),
-        )
+        const removedIds = (existingVariantRows ?? [])
+          .map((r: { id: string }) => r.id)
+          .filter((rid: string) => !keepIds.has(rid))
 
-        // Delete old variants then re-insert
-        await supabase.from('product_variants').delete().eq('product_id', productId).eq('organization_id', orgId!)
-        const validVariants = variants.filter((v) => v.variant_name.trim())
-        if (validVariants.length > 0) {
+        if (removedIds.length > 0) {
+          await supabase.from('product_variants').delete().in('id', removedIds).eq('organization_id', orgId!)
+        }
+
+        const toUpdate = validVariants.filter((v) => v.id)
+        for (const v of toUpdate) {
+          await supabase
+            .from('product_variants')
+            .update({
+              variant_name: v.variant_name,
+              barcode_value: v.barcode_value || null,
+              sku: v.sku || null,
+              tax_rate: v.tax_rate,
+              sale_price: v.sale_price ? Number(v.sale_price) : null,
+              sale_gst_mode: v.sale_gst_mode,
+              purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
+              purchase_gst_mode: v.purchase_gst_mode,
+              expiry_date: v.expiry_date || null,
+              // qty/stock_qty deliberately NOT written here — the qty field on this page is
+              // last-known-value display only, never a stock-adjustment path; real stock lives
+              // in variant_inventory and is only ever moved by Purchases/POS.
+            })
+            .eq('id', v.id!)
+            .eq('organization_id', orgId!)
+        }
+
+        const toInsert = validVariants.filter((v) => !v.id)
+        if (toInsert.length > 0) {
           const { data: insertedVariants } = await supabase.from('product_variants').insert(
-            validVariants.map((v) => ({
+            toInsert.map((v) => ({
               product_id: productId!,
               organization_id: orgId!,
               variant_name: v.variant_name,
@@ -430,20 +455,16 @@ export function ProductFormPage() {
               stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
               expiry_date: v.expiry_date || null,
             }))
-          ).select('id, variant_name')
+          ).select('id')
 
-          // Re-seed variant_inventory: preserve real stock for a variant that already existed
-          // (matched by name — the same name the user was editing), 0 for a genuinely new one.
-          // This intentionally ignores the qty field's value for a pre-existing variant — the
-          // qty field on this page reflects the LAST KNOWN qty for display only; it is never the
-          // write path for stock, exactly like the base (non-variant) product's own Opening
-          // Stock field only applies at creation, not on every subsequent edit.
+          // A genuinely new variant has no prior stock — seed variant_inventory at 0. Any
+          // real opening stock for it is entered via a Purchase, same as a non-variant product.
           if (insertedVariants && insertedVariants.length > 0) {
             await supabase.from('variant_inventory').insert(
-              insertedVariants.map((iv: { id: string; variant_name: string }) => ({
+              insertedVariants.map((iv: { id: string }) => ({
                 product_variant_id: iv.id,
                 organization_id: orgId!,
-                stock_qty: stockByVariantName.get(iv.variant_name) ?? 0,
+                stock_qty: 0,
               }))
             )
           }
