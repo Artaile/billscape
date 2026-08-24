@@ -8,10 +8,10 @@ import { cn } from '@/lib/utils'
 interface CartItemProps {
   item: CartItemType
   lineTotal: number
-  onQtyChange: (productId: string, qty: number) => void
-  onDiscountChange: (productId: string, discountType: DiscountType, value: number) => void
-  onRemove: (productId: string) => void
-  onSellingUnitChange: (productId: string, unitId: string) => void
+  onQtyChange: (productId: string, qty: number, variantId?: string) => void
+  onDiscountChange: (productId: string, discountType: DiscountType, value: number, variantId?: string) => void
+  onRemove: (productId: string, variantId?: string) => void
+  onSellingUnitChange: (productId: string, unitId: string, variantId?: string) => void
 }
 
 export function CartItemRow({
@@ -39,7 +39,7 @@ export function CartItemRow({
 
   const setDisplayQty = (nextDisplayQty: number) => {
     const nextBaseQty = sellingSecondary ? toBaseQty(nextDisplayQty, conv) : nextDisplayQty
-    onQtyChange(item.product_id, nextBaseQty)
+    onQtyChange(item.product_id, nextBaseQty, item.variant_id)
   }
 
   const handleQtyInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,15 +52,15 @@ export function CartItemRow({
   const handleDiscountInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value)
     if (!isNaN(val) && val >= 0) {
-      onDiscountChange(item.product_id, discountType, val)
+      onDiscountChange(item.product_id, discountType, val, item.variant_id)
     } else if (e.target.value === '') {
-      onDiscountChange(item.product_id, discountType, 0)
+      onDiscountChange(item.product_id, discountType, 0, item.variant_id)
     }
   }
 
   const toggleDiscountType = (nextType: DiscountType) => {
     if (nextType === discountType) return
-    onDiscountChange(item.product_id, nextType, 0)
+    onDiscountChange(item.product_id, nextType, 0, item.variant_id)
   }
 
   return (
@@ -94,7 +94,7 @@ export function CartItemRow({
             <button
               key={opt.id}
               type="button"
-              onClick={() => onSellingUnitChange(item.product_id, opt.id)}
+              onClick={() => onSellingUnitChange(item.product_id, opt.id, item.variant_id)}
               className={cn(
                 'px-1.5 h-6 text-[10px] font-medium transition-colors',
                 (item.selling_unit_id ?? item.unit?.id) === opt.id ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
@@ -174,7 +174,7 @@ export function CartItemRow({
 
       {/* Remove */}
       <button
-        onClick={() => onRemove(item.product_id)}
+        onClick={() => onRemove(item.product_id, item.variant_id)}
         className="shrink-0 p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100"
       >
         <Trash2 className="h-3.5 w-3.5" />

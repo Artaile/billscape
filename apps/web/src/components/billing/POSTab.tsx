@@ -455,23 +455,31 @@ export function POSTab() {
   )
   const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(handleBarcodeScan)
 
-  const updateQty = useCallback((productId: string, qty: number) => {
+  // A cart line is identified by product_id + variant_id together, not product_id alone — two
+  // different variants of the same parent product must be addressable as separate lines, or
+  // qty/discount/remove on one variant would silently apply to every other variant sharing that
+  // product_id too. variantId is undefined for a non-variant line, so `c.variant_id === variantId`
+  // still correctly matches only non-variant lines against each other when variantId is undefined.
+  const isSameLine = (c: CartItem, productId: string, variantId?: string) =>
+    c.product_id === productId && c.variant_id === variantId
+
+  const updateQty = useCallback((productId: string, qty: number, variantId?: string) => {
     if (qty <= 0) {
-      setCart((prev) => prev.filter((c) => c.product_id !== productId))
+      setCart((prev) => prev.filter((c) => !isSameLine(c, productId, variantId)))
       return
     }
     setCart((prev) =>
-      prev.map((c) => (c.product_id === productId ? { ...c, qty } : c)),
+      prev.map((c) => (isSameLine(c, productId, variantId) ? { ...c, qty } : c)),
     )
   }, [])
 
   // Switches which unit a cart line is being rung up in (base vs secondary, e.g. Piece vs Box).
   // Purely a display/entry convenience — sale_items.qty is always persisted in the product's
   // base unit (see createSale's item-building below), so this never touches what's stored.
-  const updateSellingUnit = useCallback((productId: string, unitId: string) => {
+  const updateSellingUnit = useCallback((productId: string, unitId: string, variantId?: string) => {
     setCart((prev) =>
       prev.map((c) => {
-        if (c.product_id !== productId) return c
+        if (!isSameLine(c, productId, variantId)) return c
         // Switching units resets the line to "1 of the new unit" rather than carrying over
         // a converted fractional qty (e.g. 1 Piece becoming 0.083 Box) — matches the same
         // "first add always starts at 1" convention used when a product first enters the cart.
@@ -484,10 +492,10 @@ export function POSTab() {
     )
   }, [])
 
-  const updateDiscount = useCallback((productId: string, discountType: DiscountType, value: number) => {
+  const updateDiscount = useCallback((productId: string, discountType: DiscountType, value: number, variantId?: string) => {
     setCart((prev) =>
       prev.map((c) =>
-        c.product_id === productId
+        isSameLine(c, productId, variantId)
           ? {
               ...c,
               discount_type: discountType,
@@ -499,8 +507,8 @@ export function POSTab() {
     )
   }, [])
 
-  const removeFromCart = useCallback((productId: string) => {
-    setCart((prev) => prev.filter((c) => c.product_id !== productId))
+  const removeFromCart = useCallback((productId: string, variantId?: string) => {
+    setCart((prev) => prev.filter((c) => !isSameLine(c, productId, variantId)))
   }, [])
 
   const saveHeldBills = (bills: HeldBill[]) => {
@@ -936,7 +944,7 @@ export function POSTab() {
           ) : (
             cart.map((item, i) => (
               <CartItemRow
-                key={item.product_id}
+                key={item.variant_id ? `${item.product_id}:${item.variant_id}` : item.product_id}
                 item={item}
                 lineTotal={lineTotals[i]}
                 onQtyChange={updateQty}

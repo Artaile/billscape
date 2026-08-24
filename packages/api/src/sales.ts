@@ -214,17 +214,20 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
   try {
     for (const item of input.items) {
       if (item.variant_id) {
-        await recordVariantSale(client, {
+        const { error: variantStockError } = await recordVariantSale(client, {
           organizationId: input.organization_id,
           variantId: item.variant_id,
           qty: item.qty,
           referenceId: sale.id,
           createdBy: input.created_by,
         })
+        if (variantStockError) {
+          console.error('Variant stock bookkeeping failed for sale', sale.id, item.variant_id, variantStockError)
+        }
       }
     }
-  } catch {
-    // Best-effort — sale already committed successfully above.
+  } catch (variantError) {
+    console.error('Variant stock bookkeeping failed for sale', sale.id, variantError)
   }
 
   const actorName = await getActorName(client, input.created_by)
