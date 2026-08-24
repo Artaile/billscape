@@ -2,6 +2,7 @@ import type { TypedSupabaseClient } from './client'
 import type { GSTContext, GSTRate } from '@billscape/core'
 import { computeLineTax, computeGST, isInterState, generateBarcode, formatDocumentNumber } from '@billscape/core'
 import { generateProductCode } from './products'
+import { recordVariantPurchase } from './variantInventory'
 import type { Database } from './database.types'
 
 type ProductInsert = Database['public']['Tables']['products']['Insert']
@@ -23,7 +24,18 @@ export interface PurchaseLineInput {
   // New-product-only metadata — ignored when is_new_product is false.
   category_id?: string | null
   hsn_code?: string
-  variants?: { size: string; color: string; price_delta: number; stock_qty: number }[]
+  variants?: {
+    variant_name: string
+    barcode_value?: string
+    sku?: string
+    tax_rate: GSTRate
+    sale_price?: number
+    sale_gst_mode?: 'include' | 'exclude'
+    purchase_price?: number
+    purchase_gst_mode?: 'include' | 'exclude'
+    qty?: number
+    expiry_date?: string
+  }[]
   batches?: { batch_no: string; expiry_date: string; qty: number }[]
   // Required for new-product lines (DB requires products.unit_id); unused for existing products.
   unit_id?: string
@@ -58,7 +70,10 @@ async function createProductForLine(
   createdBy: string,
   line: PurchaseLineInput,
   attempt = 0,
-): Promise<{ id: string } | { error: { code?: string; message: string }; collidingField: 'sku' | 'barcode_value' | null }> {
+): Promise<
+  | { id: string; variantSeeds: { variantId: string; qty: number }[] }
+  | { error: { code?: string; message: string }; collidingField: 'sku' | 'barcode_value' | null }
+> {
   if (!line.unit_id) {
     return { error: { message: 'Unit is required for a new product' }, collidingField: null }
   }
@@ -89,18 +104,40 @@ async function createProductForLine(
     // Best-effort: variants/batches entered during purchase item entry. Same filtering rules as
     // ProductFormPage's own save mutation (empty rows dropped). A failure here should not fail
     // the whole purchase — the product itself was already created successfully.
-    const validVariants = (line.variants ?? []).filter((v) => v.size || v.color)
+    const variantSeeds: { variantId: string; qty: number }[] = []
+    const validVariants = (line.variants ?? []).filter((v) => v.variant_name.trim())
     if (validVariants.length > 0) {
-      await client.from('product_variants').insert(
+      const { data: insertedVariants, error: variantsError } = await client.from('product_variants').insert(
         validVariants.map((v) => ({
           product_id: data.id,
           organization_id: orgId,
-          size: v.size || null,
-          color: v.color || null,
-          price_delta: v.price_delta ?? 0,
-          stock_qty: v.stock_qty ?? 0,
+          variant_name: v.variant_name,
+          barcode_value: v.barcode_value || null,
+          sku: v.sku || null,
+          tax_rate: v.tax_rate,
+          sale_price: v.sale_price ? Number(v.sale_price) : null,
+          sale_gst_mode: v.sale_gst_mode,
+          purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
+          purchase_gst_mode: v.purchase_gst_mode,
+          qty: v.qty ? Number(v.qty) : 0,
+          stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
+          expiry_date: v.expiry_date || null,
         })),
-      )
+      ).select('id')
+      if (!variantsError && insertedVariants) {
+        // Seed variant_inventory rows up front (no auto-create trigger exists on
+        // product_variants insert — mirrors the base-product `inventory` row being explicitly
+        // inserted at product-creation time in ProductFormPage.tsx). recordVariantPurchase's
+        // increment_variant_inventory RPC is UPDATE-only, so without this row existing first,
+        // the later stock-seed call in createPurchase/updatePurchase would silently no-op.
+        await client.from('variant_inventory').insert(
+          insertedVariants.map((iv: { id: string }) => ({ product_variant_id: iv.id, organization_id: orgId, stock_qty: 0 })),
+        )
+        insertedVariants.forEach((iv: { id: string }, i: number) => {
+          const qty = validVariants[i]?.qty ? Number(validVariants[i].qty) : 0
+          if (qty > 0) variantSeeds.push({ variantId: iv.id, qty })
+        })
+      }
     }
     const validBatches = (line.batches ?? []).filter((b) => b.batch_no.trim())
     if (validBatches.length > 0) {
@@ -114,7 +151,7 @@ async function createProductForLine(
         })),
       )
     }
-    return { id: data.id }
+    return { id: data.id, variantSeeds }
   }
 
   if (error?.code === UNIQUE_VIOLATION && attempt < 3) {
@@ -153,10 +190,11 @@ async function resolveItems(
   createdBy: string,
   items: PurchaseLineInput[],
 ): Promise<
-  | { items: (PurchaseLineInput & { product_id: string })[]; error: null }
-  | { items: null; error: { message: string; line: PurchaseLineInput; collidingField: 'sku' | 'barcode_value' | null } }
+  | { items: (PurchaseLineInput & { product_id: string })[]; variantSeeds: { variantId: string; qty: number }[]; error: null }
+  | { items: null; variantSeeds: null; error: { message: string; line: PurchaseLineInput; collidingField: 'sku' | 'barcode_value' | null } }
 > {
   const resolvedItems: (PurchaseLineInput & { product_id: string })[] = []
+  const variantSeeds: { variantId: string; qty: number }[] = []
   for (const line of items) {
     if (!line.is_new_product && line.product_id) {
       if (line.update_existing_pricing) {
@@ -179,11 +217,12 @@ async function resolveItems(
 
     const result = await createProductForLine(client, orgId, createdBy, line)
     if ('error' in result) {
-      return { items: null, error: { message: result.error.message, line, collidingField: result.collidingField } }
+      return { items: null, variantSeeds: null, error: { message: result.error.message, line, collidingField: result.collidingField } }
     }
     resolvedItems.push({ ...line, product_id: result.id })
+    variantSeeds.push(...result.variantSeeds)
   }
-  return { items: resolvedItems, error: null }
+  return { items: resolvedItems, variantSeeds, error: null }
 }
 
 function buildItemRows(
@@ -263,6 +302,20 @@ export async function createPurchase(client: TypedSupabaseClient, input: CreateP
   const { error: itemsError } = await client.from('purchase_items').insert(itemRows)
   if (itemsError) {
     return { data: null, error: { message: itemsError.message } }
+  }
+
+  // Seed initial stock for any variants created by this purchase (new-product-with-variants
+  // lines only). Done here, after `purchase.id` exists, since createProductForLine runs before
+  // the `purchases` row is inserted and so cannot yet supply a real referenceId. Best-effort —
+  // a failure here must not fail the purchase itself, matching the variants/batches insert above.
+  for (const seed of resolved.variantSeeds) {
+    await recordVariantPurchase(client, {
+      organizationId: input.organization_id,
+      variantId: seed.variantId,
+      qty: seed.qty,
+      referenceId: purchase.id,
+      createdBy: input.created_by,
+    })
   }
 
   return { data: { purchase, totals: { ...totals, net_payable: totalAmount } }, error: null }
@@ -371,6 +424,18 @@ export async function updatePurchase(
   const itemRows = buildItemRows(purchaseId, input.organization_id, resolvedItems, interstate)
   const { error: itemsError } = await client.from('purchase_items').insert(itemRows)
   if (itemsError) return { data: null, error: { message: itemsError.message } }
+
+  // Seed initial stock for any variants created by a new-product line added during this edit.
+  // Best-effort, mirrors createPurchase — a failure here must not fail the purchase update.
+  for (const seed of resolved.variantSeeds) {
+    await recordVariantPurchase(client, {
+      organizationId: input.organization_id,
+      variantId: seed.variantId,
+      qty: seed.qty,
+      referenceId: purchaseId,
+      createdBy: input.created_by,
+    })
+  }
 
   return { data: { purchase, totals: { ...totals, net_payable: totalAmount } }, error: null }
 }

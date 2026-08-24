@@ -15,6 +15,7 @@ import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/
 import { useNavigationGuard, useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
 import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
+import { VariantEditor, emptyVariantRow, type VariantFormRow } from '@/components/products/VariantEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -29,7 +30,6 @@ interface Supplier { id: string; name: string; phone: string | null; gstin: stri
 interface ExistingProduct { id: string; name: string; sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null }
 interface UnitOption { id: string; name: string; symbol: string; allow_decimal: boolean }
 
-interface VariantRow { size: string; color: string; price_delta: string; stock_qty: string }
 interface BatchRow { batch_no: string; expiry_date: string; qty: string }
 
 export interface PurchaseRow {
@@ -52,7 +52,7 @@ export interface PurchaseRow {
   category_id: string | null
   hsn_code: string
   has_variants: boolean
-  variants: VariantRow[]
+  variants: VariantFormRow[]
   has_batches: boolean
   batches: BatchRow[]
   showMoreDetails: boolean
@@ -502,7 +502,7 @@ export function PurchaseFormPage() {
     if (!entry.product_name.trim() || parseNum(entry.qty) <= 0) return false
     if (entry.is_new_product && (!entry.sku.trim() || !entry.barcode_value.trim())) return false
     if (entry.is_new_product && !entry.unit_id) return false
-    if (entry.has_variants && entry.variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) return false
+    if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) return false
     if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) return false
     return true
   }
@@ -512,8 +512,8 @@ export function PurchaseFormPage() {
       let msg = entry.is_new_product ? 'Product code and barcode are required for a new product' : 'Enter product name and qty'
       if (entry.is_new_product && !entry.unit_id) {
         msg = 'Select a unit for the new product'
-      } else if (entry.has_variants && entry.variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) {
-        msg = 'Each variant row needs a Size or Color — remove empty rows'
+      } else if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) {
+        msg = 'Each variant needs a name before it can be added — remove empty rows or fill them in'
       } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) {
         msg = 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in'
       }
@@ -583,7 +583,18 @@ export function PurchaseFormPage() {
           secondary_unit_id: r.is_new_product ? (r.secondary_unit_id ?? undefined) : undefined,
           conversion_factor: r.is_new_product ? (r.conversion_factor ?? undefined) : undefined,
           variants: r.is_new_product && r.has_variants
-            ? r.variants.filter((v) => v.size.trim() || v.color.trim()).map((v) => ({ size: v.size, color: v.color, price_delta: parseNum(v.price_delta), stock_qty: parseNum(v.stock_qty) }))
+            ? r.variants.filter((v) => v.variant_name.trim()).map((v) => ({
+                variant_name: v.variant_name,
+                barcode_value: v.barcode_value || undefined,
+                sku: v.sku || undefined,
+                tax_rate: v.tax_rate,
+                sale_price: v.sale_price ? parseNum(v.sale_price) : undefined,
+                sale_gst_mode: v.sale_gst_mode,
+                purchase_price: v.purchase_price ? parseNum(v.purchase_price) : undefined,
+                purchase_gst_mode: v.purchase_gst_mode,
+                qty: v.qty ? parseNum(v.qty) : undefined,
+                expiry_date: v.expiry_date || undefined,
+              }))
             : undefined,
           batches: r.is_new_product && r.has_batches
             ? r.batches.filter((b) => b.batch_no.trim() && b.expiry_date).map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date, qty: parseNum(b.qty) }))
@@ -996,9 +1007,9 @@ export function PurchaseFormPage() {
                             <div
                               onClick={() => setEntry((p) => ({
                                 ...p, has_variants: !p.has_variants,
-                                variants: !p.has_variants && p.variants.length === 0
-                                  ? [{ size: '', color: '', price_delta: '', stock_qty: '' }]
-                                  : p.variants,
+                                variants: !p.has_variants && p.variants.length === 0 ? [emptyVariantRow(p.tax_rate)] : p.variants,
+                                has_batches: !p.has_variants ? false : p.has_batches,
+                                batches: !p.has_variants ? [] : p.batches,
                               }))}
                               className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_variants ? 'bg-indigo-600' : 'bg-zinc-700')}
                             >
@@ -1008,109 +1019,85 @@ export function PurchaseFormPage() {
                           </label>
 
                           {entry.has_variants && (
-                            <div className="space-y-1.5 pl-1">
-                              <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
-                                <span>Size</span><span>Color</span><span>Price +/-</span><span>Stock</span><span></span>
-                              </div>
-                              {entry.variants.map((v, i) => {
-                                const vTouched = v.size.trim() || v.color.trim() || v.price_delta || v.stock_qty
-                                const vMissing = vTouched && !v.size.trim() && !v.color.trim()
-                                return (
-                                <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                                  <Input placeholder="S / M / L" value={v.size}
-                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, size: e.target.value } : x) }))}
-                                    className={cn('h-8 text-xs', vMissing && 'border-red-500')} />
-                                  <Input placeholder="Red / Blue" value={v.color}
-                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, color: e.target.value } : x) }))}
-                                    className={cn('h-8 text-xs', vMissing && 'border-red-500')} />
-                                  <Input type="text" inputMode="decimal" placeholder="0.00" value={v.price_delta}
-                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, price_delta: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
-                                    className="h-8 text-xs" />
-                                  <Input type="text" inputMode="decimal" placeholder="0" value={v.stock_qty}
-                                    onChange={(e) => setEntry((p) => ({ ...p, variants: p.variants.map((x, j) => j === i ? { ...x, stock_qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
-                                    className="h-8 text-xs" />
-                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
-                                    onClick={() => setEntry((p) => ({ ...p, variants: p.variants.filter((_, j) => j !== i) }))}>
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                                )
-                              })}
-                              <Button type="button" variant="outline" size="sm" className="text-xs"
-                                onClick={() => setEntry((p) => ({ ...p, variants: [...p.variants, { size: '', color: '', price_delta: '', stock_qty: '' }] }))}>
-                                <Plus className="h-3.5 w-3.5" /> Add Variant
-                              </Button>
-                            </div>
+                            <VariantEditor
+                              variants={entry.variants}
+                              onChange={(variants) => setEntry((p) => ({ ...p, variants }))}
+                              defaultTaxRate={entry.tax_rate}
+                            />
                           )}
                         </div>
 
-                        {/* Batches */}
-                        <div className="space-y-2">
-                          <label className="flex items-center gap-2 cursor-pointer w-fit">
-                            <div
-                              onClick={() => setEntry((p) => {
-                                const turningOn = !p.has_batches
-                                return {
-                                  ...p,
-                                  has_batches: turningOn,
-                                  // Force batch quantities to be entered in the base unit (unit_id), never the
-                                  // secondary unit — batchQtyTotal() has no unit-conversion awareness, so mixing
-                                  // units here would silently mis-scale the synced Qty (see rowBaseQty's own
-                                  // base-unit-only assumption for money math).
-                                  entry_unit_id: turningOn ? p.unit_id : p.entry_unit_id,
-                                  // Seed the first batch row with whatever Qty was already typed, instead of
-                                  // starting at '' (which syncs Qty to 0 and silently discards the typed value).
-                                  batches: turningOn && p.batches.length === 0
-                                    ? [{ batch_no: '', expiry_date: '', qty: p.qty !== '0' ? p.qty : '' }]
-                                    : p.batches,
-                                }
-                              })}
-                              className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_batches ? 'bg-indigo-600' : 'bg-zinc-700')}
-                            >
-                              <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_batches ? 'translate-x-4' : 'translate-x-0')} />
-                            </div>
-                            <span className="text-xs text-zinc-400">Track Batches</span>
-                          </label>
-
-                          {entry.has_batches && (
-                            <div className="space-y-1.5 pl-1">
-                              <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
-                                <span className="col-span-2">Batch No *</span><span>Expiry Date *</span><span>Qty</span><span></span>
+                        {/* Batches — hidden when variants are on, since each variant now carries
+                            its own expiry_date directly; showing both would be two disconnected
+                            expiry mechanisms for the same product. */}
+                        {!entry.has_variants && (
+                          <div className="space-y-2">
+                            <label className="flex items-center gap-2 cursor-pointer w-fit">
+                              <div
+                                onClick={() => setEntry((p) => {
+                                  const turningOn = !p.has_batches
+                                  return {
+                                    ...p,
+                                    has_batches: turningOn,
+                                    // Force batch quantities to be entered in the base unit (unit_id), never the
+                                    // secondary unit — batchQtyTotal() has no unit-conversion awareness, so mixing
+                                    // units here would silently mis-scale the synced Qty (see rowBaseQty's own
+                                    // base-unit-only assumption for money math).
+                                    entry_unit_id: turningOn ? p.unit_id : p.entry_unit_id,
+                                    // Seed the first batch row with whatever Qty was already typed, instead of
+                                    // starting at '' (which syncs Qty to 0 and silently discards the typed value).
+                                    batches: turningOn && p.batches.length === 0
+                                      ? [{ batch_no: '', expiry_date: '', qty: p.qty !== '0' ? p.qty : '' }]
+                                      : p.batches,
+                                  }
+                                })}
+                                className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_batches ? 'bg-indigo-600' : 'bg-zinc-700')}
+                              >
+                                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_batches ? 'translate-x-4' : 'translate-x-0')} />
                               </div>
-                              {entry.batches.map((b, i) => {
-                                const bTouched = b.batch_no.trim() || b.expiry_date || b.qty
-                                const bMissingBatchNo = bTouched && !b.batch_no.trim()
-                                const bMissingExpiry = bTouched && !b.expiry_date
-                                return (
-                                <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                                  <Input placeholder="BATCH-001" value={b.batch_no}
-                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
-                                    className={cn('h-8 text-xs col-span-2', bMissingBatchNo && 'border-red-500')} />
-                                  <Input type="date" value={b.expiry_date}
-                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
-                                    className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
-                                  <Input type="text" inputMode="decimal" placeholder="0" value={b.qty}
-                                    onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
-                                    className="h-8 text-xs" />
-                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
-                                    onClick={() => setEntry((p) => ({ ...p, batches: p.batches.filter((_, j) => j !== i) }))}>
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
+                              <span className="text-xs text-zinc-400">Track Batches</span>
+                            </label>
+
+                            {entry.has_batches && (
+                              <div className="space-y-1.5 pl-1">
+                                <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
+                                  <span className="col-span-2">Batch No *</span><span>Expiry Date *</span><span>Qty</span><span></span>
                                 </div>
-                                )
-                              })}
-                              {entry.batches.length > 0 && (
-                                <p className="text-[11px] text-zinc-500 pl-1">
-                                  Total batch qty: {batchQtyTotal(entry.batches)} {unitOf(entry.unit_id)?.symbol ?? 'units'}
-                                </p>
-                              )}
-                              <Button type="button" variant="outline" size="sm" className="text-xs"
-                                onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
-                                <Plus className="h-3.5 w-3.5" /> Add Batch
-                              </Button>
-                            </div>
-                          )}
-                        </div>
+                                {entry.batches.map((b, i) => {
+                                  const bTouched = b.batch_no.trim() || b.expiry_date || b.qty
+                                  const bMissingBatchNo = bTouched && !b.batch_no.trim()
+                                  const bMissingExpiry = bTouched && !b.expiry_date
+                                  return (
+                                  <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                                    <Input placeholder="BATCH-001" value={b.batch_no}
+                                      onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
+                                      className={cn('h-8 text-xs col-span-2', bMissingBatchNo && 'border-red-500')} />
+                                    <Input type="date" value={b.expiry_date}
+                                      onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
+                                      className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
+                                    <Input type="text" inputMode="decimal" placeholder="0" value={b.qty}
+                                      onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
+                                      className="h-8 text-xs" />
+                                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
+                                      onClick={() => setEntry((p) => ({ ...p, batches: p.batches.filter((_, j) => j !== i) }))}>
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                  )
+                                })}
+                                {entry.batches.length > 0 && (
+                                  <p className="text-[11px] text-zinc-500 pl-1">
+                                    Total batch qty: {batchQtyTotal(entry.batches)} {unitOf(entry.unit_id)?.symbol ?? 'units'}
+                                  </p>
+                                )}
+                                <Button type="button" variant="outline" size="sm" className="text-xs"
+                                  onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
+                                  <Plus className="h-3.5 w-3.5" /> Add Batch
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
