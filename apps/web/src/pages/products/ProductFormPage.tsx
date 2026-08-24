@@ -392,11 +392,29 @@ export function ProductFormPage() {
 
       // Save variants
       if (hasVariants && productId && variants.length > 0) {
+        // Capture each existing variant's real per-variant stock (variant_inventory.stock_qty,
+        // the source of truth written by purchases/sales) BEFORE the delete below — the
+        // product_variants -> variant_inventory FK is ON DELETE CASCADE, so re-inserting variants
+        // by deleting-then-recreating would otherwise silently wipe real stock to 0 on every
+        // product edit, not just ones that actually change a variant. Editing a product's
+        // variant fields (name/price/etc.) must never move stock — only Purchases/POS do that.
+        const { data: existingVariantRows } = await supabase
+          .from('product_variants')
+          .select('variant_name, variant_inventory(stock_qty)')
+          .eq('product_id', productId)
+          .eq('organization_id', orgId!)
+        const stockByVariantName = new Map<string, number>(
+          (existingVariantRows ?? []).map((r: any) => [
+            r.variant_name,
+            Array.isArray(r.variant_inventory) ? (r.variant_inventory[0]?.stock_qty ?? 0) : (r.variant_inventory?.stock_qty ?? 0),
+          ]),
+        )
+
         // Delete old variants then re-insert
         await supabase.from('product_variants').delete().eq('product_id', productId).eq('organization_id', orgId!)
         const validVariants = variants.filter((v) => v.variant_name.trim())
         if (validVariants.length > 0) {
-          await supabase.from('product_variants').insert(
+          const { data: insertedVariants } = await supabase.from('product_variants').insert(
             validVariants.map((v) => ({
               product_id: productId!,
               organization_id: orgId!,
@@ -412,7 +430,23 @@ export function ProductFormPage() {
               stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
               expiry_date: v.expiry_date || null,
             }))
-          )
+          ).select('id, variant_name')
+
+          // Re-seed variant_inventory: preserve real stock for a variant that already existed
+          // (matched by name — the same name the user was editing), 0 for a genuinely new one.
+          // This intentionally ignores the qty field's value for a pre-existing variant — the
+          // qty field on this page reflects the LAST KNOWN qty for display only; it is never the
+          // write path for stock, exactly like the base (non-variant) product's own Opening
+          // Stock field only applies at creation, not on every subsequent edit.
+          if (insertedVariants && insertedVariants.length > 0) {
+            await supabase.from('variant_inventory').insert(
+              insertedVariants.map((iv: { id: string; variant_name: string }) => ({
+                product_variant_id: iv.id,
+                organization_id: orgId!,
+                stock_qty: stockByVariantName.get(iv.variant_name) ?? 0,
+              }))
+            )
+          }
         }
       }
 
