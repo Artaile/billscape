@@ -1,11 +1,12 @@
-import { useRef, useEffect } from 'react'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useRef, useEffect, useState } from 'react'
+import { Plus, RefreshCw, Trash2, Camera } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { splitInclusiveGST, type GSTRate } from '@billscape/core'
 import { generateBarcode } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
 
 const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 
@@ -37,6 +38,7 @@ function parseNum(s: string): number {
 
 function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; onChange: (v: string) => void; onGenerate: () => void }) {
   const ref = useRef<SVGSVGElement>(null)
+  const [scanOpen, setScanOpen] = useState(false)
   useEffect(() => {
     if (value && ref.current) {
       try {
@@ -47,12 +49,16 @@ function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; o
   return (
     <div className="space-y-1">
       <div className="flex gap-1">
-        <Input placeholder="Barcode" value={value} onChange={(e) => onChange(e.target.value)} className="h-8 text-xs font-mono" />
+        <Input placeholder="Scan or enter barcode" value={value} onChange={(e) => onChange(e.target.value)} className="h-8 text-xs font-mono" />
+        <button type="button" title="Scan" onClick={() => setScanOpen(true)} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+          <Camera className="h-3 w-3" />
+        </button>
         <button type="button" title="Generate" onClick={onGenerate} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
           <RefreshCw className="h-3 w-3" />
         </button>
       </div>
       {value && <svg ref={ref} className="max-w-[130px]" />}
+      <ScanBarcodeDialog open={scanOpen} onOpenChange={setScanOpen} onScan={onChange} />
     </div>
   )
 }

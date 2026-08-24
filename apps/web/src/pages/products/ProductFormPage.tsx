@@ -20,6 +20,7 @@ import {
   Image as ImageIcon,
   Eye,
   Ruler,
+  Camera,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
@@ -35,6 +36,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
 
 const GST_RATES = [0, 5, 12, 18, 28] as const
 
@@ -112,6 +114,7 @@ export function ProductFormPage() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
   const barcodeRef = useRef<SVGSVGElement>(null)
+  const [scanOpen, setScanOpen] = useState(false)
 
   const [brand, setBrand] = useState('')
 
@@ -1065,6 +1068,16 @@ export function ProductFormPage() {
                 type="button"
                 variant="outline"
                 size="icon"
+                onClick={() => setScanOpen(true)}
+                title="Scan barcode"
+                className="shrink-0"
+              >
+                <Camera className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
                 onClick={handleAutoGenerateBarcode}
                 title="Auto-generate barcode"
                 className="shrink-0"
@@ -1087,6 +1100,12 @@ export function ProductFormPage() {
                 </Button>
               </div>
             )}
+
+            <ScanBarcodeDialog
+              open={scanOpen}
+              onOpenChange={setScanOpen}
+              onScan={(code) => setValue('barcode_value', code, { shouldValidate: true })}
+            />
           </div>
 
           {/* Image */}

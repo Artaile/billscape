@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2, Camera } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -14,6 +14,7 @@ import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 import { useNavigationGuard, useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
+import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -132,6 +133,7 @@ export function PurchaseFormPage() {
   const [showAddSupplier, setShowAddSupplier] = useState(false)
 
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
+  const [scanOpen, setScanOpen] = useState(false)
 
   // When batch tracking is enabled for the entry row, Qty becomes a read-only rollup of
   // the batch quantities below it (matches IppoBill's "Allocated from batches below" pattern) —
@@ -818,11 +820,21 @@ export function PurchaseFormPage() {
                         className="h-9 text-xs font-mono"
                       />
                       {entry.is_new_product && (
-                        <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                          <RefreshCw className="h-3 w-3" />
-                        </button>
+                        <>
+                          <button type="button" title="Scan" onClick={() => setScanOpen(true)} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                            <Camera className="h-3 w-3" />
+                          </button>
+                          <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                            <RefreshCw className="h-3 w-3" />
+                          </button>
+                        </>
                       )}
                     </div>
+                    <ScanBarcodeDialog
+                      open={scanOpen}
+                      onOpenChange={setScanOpen}
+                      onScan={(code) => setEntry((p) => ({ ...p, barcode_value: code, barcodeManuallyEdited: true }))}
+                    />
                   </div>
 
                   <div className="space-y-1">
