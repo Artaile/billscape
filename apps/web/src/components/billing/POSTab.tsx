@@ -538,7 +538,12 @@ export function POSTab() {
       // unchanged `stock` from the DB and addToCart's own qty-ceiling check is skipped entirely
       // for variant lines (see addToCart's isVariantLine branch).
       const alreadyInCart = cart.find((c) => c.product_id === parentProduct.id && c.variant_id === variant.id)?.qty ?? 0
-      if (!allowNegativeStock && alreadyInCart + 1 > stock) {
+      // Match addToCart's own existing-line increment step (0.1 for a decimal-allowed unit like
+      // Kg, 1 for count-based units) — hardcoding +1 here would over-block a valid scan on a
+      // variant sold by weight, even though the actual add below only advances qty by the
+      // correct fractional step.
+      const step = qtyStepForUnit((parentProduct.unit as { allow_decimal?: boolean } | undefined)?.allow_decimal ?? false)
+      if (!allowNegativeStock && alreadyInCart + step > stock) {
         toast.error(`Out of stock: ${parentProduct.name} — ${displayName}`, `Only ${stock} unit(s) available. Scanned barcode: ${code}`)
         return
       }
@@ -1589,7 +1594,15 @@ export function POSTab() {
               {productVariants.map((variant) => {
                 const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
                 const stock = variantStockMap?.get(variant.id) ?? 0
-                const isOutOfStock = !allowNegativeStock && stock <= 0
+                // The picker dialog closes after every add (setVariantPickerProduct(null)), so a
+                // merchant re-opening it for the same product and picking the same variant again
+                // sees the same DB stock value from the query cache — the dialog itself can't
+                // know how much of that stock is already sitting in the cart from an earlier pick
+                // this same checkout. Same fix as the barcode-scan path's out-of-stock gate.
+                const alreadyInCart = cart.find((c) => c.product_id === variantPickerProduct?.id && c.variant_id === variant.id)?.qty ?? 0
+                const parentForStep = products?.find((p) => p.id === variantPickerProduct?.id)
+                const step = qtyStepForUnit((parentForStep?.unit as { allow_decimal?: boolean } | undefined)?.allow_decimal ?? false)
+                const isOutOfStock = !allowNegativeStock && alreadyInCart + step > stock
                 // variant_name is nullable in the DB — fall back to a placeholder rather than
                 // rendering a blank row or "— null" in the cart/receipt.
                 const displayName = variant.variant_name || 'Variant'
