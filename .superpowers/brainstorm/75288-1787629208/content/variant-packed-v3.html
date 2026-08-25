@@ -1,0 +1,70 @@
+<h2>Variant card — equal-width prices, wider name, duplicate button</h2>
+<p class="subtitle">SP now also shows a Base+GST breakdown. MRP/Retail/SP/Purchase Price are all equal width. GST Mode column narrower, Variant Name wider. Added a Duplicate icon next to Delete.</p>
+
+<style>
+  .vcard { background:#18181b; border:1px solid #27272a; border-radius:10px; padding:14px; font-family:-apple-system,sans-serif; color:#e4e4e7; max-width:900px; }
+  .vhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .vhead span.title { font-size:11px; font-weight:600; color:#71717a; text-transform:uppercase; letter-spacing:0.05em; }
+  .vhead .icons { display:flex; gap:10px; align-items:center; }
+  .vhead .icons span { cursor:pointer; font-size:14px; }
+  .row1 { display:grid; grid-template-columns: 1.8fr 1.4fr 0.9fr 0.55fr 0.55fr; gap:6px; margin-bottom:10px; }
+  .row2v3 { display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 0.6fr 0.75fr; gap:6px; }
+  .field label { display:block; font-size:9px; text-transform:uppercase; color:#71717a; margin-bottom:2px; letter-spacing:0.03em; }
+  .field input, .field select { width:100%; height:30px; background:#09090b; border:1px solid #3f3f46; border-radius:5px; color:#e4e4e7; font-size:11px; padding:0 6px; box-sizing:border-box; }
+  .basehint { font-size:8px; color:#52525b; margin-top:2px; min-height:11px; }
+  .divider { border:none; border-top:1px solid #27272a; margin:14px 0; }
+</style>
+
+<div class="vcard">
+  <div class="vhead">
+    <span class="title">Variant 1</span>
+    <div class="icons">
+      <span title="Duplicate" style="color:#818cf8">⧉</span>
+      <span title="Delete" style="color:#f87171">🗑</span>
+    </div>
+  </div>
+  <div class="row1">
+    <div class="field"><label>Variant Name *</label><input value="9W"></div>
+    <div class="field"><label>Barcode</label><input value="LIGHT9W"></div>
+    <div class="field"><label>SKU (optional)</label><input placeholder="Auto or type"></div>
+    <div class="field"><label>Tax %</label><select><option>18%</option></select></div>
+    <div class="field"><label>GST</label><select><option>Incl</option><option>Excl</option></select></div>
+  </div>
+  <div class="row2v3">
+    <div class="field">
+      <label>MRP</label><input value="150">
+      <div class="basehint">Base ₹127.12 + GST ₹22.88</div>
+    </div>
+    <div class="field">
+      <label>Retail Price *</label><input value="120">
+      <div class="basehint">Base ₹101.69 + GST ₹18.31</div>
+    </div>
+    <div class="field">
+      <label>SP (Special)</label><input value="110">
+      <div class="basehint">Base ₹93.22 + GST ₹16.78</div>
+    </div>
+    <div class="field">
+      <label>Purchase Price *</label><input value="80">
+      <div class="basehint">Base ₹67.80 + GST ₹12.20</div>
+    </div>
+    <div class="field"><label>Qty *</label><input value="20"></div>
+    <div class="field"><label>Expiry</label><input type="date"></div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:20px">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>This works — approve, implement it</h3>
+      <p>Equal-width prices with base hints on all 4, wider name, duplicate button — ready to build</p>
+    </div>
+  </div>
+  <div class="option" data-choice="revise" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Still needs changes</h3>
+      <p>Something else to adjust — tell me in the terminal</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,99 @@
+<style>
+  :root {
+    --bs-bg: #09090b; --bs-card: #18181b; --bs-border: #27272a; --bs-border-light: #3f3f46;
+    --bs-text: #f4f4f5; --bs-text-dim: #a1a1aa; --bs-text-faint: #71717a;
+    --bs-indigo: #6366f1; --bs-indigo-dim: rgba(99,102,241,0.12); --bs-emerald: #34d399; --bs-amber: #fbbf24; --bs-red: #f87171;
+  }
+  .bs-mock { background: var(--bs-bg); color: var(--bs-text); border: 1px solid var(--bs-border); border-radius: 10px; padding: 18px; font-family: -apple-system, "Inter", sans-serif; font-size: 13px; max-width: 900px; margin: 0 auto; }
+  .bs-card { background: var(--bs-card); border: 1px solid var(--bs-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .bs-label { color: var(--bs-text-dim); font-size: 11px; margin-bottom: 4px; display:block; }
+  .bs-input { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-row { display: flex; gap: 10px; margin-bottom: 10px; }
+  .bs-row > div { flex: 1; min-width: 0; }
+  .bs-btn { background: var(--bs-indigo); color: white; border: none; border-radius: 6px; padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .bs-btn-sm { background: transparent; border: 1px solid var(--bs-border-light); color: var(--bs-text-dim); border-radius: 6px; padding: 6px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .bs-icon-btn { width: 32px; height: 32px; display:flex; align-items:center; justify-content:center; border: 1px solid var(--bs-border-light); border-radius: 6px; color: var(--bs-text-dim); font-size: 13px; cursor: pointer; flex-shrink:0; }
+  .bs-section-title { font-size: 12px; font-weight: 700; color: var(--bs-text); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .bs-section-title .n { width:18px; height:18px; border-radius:50%; background:var(--bs-indigo); color:white; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .bs-note { font-size: 10px; color: var(--bs-text-faint); margin-top: 4px; }
+  .toggle-on { background: var(--bs-indigo); color:white; border:none; border-radius:6px; padding:0 10px; font-size:11px; height:32px; display:flex; align-items:center; cursor:pointer; }
+  .toggle-off { background: transparent; color:var(--bs-text-dim); border:1px solid var(--bs-border-light); border-radius:6px; padding:0 10px; font-size:11px; height:32px; display:flex; align-items:center; cursor:pointer; }
+  .variant-row, .batch-row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .variant-row .bs-input, .batch-row .bs-input { padding:6px 8px; font-size:11px; }
+  .del-icon { color: var(--bs-red); font-size:13px; cursor:pointer; flex-shrink:0; width:24px; text-align:center; }
+  .mini-barcode { display:flex; align-items:center; gap:4px; }
+  .mini-icon-btn { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border:1px solid var(--bs-border-light); border-radius:5px; color:var(--bs-text-dim); font-size:11px; flex-shrink:0; }
+  .add-link { color: var(--bs-indigo); font-size:11px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin-top:4px; }
+  .col-header { font-size:10px; color:var(--bs-text-faint); text-transform:uppercase; }
+</style>
+
+<h2>Sizes/Colors &amp; Batches — expanded state</h2>
+<p class="subtitle">What it looks like when you switch either toggle ON. Each expands inline, right below its toggle — the rest of the form (Product/Pricing row above) doesn't move or resize.</p>
+
+<div class="bs-mock">
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">3</span> Sizes/Colors &amp; Batches</div>
+
+    <!-- Variants toggle ON -->
+    <div style="margin-bottom:14px;">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <div class="toggle-on">✓ Has sizes/colors</div>
+        <span class="bs-note" style="margin:0;">2 variants added</span>
+      </div>
+      <div class="variant-row">
+        <div style="flex:0 0 90px;"><div class="col-header">Size</div><input class="bs-input" value="M" readonly></div>
+        <div style="flex:0 0 90px;"><div class="col-header">Color</div><input class="bs-input" value="Red" readonly></div>
+        <div style="flex:0 0 80px;"><div class="col-header">Price +/-</div><input class="bs-input" value="0.00" readonly></div>
+        <div style="flex:0 0 70px;"><div class="col-header">Stock</div><input class="bs-input" value="5" readonly></div>
+        <div style="flex:1;"><div class="col-header">Barcode</div>
+          <div class="mini-barcode">
+            <input class="bs-input" value="LED9W-M-RED" readonly>
+            <div class="mini-icon-btn" title="Scan">📷</div>
+            <div class="mini-icon-btn" title="Generate">⌁</div>
+          </div>
+        </div>
+        <div style="flex:0 0 24px; padding-top:16px;"><span class="del-icon">🗑</span></div>
+      </div>
+      <div class="variant-row">
+        <div style="flex:0 0 90px;"><input class="bs-input" value="L" readonly></div>
+        <div style="flex:0 0 90px;"><input class="bs-input" value="Red" readonly></div>
+        <div style="flex:0 0 80px;"><input class="bs-input" value="0.00" readonly></div>
+        <div style="flex:0 0 70px;"><input class="bs-input" value="3" readonly></div>
+        <div style="flex:1;">
+          <div class="mini-barcode">
+            <input class="bs-input" value="LED9W-L-RED" readonly>
+            <div class="mini-icon-btn" title="Scan">📷</div>
+            <div class="mini-icon-btn" title="Generate">⌁</div>
+          </div>
+        </div>
+        <div style="flex:0 0 24px;"><span class="del-icon">🗑</span></div>
+      </div>
+      <div class="add-link">+ Add another size/color</div>
+    </div>
+
+    <!-- Batches toggle ON -->
+    <div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <div class="toggle-on">✓ Has expiry/batches</div>
+        <span class="bs-note" style="margin:0;">1 batch added</span>
+      </div>
+      <div class="batch-row">
+        <div style="flex:0 0 140px;"><div class="col-header">Batch No *</div><input class="bs-input" value="BATCH-001" readonly></div>
+        <div style="flex:0 0 130px;"><div class="col-header">Expiry Date *</div><input class="bs-input" value="12/2027" readonly></div>
+        <div style="flex:0 0 90px;"><div class="col-header">Qty</div><input class="bs-input" value="8" readonly></div>
+        <div style="flex:0 0 24px; padding-top:16px;"><span class="del-icon">🗑</span></div>
+      </div>
+      <div class="add-link">+ Add another batch</div>
+      <div class="bs-note" style="margin-top:8px;">Qty above (row 2) auto-fills as the sum of batch quantities once this is on — 8 in this example.</div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:20px;">
+  <div class="pros"><h4>What changed vs today's version</h4><ul>
+    <li>Each variant row now gets its OWN barcode with Scan + Generate buttons right there — matches what you asked for on the Product page, now also here in Purchase entry</li>
+    <li>Variant rows are compact (Size/Color/Price/Stock are narrow, Barcode gets the leftover width) so 2-3 variants fit without excessive scrolling</li>
+    <li>Batches keep the existing auto-sum-into-Qty behavior, now with a clear note explaining why Qty is locked once batches are on</li>
+    <li>Both sections only take up space when actually turned on — toggled off, they're a single compact line</li>
+  </ul></div>
+</div>

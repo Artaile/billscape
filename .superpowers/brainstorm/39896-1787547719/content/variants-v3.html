@@ -1,0 +1,187 @@
+<style>
+  :root {
+    --bs-bg: #09090b; --bs-card: #18181b; --bs-border: #27272a; --bs-border-light: #3f3f46;
+    --bs-text: #f4f4f5; --bs-text-dim: #a1a1aa; --bs-text-faint: #71717a;
+    --bs-indigo: #6366f1; --bs-indigo-dim: rgba(99,102,241,0.12); --bs-emerald: #34d399; --bs-amber: #fbbf24; --bs-red: #f87171;
+  }
+  .bs-mock { background: var(--bs-bg); color: var(--bs-text); border: 1px solid var(--bs-border); border-radius: 10px; padding: 18px; font-family: -apple-system, "Inter", sans-serif; font-size: 13px; max-width: 920px; margin: 0 auto 24px; }
+  .bs-card { background: var(--bs-card); border: 1px solid var(--bs-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .bs-label { color: var(--bs-text-dim); font-size: 11px; margin-bottom: 4px; display:block; }
+  .bs-input { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-select { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-section-title { font-size: 12px; font-weight: 700; color: var(--bs-text); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .bs-section-title .n { width:18px; height:18px; border-radius:50%; background:var(--bs-indigo); color:white; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .bs-note { font-size: 10px; color: var(--bs-text-faint); margin-top: 4px; }
+  .toggle-on { background: var(--bs-indigo); color:white; border:none; border-radius:6px; padding:0 10px; font-size:11px; height:32px; display:flex; align-items:center; cursor:pointer; }
+  .del-icon { color: var(--bs-red); font-size:13px; cursor:pointer; flex-shrink:0; }
+  .mini-icon-btn { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border:1px solid var(--bs-border-light); border-radius:5px; color:var(--bs-text-dim); font-size:11px; flex-shrink:0; }
+  .add-link { color: var(--bs-indigo); font-size:11px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin-top:8px; }
+  .col-header { font-size:9px; color:var(--bs-text-faint); text-transform:uppercase; margin-bottom:3px; }
+
+  .variant-card { background:#0f0f11; border:1px solid var(--bs-border); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .variant-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+
+  /* Row 1: Name | Barcode | SKU */
+  .row1 { display:grid; grid-template-columns: 1.6fr 1.6fr 1fr; gap:10px; margin-bottom:12px; }
+  /* Row 2: Sale Price group | Purchase Price group | Expiry */
+  .row2 { display:grid; grid-template-columns: 1.4fr 1.4fr 0.9fr; gap:14px; align-items:start; }
+  .price-group { display:grid; grid-template-columns: 1.3fr 1fr; gap:6px; }
+  .group-label { font-size:10px; font-weight:700; color:var(--bs-text-dim); text-transform:uppercase; letter-spacing:0.3px; margin-bottom:6px; display:block; }
+  .divider-v { width:1px; background:var(--bs-border); }
+</style>
+
+<h2>Variant card v3 — your exact row layout</h2>
+<p class="subtitle">Row 1: Variant Name, Barcode (+ Scan/Generate), SKU. Row 2: Sale Price (Amount + GST Mode), Purchase Price (Amount + GST Mode), Expiry — three groups side by side.</p>
+
+<div class="bs-mock">
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">3</span> Sizes/Colors &amp; Batches</div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+      <div class="toggle-on">✓ Has variants</div>
+      <span class="bs-note" style="margin:0;">2 variants</span>
+    </div>
+
+    <!-- Variant 1 -->
+    <div class="variant-card">
+      <div class="variant-card-head">
+        <span style="font-size:11px; color:var(--bs-text-faint); font-weight:600;">VARIANT 1</span>
+        <span class="del-icon">🗑</span>
+      </div>
+
+      <!-- Row 1 -->
+      <div class="row1">
+        <div>
+          <div class="col-header">Variant Name *</div>
+          <input class="bs-input" value="256GB · Blue" readonly>
+        </div>
+        <div>
+          <div class="col-header">Barcode</div>
+          <div style="display:flex; gap:4px;">
+            <input class="bs-input" value="IPH15-256-BLU" readonly>
+            <div class="mini-icon-btn" title="Scan">📷</div>
+            <div class="mini-icon-btn" title="Generate">⌁</div>
+          </div>
+        </div>
+        <div>
+          <div class="col-header">SKU <span style="font-weight:400;">(optional)</span></div>
+          <input class="bs-input" placeholder="Auto or type">
+        </div>
+      </div>
+
+      <!-- Row 2 -->
+      <div class="row2">
+        <div>
+          <span class="group-label">Sale Price</span>
+          <div class="price-group">
+            <div><div class="col-header">Amount *</div><input class="bs-input" value="69,999" readonly></div>
+            <div><div class="col-header">GST Mode</div>
+              <select class="bs-select"><option>Inclusive</option></select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <span class="group-label">Purchase Price</span>
+          <div class="price-group">
+            <div><div class="col-header">Amount *</div><input class="bs-input" value="62,000" readonly></div>
+            <div><div class="col-header">GST Mode</div>
+              <select class="bs-select"><option>Exclusive</option></select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <span class="group-label">Expiry <span style="font-weight:400; text-transform:none;">(optional)</span></span>
+          <input class="bs-input" placeholder="dd/mm/yyyy">
+        </div>
+      </div>
+    </div>
+
+    <!-- Variant 2 -->
+    <div class="variant-card">
+      <div class="variant-card-head">
+        <span style="font-size:11px; color:var(--bs-text-faint); font-weight:600;">VARIANT 2</span>
+        <span class="del-icon">🗑</span>
+      </div>
+      <div class="row1">
+        <div>
+          <div class="col-header">Variant Name *</div>
+          <input class="bs-input" value="512GB · Black" readonly>
+        </div>
+        <div>
+          <div class="col-header">Barcode</div>
+          <div style="display:flex; gap:4px;">
+            <input class="bs-input" value="IPH15-512-BLK" readonly>
+            <div class="mini-icon-btn">📷</div>
+            <div class="mini-icon-btn">⌁</div>
+          </div>
+        </div>
+        <div>
+          <div class="col-header">SKU <span style="font-weight:400;">(optional)</span></div>
+          <input class="bs-input" placeholder="Auto or type">
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <span class="group-label">Sale Price</span>
+          <div class="price-group">
+            <div><div class="col-header">Amount *</div><input class="bs-input" value="82,999" readonly></div>
+            <div><div class="col-header">GST Mode</div><select class="bs-select"><option>Inclusive</option></select></div>
+          </div>
+        </div>
+        <div>
+          <span class="group-label">Purchase Price</span>
+          <div class="price-group">
+            <div><div class="col-header">Amount *</div><input class="bs-input" value="74,000" readonly></div>
+            <div><div class="col-header">GST Mode</div><select class="bs-select"><option>Exclusive</option></select></div>
+          </div>
+        </div>
+        <div>
+          <span class="group-label">Expiry <span style="font-weight:400; text-transform:none;">(optional)</span></span>
+          <input class="bs-input" placeholder="dd/mm/yyyy">
+        </div>
+      </div>
+    </div>
+
+    <div class="add-link">+ Add another variant</div>
+  </div>
+</div>
+
+<h3>Qty / Stock — where did it go?</h3>
+<p class="subtitle">Your two rows don't mention Qty, but a purchase line needs it. Two natural places for it — pick whichever fits how you think about buying stock per variant:</p>
+
+<div class="cards">
+  <div class="card" data-choice="qty-row2" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="bs-mock" style="max-width:100%;">
+        <div class="row2" style="grid-template-columns: 1.1fr 1.1fr 0.7fr 0.7fr;">
+          <div><span class="group-label">Sale Price</span><div class="price-group"><div><input class="bs-input" value="69,999" readonly></div><div><select class="bs-select"><option>Inclusive</option></select></div></div></div>
+          <div><span class="group-label">Purchase Price</span><div class="price-group"><div><input class="bs-input" value="62,000" readonly></div><div><select class="bs-select"><option>Exclusive</option></select></div></div></div>
+          <div><span class="group-label">Qty *</span><input class="bs-input" value="5" readonly></div>
+          <div><span class="group-label">Expiry</span><input class="bs-input" placeholder="dd/mm/yyyy"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A. Qty joins Row 2</h3><p>Sale Price, Purchase Price, Qty, Expiry — four groups on the same row.</p></div>
+  </div>
+
+  <div class="card" data-choice="qty-row1" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="bs-mock" style="max-width:100%;">
+        <div class="row1" style="grid-template-columns: 1.3fr 1.3fr 0.8fr 0.6fr;">
+          <div><div class="col-header">Variant Name *</div><input class="bs-input" value="256GB · Blue" readonly></div>
+          <div><div class="col-header">Barcode</div><div style="display:flex; gap:4px;"><input class="bs-input" value="IPH15-256-BLU" readonly><div class="mini-icon-btn">📷</div><div class="mini-icon-btn">⌁</div></div></div>
+          <div><div class="col-header">SKU</div><input class="bs-input" placeholder="Auto/type"></div>
+          <div><div class="col-header">Qty *</div><input class="bs-input" value="5" readonly></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B. Qty joins Row 1</h3><p>Name, Barcode, SKU, Qty on row 1 — Row 2 stays pure pricing (Sale/Purchase/Expiry only).</p></div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:20px;">
+  <div class="pros"><h4>Notes on this version</h4><ul>
+    <li>GST Mode per price (Sale = Inclusive, Purchase = Exclusive, independently) matches how IppoBill's own screenshot showed it — sale price is usually MRP-style inclusive, purchase price from a supplier invoice is usually exclusive-then-taxed.</li>
+    <li>SKU marked optional since most shops rely on the barcode alone; typing a custom SKU is still there for those who want it.</li>
+    <li>Expiry stays optional per-variant, same reasoning as before — not every variant/product expires.</li>
+  </ul></div>
+</div>

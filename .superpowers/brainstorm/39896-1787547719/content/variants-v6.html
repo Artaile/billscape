@@ -1,0 +1,122 @@
+<style>
+  :root {
+    --bs-bg: #09090b; --bs-card: #18181b; --bs-border: #27272a; --bs-border-light: #3f3f46;
+    --bs-text: #f4f4f5; --bs-text-dim: #a1a1aa; --bs-text-faint: #71717a;
+    --bs-indigo: #6366f1; --bs-indigo-dim: rgba(99,102,241,0.12); --bs-emerald: #34d399; --bs-amber: #fbbf24; --bs-red: #f87171;
+  }
+  .bs-mock { background: var(--bs-bg); color: var(--bs-text); border: 1px solid var(--bs-border); border-radius: 10px; padding: 18px; font-family: -apple-system, "Inter", sans-serif; font-size: 13px; max-width: 960px; margin: 0 auto 24px; }
+  .bs-card { background: var(--bs-card); border: 1px solid var(--bs-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .bs-input { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-select { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-section-title { font-size: 12px; font-weight: 700; color: var(--bs-text); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .bs-section-title .n { width:18px; height:18px; border-radius:50%; background:var(--bs-indigo); color:white; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .bs-note { font-size: 10px; color: var(--bs-text-faint); margin-top: 4px; }
+  .toggle-on { background: var(--bs-indigo); color:white; border:none; border-radius:6px; padding:0 10px; font-size:11px; height:32px; display:flex; align-items:center; cursor:pointer; }
+  .del-icon { color: var(--bs-red); font-size:13px; cursor:pointer; flex-shrink:0; }
+  .mini-icon-btn { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border:1px solid var(--bs-border-light); border-radius:5px; color:var(--bs-text-dim); font-size:11px; flex-shrink:0; }
+  .add-link { color: var(--bs-indigo); font-size:11px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin-top:8px; }
+  .col-header { font-size:9px; color:var(--bs-text-faint); text-transform:uppercase; margin-bottom:3px; }
+  .base-gst { font-size:10px; color:var(--bs-text-faint); margin-top:4px; visibility:hidden; } /* invisible spacer, same height as the real one, to push Expiry's input down to match */
+
+  .variant-card { background:#0f0f11; border:1px solid var(--bs-border); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .variant-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+
+  .row1 { display:grid; grid-template-columns: 1.4fr 1.4fr 0.8fr 0.55fr 0.6fr; gap:10px; margin-bottom:14px; }
+  .row2 { display:grid; grid-template-columns: 1.4fr 1.4fr 0.8fr; gap:16px; align-items:start; }
+  .price-group { display:grid; grid-template-columns: 1.3fr 1fr; gap:6px; }
+  .group-label { font-size:10px; font-weight:700; color:var(--bs-text-dim); text-transform:uppercase; letter-spacing:0.3px; margin-bottom:6px; display:block; }
+</style>
+
+<h2>Variant card v6 — label styled like the others, input bottom-aligned via a matching spacer</h2>
+<p class="subtitle">"Expiry" label now sits at the same height/weight as "Amount *" / "GST Mode" (not a group header). Its input is pushed down by an invisible spacer that's the exact same size as the real "Base: ₹X + GST: ₹Y" line — so the Expiry box lines up with the bottom of the Amount boxes, not floating above them.</p>
+
+<div class="bs-mock">
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">3</span> Sizes/Colors &amp; Batches</div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+      <div class="toggle-on">✓ Has variants</div>
+      <span class="bs-note" style="margin:0;">1 variant</span>
+    </div>
+
+    <div class="variant-card">
+      <div class="variant-card-head">
+        <span style="font-size:11px; color:var(--bs-text-faint); font-weight:600;">VARIANT 1</span>
+        <span class="del-icon">🗑</span>
+      </div>
+
+      <!-- Row 1 -->
+      <div class="row1">
+        <div>
+          <div class="col-header">Variant Name *</div>
+          <input class="bs-input" value="256GB · Blue" readonly>
+        </div>
+        <div>
+          <div class="col-header">Barcode</div>
+          <div style="display:flex; gap:4px;">
+            <input class="bs-input" value="IPH15-256-BLU" readonly>
+            <div class="mini-icon-btn" title="Scan">📷</div>
+            <div class="mini-icon-btn" title="Generate">⌁</div>
+          </div>
+        </div>
+        <div>
+          <div class="col-header">SKU <span style="font-weight:400;">(optional)</span></div>
+          <input class="bs-input" placeholder="Auto or type">
+        </div>
+        <div>
+          <div class="col-header">Tax %</div>
+          <select class="bs-select"><option>18%</option></select>
+        </div>
+        <div>
+          <div class="col-header">Qty *</div>
+          <input class="bs-input" value="5" readonly>
+        </div>
+      </div>
+
+      <!-- Row 2 -->
+      <div class="row2">
+        <div>
+          <span class="group-label">Sale Price</span>
+          <div class="price-group">
+            <div>
+              <div class="col-header">Amount *</div>
+              <input class="bs-input" value="100" readonly>
+              <div class="base-gst" style="visibility:visible;">Base: ₹85 + GST: ₹15</div>
+            </div>
+            <div>
+              <div class="col-header">GST Mode</div>
+              <select class="bs-select"><option>Include GST</option></select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <span class="group-label">Purchase Price</span>
+          <div class="price-group">
+            <div>
+              <div class="col-header">Amount *</div>
+              <input class="bs-input" value="120" readonly>
+              <div class="base-gst" style="visibility:visible;">Base: ₹102 + GST: ₹18</div>
+            </div>
+            <div>
+              <div class="col-header">GST Mode</div>
+              <select class="bs-select"><option>Include GST</option></select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="col-header">Expiry <span style="font-weight:400;">(optional)</span></div>
+          <input class="bs-input" placeholder="dd/mm/yyyy">
+          <div class="base-gst">Base: ₹00 + GST: ₹00</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="add-link">+ Add another variant</div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:8px;">
+  <div class="pros"><h4>What changed</h4><ul>
+    <li><strong>Label</strong>: "Expiry (optional)" now uses the exact same small-caps style as "Amount *" and "GST Mode" — no more oversized bold "group header" look, it reads as one field among equals.</li>
+    <li><strong>Input alignment</strong>: Expiry's input box top edge lines up EXACTLY with Amount's input top edge (both come right after their label, same spacing) — the invisible spacer below Expiry's input (same size as the visible "Base: ₹X + GST: ₹Y" text) is what makes the bottom edges of all three boxes in the row line up too, so nothing looks staggered.</li>
+  </ul></div>
+</div>

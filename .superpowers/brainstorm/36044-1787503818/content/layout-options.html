@@ -1,0 +1,175 @@
+<style>
+  :root {
+    --bs-bg: #09090b;
+    --bs-card: #18181b;
+    --bs-border: #27272a;
+    --bs-border-light: #3f3f46;
+    --bs-text: #f4f4f5;
+    --bs-text-dim: #a1a1aa;
+    --bs-text-faint: #71717a;
+    --bs-indigo: #6366f1;
+    --bs-indigo-dim: rgba(99,102,241,0.12);
+    --bs-emerald: #34d399;
+  }
+  .bs-mock {
+    background: var(--bs-bg);
+    color: var(--bs-text);
+    border: 1px solid var(--bs-border);
+    border-radius: 10px;
+    padding: 18px;
+    font-family: -apple-system, "Inter", sans-serif;
+    font-size: 13px;
+  }
+  .bs-card {
+    background: var(--bs-card);
+    border: 1px solid var(--bs-border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .bs-label { color: var(--bs-text-dim); font-size: 11px; margin-bottom: 4px; display:block; }
+  .bs-input {
+    background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px;
+    padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box;
+  }
+  .bs-row { display: flex; gap: 10px; margin-bottom: 10px; }
+  .bs-row > div { flex: 1; min-width: 0; }
+  .bs-btn {
+    background: var(--bs-indigo); color: white; border: none; border-radius: 6px;
+    padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .bs-btn-outline {
+    background: transparent; color: var(--bs-text-dim); border: 1px solid var(--bs-border-light);
+    border-radius: 6px; padding: 8px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .bs-btn-ghost {
+    background: transparent; color: var(--bs-indigo); border: none; font-size: 12px; cursor: pointer; padding: 4px 0;
+  }
+  .bs-icon-btn {
+    width: 34px; height: 34px; display:flex; align-items:center; justify-content:center;
+    border: 1px solid var(--bs-border-light); border-radius: 6px; color: var(--bs-text-dim); font-size: 14px; cursor: pointer;
+  }
+  .bs-section-title { font-size: 12px; font-weight: 600; color: var(--bs-text-dim); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .bs-pill { font-size: 10px; padding: 2px 8px; border-radius: 999px; background: var(--bs-indigo-dim); color: var(--bs-indigo); font-weight: 600; }
+  .bs-step-nav { display:flex; gap: 8px; margin-bottom: 14px; }
+  .bs-step { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .bs-step.active { background: var(--bs-indigo); color: white; }
+  .bs-step.inactive { background: var(--bs-card); color: var(--bs-text-faint); border: 1px solid var(--bs-border); }
+  .bs-note { font-size: 10px; color: var(--bs-text-faint); margin-top: 4px; }
+  .bs-badge-new { font-size: 10px; padding: 2px 8px; border-radius: 999px; background: var(--bs-indigo-dim); color: var(--bs-indigo); }
+</style>
+
+<h2>Purchase Entry — "Add Item" redesign</h2>
+<p class="subtitle">Three directions for fixing the Category/HSN/Unit/Variants/Batches overload, plus a real Scan button. Click one to select, or tell me in the terminal what to mix.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="tabs" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="bs-mock">
+        <div class="bs-step-nav">
+          <div class="bs-step active">1. Product</div>
+          <div class="bs-step inactive">2. Pricing</div>
+          <div class="bs-step inactive">3. Advanced</div>
+        </div>
+        <div class="bs-card">
+          <span class="bs-label">Product Name *</span>
+          <input class="bs-input" value="LED 9W" readonly>
+          <div class="bs-note">Advanced (Category, HSN, Unit, Variants, Batches) moves to its own step — only reached if you click Next or the "Advanced" tab directly.</div>
+        </div>
+        <div class="bs-row">
+          <div><span class="bs-label">Barcode *</span>
+            <div style="display:flex; gap:6px;">
+              <input class="bs-input" value="LED9W" readonly>
+              <div class="bs-icon-btn">⌁</div>
+              <div class="bs-icon-btn">✎</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Step-by-step wizard (3 tabs)</h3>
+      <p>Product → Pricing → Advanced, as separate tabs/steps. Only ever one section visible at a time — zero scrolling, zero "which of these 5 things do I need" moment.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="progressive" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="bs-mock">
+        <div class="bs-card">
+          <span class="bs-label">Product Name *</span>
+          <input class="bs-input" value="LED 9W" readonly>
+        </div>
+        <div class="bs-row">
+          <div><span class="bs-label">Barcode *</span>
+            <div style="display:flex; gap:6px;">
+              <input class="bs-input" value="LED9W" readonly>
+              <div class="bs-icon-btn">⌁</div>
+              <div class="bs-icon-btn">✎</div>
+            </div>
+          </div>
+          <div style="flex:0.6"><span class="bs-label">GST %</span><input class="bs-input" value="18%" readonly></div>
+        </div>
+        <div class="bs-row">
+          <div><span class="bs-label">Rate</span><input class="bs-input" value="100" readonly></div>
+          <div><span class="bs-label">Qty</span><input class="bs-input" value="10" readonly></div>
+        </div>
+        <button class="bs-btn-ghost">▾ More options (Category, Unit, Variants, Batches)</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Same page, smarter grouping (evolve current)</h3>
+      <p>Keep single page + collapsible "More details", but split it into 3 short labeled rows instead of one dense block: <em>Classify</em> (Category+Unit+HSN), <em>Track</em> (Variants toggle), <em>Track</em> (Batches toggle) — each with a one-line "why would I need this" hint.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="smart-default" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="bs-mock">
+        <div class="bs-card">
+          <span class="bs-label">Product Name *</span>
+          <input class="bs-input" value="LED 9W" readonly>
+          <div class="bs-note">Simple product (most common) — no extra fields shown at all.</div>
+        </div>
+        <div class="bs-row">
+          <div><span class="bs-label">Barcode *</span>
+            <div style="display:flex; gap:6px;">
+              <input class="bs-input" value="LED9W" readonly>
+              <div class="bs-icon-btn">⌁</div>
+              <div class="bs-icon-btn">✎</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:6px;">
+          <span class="bs-pill">+ Has sizes/colors?</span>
+          <span class="bs-pill">+ Has expiry?</span>
+          <span class="bs-pill">+ Add HSN/Category</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Question-chips instead of toggles</h3>
+      <p>Replace "Track Variants" / "Track Batches" switches (which read like settings) with clickable question-chips ("Has sizes/colors?", "Has expiry?") — clicking one reveals just that mini-section inline. Frames it as "does this apply to you" not "here are 5 features."</p>
+    </div>
+  </div>
+
+</div>
+
+<h3 style="margin-top:28px;">Barcode field — Scan vs Generate (all 3 options above use this)</h3>
+<p class="subtitle">This part is the same regardless of which layout you pick above.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Barcode field, close-up</div>
+  <div class="mockup-body">
+    <div class="bs-mock" style="max-width:480px;">
+      <span class="bs-label">Barcode *</span>
+      <div style="display:flex; gap:6px;">
+        <input class="bs-input" placeholder="Scan or enter barcode" style="flex:1;">
+        <div class="bs-icon-btn" title="Scan (camera or USB scanner)">📷</div>
+        <div class="bs-icon-btn" title="Generate a new code">⌁</div>
+      </div>
+      <div class="bs-note">📷 Scan → opens a dialog: USB scanner works immediately (just scan), or tap "Use Camera" on mobile/desktop with a webcam. ⌁ Generate → fills a random unique code instantly, editable after.</div>
+    </div>
+  </div>
+</div>

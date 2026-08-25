@@ -1,0 +1,79 @@
+<h2>Variant card — better duplicate/delete icons</h2>
+<p class="subtitle">Swapped the emoji icons for proper outline icons (matches the app's existing lucide-react icon style used everywhere else). Pick which pair reads clearest at this size.</p>
+
+<style>
+  .vcard { background:#18181b; border:1px solid #27272a; border-radius:10px; padding:14px; font-family:-apple-system,sans-serif; color:#e4e4e7; max-width:900px; margin-bottom:20px; }
+  .vhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .vhead span.title { font-size:11px; font-weight:600; color:#71717a; text-transform:uppercase; letter-spacing:0.05em; }
+  .vhead .icons { display:flex; gap:6px; align-items:center; }
+  .vhead .icons button { display:flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:6px; border:1px solid #3f3f46; background:#09090b; cursor:pointer; }
+  .vhead .icons button.dup { color:#a5b4fc; }
+  .vhead .icons button.dup:hover { background:#312e81; border-color:#4f46e5; }
+  .vhead .icons button.del { color:#fca5a5; }
+  .vhead .icons button.del:hover { background:#450a0a; border-color:#dc2626; }
+  .row1 { display:grid; grid-template-columns: 1.8fr 1.4fr 0.9fr 0.55fr 0.55fr; gap:6px; margin-bottom:10px; }
+  .field label { display:block; font-size:9px; text-transform:uppercase; color:#71717a; margin-bottom:2px; letter-spacing:0.03em; }
+  .field input, .field select { width:100%; height:30px; background:#09090b; border:1px solid #3f3f46; border-radius:5px; color:#e4e4e7; font-size:11px; padding:0 6px; box-sizing:border-box; }
+  .label-opt { font-size:11px; color:#a1a1aa; margin:0 0 6px 4px; }
+</style>
+
+<p class="label-opt">Option A — Copy (duplicate) + Trash-2 (delete), lucide-react style:</p>
+<div class="vcard">
+  <div class="vhead">
+    <span class="title">Variant 1</span>
+    <div class="icons">
+      <button class="dup" title="Duplicate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+      <button class="del" title="Delete">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="row1">
+    <div class="field"><label>Variant Name *</label><input value="9W"></div>
+    <div class="field"><label>Barcode</label><input value="LIGHT9W"></div>
+    <div class="field"><label>SKU (optional)</label><input placeholder="Auto or type"></div>
+    <div class="field"><label>Tax %</label><select><option>18%</option></select></div>
+    <div class="field"><label>GST</label><select><option>Incl</option></select></div>
+  </div>
+</div>
+
+<p class="label-opt">Option B — Copy-plus (duplicate) + X-circle (delete):</p>
+<div class="vcard">
+  <div class="vhead">
+    <span class="title">Variant 1</span>
+    <div class="icons">
+      <button class="dup" title="Duplicate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+      </button>
+      <button class="del" title="Delete">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="row1">
+    <div class="field"><label>Variant Name *</label><input value="9W"></div>
+    <div class="field"><label>Barcode</label><input value="LIGHT9W"></div>
+    <div class="field"><label>SKU (optional)</label><input placeholder="Auto or type"></div>
+    <div class="field"><label>Tax %</label><select><option>18%</option></select></div>
+    <div class="field"><label>GST</label><select><option>Incl</option></select></div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:10px">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Option A</h3>
+      <p>Copy icon + Trash-2 icon</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Option B</h3>
+      <p>Copy-plus icon + X-circle icon</p>
+    </div>
+  </div>
+</div>
