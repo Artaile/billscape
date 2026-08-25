@@ -250,9 +250,10 @@ export function POSTab() {
     queryKey: ['billing-products', orgId, productSearch],
     enabled: !!orgId,
     queryFn: async () => {
+      const selectCols = 'id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor'
       let query = supabase
         .from('products')
-        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+        .select(selectCols)
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -263,7 +264,35 @@ export function POSTab() {
       }
 
       const { data } = await query
-      return data ?? []
+      const results = data ?? []
+
+      if (!productSearch) return results
+
+      // A typed/scanned code can match a VARIANT's own barcode rather than the parent product's —
+      // the .or() filter above only ever checks products.barcode_value, so a variant barcode
+      // (e.g. from a printed variant label) matched nothing here and the grid went blank while the
+      // merchant was still typing, even though Enter correctly resolves and adds it (see
+      // resolveBarcodeAndAddToCart below). Union in the parent products of any matching variants so
+      // the grid shows the has_variants product to click into (or so the row is already visible by
+      // the time Enter adds it directly), same UX as a name/parent-barcode match.
+      const { data: variantMatches } = await supabase
+        .from('product_variants')
+        .select('product_id')
+        .eq('organization_id', orgId!)
+        .or(`barcode_value.ilike.%${productSearch}%,variant_name.ilike.%${productSearch}%`)
+
+      const matchedParentIds = [...new Set((variantMatches ?? []).map((v) => v.product_id))]
+        .filter((id) => !results.some((p) => p.id === id))
+      if (matchedParentIds.length === 0) return results
+
+      const { data: extraProducts } = await supabase
+        .from('products')
+        .select(selectCols)
+        .eq('organization_id', orgId!)
+        .eq('is_active', true)
+        .in('id', matchedParentIds)
+
+      return [...results, ...(extraProducts ?? [])]
     },
   })
 

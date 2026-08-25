@@ -610,7 +610,13 @@ export function PurchaseFormPage() {
           is_new_product: r.is_new_product,
           product_name: r.product_name.trim(),
           sku: r.sku.trim() || undefined,
-          barcode_value: r.barcode_value.trim() || undefined,
+          // A has_variants row's parent barcode_value field is hidden from the entry UI (see Row 2
+          // above) but its state can still hold whatever generateBarcode() auto-filled the instant
+          // a new product name was typed, before Track Variants was ever toggled on — the merchant
+          // never sees or can clear that leftover value once variants are enabled. Sending it
+          // through here would save a stale/duplicate-risking barcode onto the parent product row
+          // even though every real barcode now lives on the variants (r.variants[].barcode_value).
+          barcode_value: r.has_variants ? undefined : (r.barcode_value.trim() || undefined),
           tax_rate: r.tax_rate,
           qty: baseQty,
           unit_cost: parseNum(r.unit_cost),
@@ -844,8 +850,12 @@ export function PurchaseFormPage() {
                   )}
                 </div>
 
-                {/* Row 2: Code, Barcode, GST%, Rate, Qty */}
-                <div className={cn('grid grid-cols-2 gap-2', entry.has_variants ? 'sm:grid-cols-3' : 'sm:grid-cols-5')}>
+                {/* Row 2: Code, Barcode, GST%, Rate, Qty — Barcode/GST%/Rate/Qty are all
+                    per-variant once Track Variants is on (VariantEditor below has its own
+                    Barcode field + GST select per row), so showing a parent-level value here
+                    would be dead/misleading — the parent product itself has no single barcode
+                    or tax rate anymore, same reasoning already applied to Rate/Qty. */}
+                <div className={cn('grid grid-cols-2 gap-2', entry.has_variants ? 'sm:grid-cols-1' : 'sm:grid-cols-5')}>
                   <div className="space-y-1">
                     <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
                     <div className="flex gap-1">
@@ -863,6 +873,7 @@ export function PurchaseFormPage() {
                     </div>
                   </div>
 
+                  {!entry.has_variants && (
                   <div className="space-y-1">
                     <Label className="text-xs">Barcode{entry.is_new_product && ' *'}</Label>
                     <div className="flex gap-1">
@@ -892,7 +903,9 @@ export function PurchaseFormPage() {
                       }}
                     />
                   </div>
+                  )}
 
+                  {!entry.has_variants && (
                   <div className="space-y-1">
                     <Label className="text-xs">GST %</Label>
                     <select
@@ -903,6 +916,7 @@ export function PurchaseFormPage() {
                       {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
                     </select>
                   </div>
+                  )}
 
                   {!entry.has_variants && (
                     <div className="space-y-1">
