@@ -25,6 +25,7 @@ import { InventoryPage } from '@/pages/inventory/InventoryPage'
 import { CustomersPage } from '@/pages/customers/CustomersPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
+import { ProfilePage } from '@/pages/profile/ProfilePage'
 import { PurchasesPage } from '@/pages/purchases/PurchasesPage'
 import { PurchaseFormPage } from '@/pages/purchases/PurchaseFormPage'
 import { PurchaseViewPage } from '@/pages/purchases/PurchaseViewPage'
@@ -155,6 +156,7 @@ export function AppRouter() {
                   <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />
                   <Route path="ledger" element={<RequireRole roles={['owner', 'manager']}><LedgerPage /></RequireRole>} />
                   <Route path="settings" element={<RequireRole roles={['owner']}><SettingsPage /></RequireRole>} />
+                  <Route path="profile" element={<ProfilePage />} />
                 </Routes>
               </AppShell>
             </RequireOrg>

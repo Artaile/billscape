@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Gift, Loader2, Plus, Search, Star, History, ChevronRight } from 'lucide-react'
+import { Gift, Loader2, Plus, Search, Star, History, ChevronRight, Download, Upload, FileSpreadsheet, ArrowUpDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -14,6 +14,8 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table'
 import { toast } from '@/hooks/use-toast'
+import { logActivity } from '@/lib/activityLog'
+import { exportToCSV, parseCSV } from '@/lib/csvUtils'
 
 interface LoyaltyCustomer {
   id: string
@@ -45,7 +47,13 @@ export function LoyaltyPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<LoyaltySetting>({ points_per_rupee: 1, rupees_per_point: 0.5, min_redeem_points: 100 })
 
-  const { data: customers = [], isLoading } = useQuery({
+  const [sortBy, setSortBy] = useState<'points-desc' | 'points-asc' | 'earned-desc' | 'redeemed-desc' | 'name-asc' | 'name-desc' | 'date-newest' | 'date-oldest'>('points-desc')
+  const [pointsFilter, setPointsFilter] = useState('all')
+  const [isImporting, setIsImporting] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const { data: rawCustomers = [], isLoading } = useQuery({
     queryKey: ['loyalty_customers', orgId],
     enabled: !!orgId,
     queryFn: async () => {
@@ -73,15 +81,122 @@ export function LoyaltyPage() {
     },
   })
 
-  const filtered = search.trim()
-    ? customers.filter((c) =>
-        c.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-        (c.customer_phone ?? '').includes(search)
-      )
-    : customers
+  // Filter & Sort
+  const filtered = rawCustomers
+    .filter((c) => {
+      if (search.trim()) {
+        const q = search.toLowerCase()
+        const matchSearch =
+          c.customer_name.toLowerCase().includes(q) ||
+          (c.customer_phone ?? '').includes(q)
+        if (!matchSearch) return false
+      }
+      if (pointsFilter === 'has-points' && c.points_balance <= 0) return false
+      if (pointsFilter === 'zero-points' && c.points_balance > 0) return false
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'points-desc':
+          return b.points_balance - a.points_balance
+        case 'points-asc':
+          return a.points_balance - b.points_balance
+        case 'earned-desc':
+          return b.total_points_earned - a.total_points_earned
+        case 'redeemed-desc':
+          return b.total_points_redeemed - a.total_points_redeemed
+        case 'name-asc':
+          return a.customer_name.localeCompare(b.customer_name)
+        case 'name-desc':
+          return b.customer_name.localeCompare(a.customer_name)
+        case 'date-newest':
+          return (b.created_at || '').localeCompare(a.created_at || '')
+        case 'date-oldest':
+          return (a.created_at || '').localeCompare(b.created_at || '')
+        default:
+          return 0
+      }
+    })
 
-  const totalPoints = customers.reduce((s, c) => s + c.points_balance, 0)
-  const totalEarned = customers.reduce((s, c) => s + c.total_points_earned, 0)
+  const handleExportCSV = () => {
+    if (!filtered.length) {
+      toast.error('No loyalty members to export')
+      return
+    }
+    const headers = ['Customer Name', 'Phone', 'Points Balance', 'Total Points Earned', 'Total Points Redeemed', 'Enrolled Date']
+    const rows = filtered.map((c) => [
+      c.customer_name,
+      c.customer_phone ?? '',
+      c.points_balance,
+      c.total_points_earned,
+      c.total_points_redeemed,
+      c.created_at ? new Date(c.created_at).toISOString().slice(0, 10) : '',
+    ])
+    const dateStr = new Date().toISOString().slice(0, 10)
+    exportToCSV(`loyalty-members-${dateStr}`, headers, rows)
+    toast.success('Loyalty members exported to CSV')
+  }
+
+  const handleDownloadTemplate = () => {
+    const headers = ['Customer Name', 'Phone', 'Points Balance', 'Total Points Earned', 'Total Points Redeemed']
+    const sampleRows = [
+      ['Kumar', '9876543210', '250', '500', '250'],
+      ['Lakshmi Store', '9123456789', '1000', '1000', '0'],
+    ]
+    exportToCSV('loyalty_members_import_template', headers, sampleRows)
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    setIsImporting(true)
+    try {
+      const records = await parseCSV(file)
+      if (!records.length) {
+        toast.error('Import Failed', 'CSV file is empty or invalid format')
+        return
+      }
+
+      let importedCount = 0
+      for (const row of records) {
+        const name = row['customer name'] || row['name'] || row['member name'] || ''
+        if (!name.trim()) continue
+
+        const rawPhone = row['phone'] || row['mobile'] || row['phone number'] || ''
+        const phoneDigits = rawPhone.replace(/\D/g, '').slice(0, 10)
+        const pointsBalance = parseInt(row['points balance'] || row['points'] || row['balance'] || '0') || 0
+        const totalEarned = parseInt(row['total points earned'] || row['earned'] || String(pointsBalance)) || pointsBalance
+        const totalRedeemed = parseInt(row['total points redeemed'] || row['redeemed'] || '0') || 0
+
+        await supabase.from('loyalty_customers').insert({
+          organization_id: orgId,
+          customer_name: name.trim(),
+          customer_phone: phoneDigits || null,
+          points_balance: pointsBalance,
+          total_points_earned: totalEarned,
+          total_points_redeemed: totalRedeemed,
+        })
+        importedCount++
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['loyalty_customers', orgId] })
+      await logActivity({
+        organizationId: orgId,
+        action: 'imported',
+        entity: 'loyalty_customer',
+        metadata: { count: importedCount, filename: file.name },
+      })
+      toast.success(`Import Complete`, `Successfully imported ${importedCount} loyalty members!`)
+    } catch (err: any) {
+      toast.error('Import Failed', err.message || 'Failed to parse CSV file')
+    } finally {
+      setIsImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const totalPoints = rawCustomers.reduce((s, c) => s + c.points_balance, 0)
+  const totalEarned = rawCustomers.reduce((s, c) => s + c.total_points_earned, 0)
 
   const adjustMutation = useMutation({
     mutationFn: async () => {
@@ -133,6 +248,7 @@ export function LoyaltyPage() {
 
   const addCustomerMutation = useMutation({
     mutationFn: async ({ name, phone }: { name: string; phone: string }) => {
+      if (!name.trim()) throw new Error('Customer name is required')
       const { error } = await supabase.from('loyalty_customers').insert({
         organization_id: orgId!,
         customer_name: name.trim(),
@@ -153,7 +269,21 @@ export function LoyaltyPage() {
   const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [newName, setNewName] = useState('')
   const [newPhone, setNewPhone] = useState('')
+  const [selectedCustId, setSelectedCustId] = useState('')
   const [historyCustomer, setHistoryCustomer] = useState<LoyaltyCustomer | null>(null)
+
+  const { data: existingCustomers = [] } = useQuery({
+    queryKey: ['existing_customers', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('customers')
+        .select('id, name, phone')
+        .eq('organization_id', orgId!)
+        .order('name')
+      return data ?? []
+    },
+  })
 
   const { data: transactions = [], isLoading: txLoading } = useQuery({
     queryKey: ['loyalty_transactions', orgId, historyCustomer?.id],
@@ -172,15 +302,22 @@ export function LoyaltyPage() {
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground">Loyalty Program</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Reward customers with points on every purchase</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowSettings(true)}>Settings</Button>
-          <Button onClick={() => setShowAddCustomer(true)}>
-            <Plus className="h-4 w-4" /> Add Customer
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} disabled={isImporting}>
+            {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
+            Import CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}>
+            <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setShowSettings(true)}>Settings</Button>
+          <Button size="sm" onClick={() => setShowAddCustomer(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Add Member
           </Button>
         </div>
       </div>
@@ -189,7 +326,7 @@ export function LoyaltyPage() {
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center gap-2 mb-1"><Star className="h-4 w-4 text-yellow-400" /><span className="text-xs text-muted-foreground">Total Members</span></div>
-          <p className="text-2xl font-bold">{customers.length}</p>
+          <p className="text-2xl font-bold">{rawCustomers.length}</p>
         </div>
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center gap-2 mb-1"><Gift className="h-4 w-4 text-green-400" /><span className="text-xs text-muted-foreground">Points in Circulation</span></div>
@@ -205,10 +342,42 @@ export function LoyaltyPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Search by name or phone..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      {/* Filters & Sort Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search by name or phone..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+            >
+              <option value="points-desc">Sort: Points (High to Low)</option>
+              <option value="points-asc">Sort: Points (Low to High)</option>
+              <option value="earned-desc">Sort: Earned (High to Low)</option>
+              <option value="redeemed-desc">Sort: Redeemed (High to Low)</option>
+              <option value="name-asc">Sort: Name (A to Z)</option>
+              <option value="name-desc">Sort: Name (Z to A)</option>
+              <option value="date-newest">Sort: Enrolled (Newest)</option>
+              <option value="date-oldest">Sort: Enrolled (Oldest)</option>
+            </select>
+          </div>
+
+          <select
+            value={pointsFilter}
+            onChange={(e) => setPointsFilter(e.target.value)}
+            className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+          >
+            <option value="all">All Members</option>
+            <option value="has-points">Has Points (&gt; 0)</option>
+            <option value="zero-points">Zero Points (0)</option>
+          </select>
+        </div>
       </div>
 
       {/* Table */}
@@ -278,13 +447,78 @@ export function LoyaltyPage() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Add Loyalty Member</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div className="space-y-1.5"><Label>Name *</Label><Input placeholder="Customer name" value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
-            <div className="space-y-1.5"><Label>Phone</Label><Input placeholder="Phone number" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} /></div>
+            {existingCustomers.length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground flex items-center justify-between">
+                  <span>Select from Existing Customers</span>
+                  <span className="text-[10px] text-indigo-400 font-semibold">Optional</span>
+                </Label>
+                <select
+                  value={selectedCustId}
+                  onChange={(e) => {
+                    const custId = e.target.value
+                    setSelectedCustId(custId)
+                    const cust = existingCustomers.find((x) => x.id === custId)
+                    if (cust) {
+                      setNewName(cust.name)
+                      setNewPhone(cust.phone ?? '')
+                    }
+                  }}
+                  className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+                >
+                  <option value="">-- Choose Customer --</option>
+                  {existingCustomers.map((cust) => (
+                    <option key={cust.id} value={cust.id}>
+                      {cust.name} {cust.phone ? `• ${cust.phone}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {existingCustomers.length > 0 && (
+              <div className="relative border-t border-border my-1">
+                <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-[10px] text-muted-foreground uppercase">
+                  Or Enter Details
+                </span>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label>Member Name *</Label>
+              <Input
+                placeholder="Member full name"
+                value={newName}
+                onChange={(e) => {
+                  setNewName(e.target.value)
+                  setSelectedCustId('')
+                }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Phone Number</Label>
+              <Input
+                placeholder="Mobile number (10 digits)"
+                maxLength={10}
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              />
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddCustomer(false)}>Cancel</Button>
-            <Button onClick={() => { addCustomerMutation.mutate({ name: newName, phone: newPhone }); setShowAddCustomer(false); setNewName(''); setNewPhone('') }}
-              disabled={!newName.trim()}>Add</Button>
+            <Button variant="outline" onClick={() => { setShowAddCustomer(false); setSelectedCustId(''); setNewName(''); setNewPhone('') }}>Cancel</Button>
+            <Button
+              onClick={() => {
+                addCustomerMutation.mutate({ name: newName, phone: newPhone })
+                setShowAddCustomer(false)
+                setSelectedCustId('')
+                setNewName('')
+                setNewPhone('')
+              }}
+              disabled={!newName.trim()}
+            >
+              Add Member
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -405,6 +639,85 @@ export function LoyaltyPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSettings(false)}>Cancel</Button>
             <Button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}>Save Settings</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Loyalty Members Modal */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-100">
+              <FileSpreadsheet className="h-5 w-5 text-indigo-400" />
+              Import Loyalty Members from CSV
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Step 1 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  1
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Download the template</p>
+                    <p className="text-[11px] text-zinc-400">Sample CSV format with column headers and example loyalty member rows</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadTemplate}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    Download Template (CSV)
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  2
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Upload your filled CSV file</p>
+                    <p className="text-[11px] text-zinc-400">Select your completed member CSV file to batch import records</p>
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => {
+                      handleFileChange(e)
+                      setShowImport(false)
+                    }}
+                    accept=".csv"
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 text-indigo-400" />}
+                    Choose CSV file
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setShowImport(false)}>
+              Cancel
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

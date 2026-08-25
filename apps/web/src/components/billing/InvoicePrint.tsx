@@ -24,6 +24,7 @@ export interface InvoicePrintProps {
   totals: InvoiceTotals
   paymentMode: string
   paymentDetail?: string
+  billedBy?: string
   branding?: OrgBranding
   invoiceTemplate?: OrgInvoiceTemplate
   /** Hide the built-in "Print Invoice" button — set when the host page provides its own print action. */
@@ -50,6 +51,7 @@ export function InvoicePrint({
   totals,
   paymentMode,
   paymentDetail,
+  billedBy,
   branding,
   invoiceTemplate,
   hidePrintButton,
@@ -319,27 +321,10 @@ export function InvoicePrint({
           </div>
         )}
 
-        {/* Items table */}
+        {/* Items list / table */}
         <div className="py-2">
-          <table className="w-full text-left text-[0.9em]">
-            <thead>
-              <tr className="border-b border-zinc-950 font-bold">
-                {showSno && <th className="py-1 pr-1">#</th>}
-                {showColumnItemName && <th className="py-1">Item</th>}
-                {showHsn && <th className="py-1">HSN</th>}
-                {showColumnMrp && <th className="py-1 text-right">MRP</th>}
-                {showColumnQty && <th className="py-1 text-center">Qty</th>}
-                {showColumnUnit && <th className="py-1">Unit</th>}
-                {showColumnRate && <th className="py-1 text-right">Rate</th>}
-                {showColumnDiscountType && <th className="py-1">Disc Type</th>}
-                {showDiscount && <th className="py-1 text-right">Disc</th>}
-                {showTaxRate && <th className="py-1 text-right">GST%</th>}
-                {showColumnTaxableValue && <th className="py-1 text-right">Taxable</th>}
-                {showColumnTaxAmount && <th className="py-1 text-right">Tax Amt</th>}
-                {showColumnItemTotal && <th className="py-1 text-right">Amount</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200">
+          {isThermal ? (
+            <div className="divide-y divide-dashed divide-zinc-300 border-t border-b border-zinc-950 py-1">
               {items.map((item, i) => {
                 const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
                 const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
@@ -358,43 +343,116 @@ export function InvoicePrint({
                   item.discount_amount,
                   taxInclusivePricing,
                 )
-                const rowTaxable = lineCalc.taxableAmount
-                const rowTax = lineCalc.cgst + lineCalc.sgst + lineCalc.igst
                 const lineTotal = lineCalc.lineTotal
+
                 return (
-                  <tr key={item.product_id || i}>
-                    {showSno && <td className="py-1 text-zinc-500">{i + 1}</td>}
-                    {showColumnItemName && (
-                      <td className="py-1 font-medium">
-                        {item.product_name}
-                      </td>
-                    )}
-                    {showHsn && <td className="py-1 text-zinc-600">{item.hsn_code ?? '-'}</td>}
-                    {showColumnMrp && <td className="py-1 text-right text-zinc-400">—</td>}
-                    {showColumnQty && (
-                      <td className="py-1 text-center font-bold whitespace-nowrap">
-                        {displayQty}
-                      </td>
-                    )}
-                    {showColumnUnit && <td className="py-1 text-zinc-600">{displayUnitSymbol ?? '-'}</td>}
-                    {showColumnRate && <td className="py-1 text-right">{formatINR(item.unit_price)}</td>}
-                    {showColumnDiscountType && (
-                      <td className="py-1 text-zinc-600 capitalize">{item.discount_type ?? '-'}</td>
-                    )}
-                    {showDiscount && (
-                      <td className="py-1 text-right text-zinc-600">
-                        {item.discount_type === 'flat' ? `-${formatINR(discAmt)}` : `-${item.discount_pct}%`}
-                      </td>
-                    )}
-                    {showTaxRate && <td className="py-1 text-right text-zinc-600">{item.tax_rate}%</td>}
-                    {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{formatINR(rowTaxable)}</td>}
-                    {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{formatINR(rowTax)}</td>}
-                    {showColumnItemTotal && <td className="py-1 text-right font-bold">{formatINR(lineTotal)}</td>}
-                  </tr>
+                  <div key={item.product_id || i} className="py-1.5 space-y-0.5 text-[0.88em]">
+                    {/* Line 1: Item Name + HSN */}
+                    <div className="flex justify-between font-bold text-zinc-950 leading-tight">
+                      <span className="truncate pr-1">
+                        {showSno ? `${i + 1}. ` : ''}{item.product_name}
+                      </span>
+                      {showHsn && item.hsn_code && (
+                        <span className="text-[0.82em] text-zinc-500 font-normal shrink-0">HSN: {item.hsn_code}</span>
+                      )}
+                    </div>
+                    {/* Line 2: Qty x Rate (Disc / Tax) -> Amount */}
+                    <div className="flex items-center justify-between text-zinc-700 text-[0.88em]">
+                      <span className="text-zinc-600">
+                        {showColumnQty && <span className="font-semibold text-zinc-900">{displayQty}</span>}
+                        {showColumnUnit && displayUnitSymbol ? ` ${displayUnitSymbol}` : ''}
+                        {showColumnRate && ` x ${formatINR(item.unit_price)}`}
+                        {showDiscount && (item.discount_pct > 0 || (item.discount_amount && item.discount_amount > 0)) ? (
+                          <span className="text-zinc-500 text-[0.85em] ml-1">
+                            ({item.discount_type === 'flat' ? `-${formatINR(discAmt)}` : `-${item.discount_pct}%`})
+                          </span>
+                        ) : null}
+                        {showTaxRate && item.tax_rate > 0 ? (
+                          <span className="text-zinc-500 text-[0.85em] ml-1">GST {item.tax_rate}%</span>
+                        ) : null}
+                      </span>
+                      <span className="font-bold text-zinc-950 tabular-nums shrink-0 ml-2">{formatINR(lineTotal)}</span>
+                    </div>
+                  </div>
                 )
               })}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            <table className="w-full text-left text-[0.9em]">
+              <thead>
+                <tr className="border-b border-zinc-950 font-bold">
+                  {showSno && <th className="py-1 pr-1">#</th>}
+                  {showColumnItemName && <th className="py-1">Item</th>}
+                  {showHsn && <th className="py-1">HSN</th>}
+                  {showColumnMrp && <th className="py-1 text-right">MRP</th>}
+                  {showColumnQty && <th className="py-1 text-center">Qty</th>}
+                  {showColumnUnit && <th className="py-1">Unit</th>}
+                  {showColumnRate && <th className="py-1 text-right">Rate</th>}
+                  {showColumnDiscountType && <th className="py-1">Disc Type</th>}
+                  {showDiscount && <th className="py-1 text-right">Disc</th>}
+                  {showTaxRate && <th className="py-1 text-right">GST%</th>}
+                  {showColumnTaxableValue && <th className="py-1 text-right">Taxable</th>}
+                  {showColumnTaxAmount && <th className="py-1 text-right">Tax Amt</th>}
+                  {showColumnItemTotal && <th className="py-1 text-right">Amount</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200">
+                {items.map((item, i) => {
+                  const sellingSecondary = item.secondary_unit && item.selling_unit_id === item.secondary_unit.id && item.conversion_factor
+                  const displayQty = sellingSecondary ? item.qty / (item.conversion_factor as number) : item.qty
+                  const displayUnitSymbol = sellingSecondary ? item.secondary_unit?.symbol : item.unit?.symbol
+                  const base = item.unit_price * item.qty
+                  const discAmt = item.discount_type === 'flat'
+                    ? Math.min(item.discount_amount ?? 0, base)
+                    : base * (item.discount_pct / 100)
+                  const lineCalc = computeLineTax(
+                    item.unit_price,
+                    item.qty,
+                    item.discount_pct,
+                    item.tax_rate,
+                    totals.is_interstate,
+                    item.discount_type,
+                    item.discount_amount,
+                    taxInclusivePricing,
+                  )
+                  const rowTaxable = lineCalc.taxableAmount
+                  const rowTax = lineCalc.cgst + lineCalc.sgst + lineCalc.igst
+                  const lineTotal = lineCalc.lineTotal
+                  return (
+                    <tr key={item.product_id || i}>
+                      {showSno && <td className="py-1 text-zinc-500">{i + 1}</td>}
+                      {showColumnItemName && (
+                        <td className="py-1 font-medium">
+                          {item.product_name}
+                        </td>
+                      )}
+                      {showHsn && <td className="py-1 text-zinc-600">{item.hsn_code ?? '-'}</td>}
+                      {showColumnMrp && <td className="py-1 text-right text-zinc-400">—</td>}
+                      {showColumnQty && (
+                        <td className="py-1 text-center font-bold whitespace-nowrap">
+                          {displayQty}
+                        </td>
+                      )}
+                      {showColumnUnit && <td className="py-1 text-zinc-600">{displayUnitSymbol ?? '-'}</td>}
+                      {showColumnRate && <td className="py-1 text-right">{formatINR(item.unit_price)}</td>}
+                      {showColumnDiscountType && (
+                        <td className="py-1 text-zinc-600 capitalize">{item.discount_type ?? '-'}</td>
+                      )}
+                      {showDiscount && (
+                        <td className="py-1 text-right text-zinc-600">
+                          {item.discount_type === 'flat' ? `-${formatINR(discAmt)}` : `-${item.discount_pct}%`}
+                        </td>
+                      )}
+                      {showTaxRate && <td className="py-1 text-right text-zinc-600">{item.tax_rate}%</td>}
+                      {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{formatINR(rowTaxable)}</td>}
+                      {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{formatINR(rowTax)}</td>}
+                      {showColumnItemTotal && <td className="py-1 text-right font-bold">{formatINR(lineTotal)}</td>}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Totals + Tax breakup */}
@@ -531,24 +589,50 @@ export function InvoicePrint({
           )}
 
           {upiQrDataUrl && (
-            <div className="flex items-center gap-3 p-2 bg-zinc-50 border border-zinc-200 rounded justify-center">
-              <img src={upiQrDataUrl} alt="Scan & Pay UPI QR" className="h-20 w-20 object-contain rounded border border-zinc-200 shadow-sm" />
-              <div className="text-left space-y-0.5">
-                <p className="text-[0.85em] font-bold text-zinc-900 uppercase">Scan &amp; Pay via UPI</p>
-                {branding?.upi_id && <p className="text-[0.8em] font-mono font-semibold text-zinc-700">{branding.upi_id}</p>}
-                <p className="text-[0.75em] text-zinc-500">Google Pay • PhonePe • Paytm</p>
+            isThermal ? (
+              <div className="py-2 border-t border-b border-dashed border-zinc-300 my-2 text-center space-y-1">
+                <img
+                  src={upiQrDataUrl}
+                  alt="Scan & Pay UPI QR"
+                  className="h-24 w-24 object-contain mx-auto rounded border border-zinc-300 p-1 bg-white shadow-sm"
+                />
+                <div>
+                  <p className="text-[0.85em] font-bold text-zinc-950 uppercase tracking-wide">
+                    Scan &amp; Pay {formatINR(totals.net_payable)} via UPI
+                  </p>
+                  {branding?.upi_id && (
+                    <p className="text-[0.8em] font-mono font-semibold text-zinc-700 mt-0.5">{branding.upi_id}</p>
+                  )}
+                  <p className="text-[0.72em] text-zinc-500 mt-0.5">Google Pay • PhonePe • Paytm • BHIM</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center gap-3 p-2 bg-zinc-50 border border-zinc-200 rounded justify-center">
+                <img src={upiQrDataUrl} alt="Scan & Pay UPI QR" className="h-20 w-20 object-contain rounded border border-zinc-200 shadow-sm" />
+                <div className="text-left space-y-0.5">
+                  <p className="text-[0.85em] font-bold text-zinc-900 uppercase">Scan &amp; Pay via UPI</p>
+                  {branding?.upi_id && <p className="text-[0.8em] font-mono font-semibold text-zinc-700">{branding.upi_id}</p>}
+                  <p className="text-[0.75em] text-zinc-500">Google Pay • PhonePe • Paytm • BHIM</p>
+                </div>
+              </div>
+            )
           )}
 
           {showTerms && termsText && (
             <p className="text-[0.85em] text-zinc-500 italic leading-tight whitespace-pre-line">{termsText}</p>
           )}
 
-          <p className="text-[0.85em] text-zinc-600">
-            Payment Mode: <span className="font-bold capitalize">{paymentMode}</span>
-            {paymentDetail && <span className="text-zinc-500"> ({paymentDetail})</span>}
-          </p>
+          <div className="flex justify-between items-center text-[0.85em] text-zinc-600">
+            <span>
+              Payment Mode: <span className="font-bold capitalize">{paymentMode}</span>
+              {paymentDetail && <span className="text-zinc-500"> ({paymentDetail})</span>}
+            </span>
+            {billedBy && (
+              <span>
+                Billed By: <span className="font-semibold text-zinc-800">{billedBy}</span>
+              </span>
+            )}
+          </div>
 
           {showSignatory && (
             <div className="pt-2 flex justify-end">

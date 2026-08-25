@@ -121,6 +121,29 @@ export function RolesPage() {
         is_system: isSystemRole(r),
       }))
 
+      // Deduplicate system roles by normalized name (pick the row with the most true permissions)
+      const seenSystemRoles = new Map<string, Role>()
+      const customRoles: Role[] = []
+
+      for (const r of normalizedRoles) {
+        const normName = r.name.toLowerCase().trim()
+        if (r.is_system) {
+          const existing = seenSystemRoles.get(normName)
+          if (!existing) {
+            seenSystemRoles.set(normName, r)
+          } else {
+            const countTrue = (role: Role) => Object.values(role.permissions || {}).filter(Boolean).length
+            if (countTrue(r) > countTrue(existing)) {
+              seenSystemRoles.set(normName, r)
+            }
+          }
+        } else {
+          customRoles.push(r)
+        }
+      }
+
+      const deduplicatedRoles = [...Array.from(seenSystemRoles.values()), ...customRoles]
+
       // Auto-sync in background if database had is_system = false for any base system role
       const needDbUpdate = rawRoles.filter(
         (r) => SYSTEM_ROLE_NAMES.includes(r.name.toLowerCase().trim()) && !r.is_system
@@ -134,7 +157,7 @@ export function RolesPage() {
       }
 
       // Sort: system roles first (owner, admin, manager, cashier), then custom roles alphabetically
-      return normalizedRoles.sort((a, b) => {
+      return deduplicatedRoles.sort((a, b) => {
         const aSys = isSystemRole(a)
         const bSys = isSystemRole(b)
         if (aSys && bSys) {

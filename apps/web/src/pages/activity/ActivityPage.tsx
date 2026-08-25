@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 
 interface ActivityLog {
   id: string
+  actor_id?: string | null
   actor_name: string
   action: string
   entity: string
@@ -18,16 +19,33 @@ interface ActivityLog {
   metadata: Record<string, unknown> | null
   created_at: string
 }
+function formatActivityDetails(log: ActivityLog): string {
+  const m = log.metadata
+  if (!m) return '—'
 
-function getActorDisplayName(log: ActivityLog): string {
-  if (log.actor_name && log.actor_name.trim()) return log.actor_name.trim()
-  if (log.metadata) {
-    if (typeof log.metadata.actor_name === 'string' && log.metadata.actor_name.trim()) return log.metadata.actor_name.trim()
-    if (typeof log.metadata.actor_email === 'string' && log.metadata.actor_email.trim()) return log.metadata.actor_email.trim()
-    if (typeof log.metadata.user_email === 'string' && log.metadata.user_email.trim()) return log.metadata.user_email.trim()
-    if (typeof log.metadata.email === 'string' && log.metadata.email.trim()) return log.metadata.email.trim()
+  if (m.employee_name) {
+    const roleStr = m.role ? ` as ${String(m.role).charAt(0).toUpperCase() + String(m.role).slice(1)}` : ''
+    return `${m.employee_name}${roleStr}`
   }
-  return 'System / Admin'
+
+  if (m.invoice_no) {
+    const amountStr = m.grand_total || m.net_payable ? ` (₹${Number(m.grand_total || m.net_payable).toLocaleString('en-IN')})` : ''
+    const modeStr = m.payment_mode ? ` via ${String(m.payment_mode).toUpperCase()}` : ''
+    return `Invoice ${m.invoice_no}${amountStr}${modeStr}`
+  }
+
+  if (m.product_name || m.name) {
+    return `${m.product_name || m.name}`
+  }
+
+  const parts: string[] = []
+  for (const [key, val] of Object.entries(m)) {
+    if (val !== undefined && val !== null && typeof val !== 'object') {
+      const cleanKey = key.replace(/_/g, ' ')
+      parts.push(`${cleanKey}: ${val}`)
+    }
+  }
+  return parts.length > 0 ? parts.join(' • ') : JSON.stringify(m)
 }
 
 function getActionBadgeStyle(action: string): string {
@@ -64,13 +82,29 @@ function bucketOf(action: string): Exclude<ActionBucket, 'all'> | null {
 }
 
 export function ActivityPage() {
-  const { org } = useAuth()
+  const { org, user, role } = useAuth()
   const orgId = org?.id
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [actionFilter, setActionFilter] = useState<ActionBucket>('all')
   const [actorFilter, setActorFilter] = useState('all')
+
+  const currentUserName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'
+  const currentRoleLabel = role ? (role.charAt(0).toUpperCase() + role.slice(1)) : 'Owner'
+  const currentUserDisplay = `${currentUserName} (${currentRoleLabel})`
+
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('employees')
+        .select('auth_user_id, full_name, role')
+        .eq('organization_id', orgId!)
+      return data ?? []
+    },
+  })
 
   const { data: logs = [], isLoading } = useQuery({
     queryKey: ['activity_log', orgId],
@@ -86,6 +120,31 @@ export function ActivityPage() {
       return (data ?? []) as ActivityLog[]
     },
   })
+
+  const getActorDisplayName = (log: ActivityLog): string => {
+    let name = log.actor_name?.trim() || ''
+    if (log.metadata && !name) {
+      if (typeof log.metadata.actor_name === 'string') name = log.metadata.actor_name.trim()
+    }
+
+    if (!name || name === 'User' || !name.includes('(')) {
+      if (log.actor_id && user && log.actor_id === user.id) {
+        return currentUserDisplay
+      }
+      if (log.actor_id) {
+        const emp = employees.find((e) => e.auth_user_id === log.actor_id)
+        if (emp?.full_name) {
+          const empRole = emp.role ? (emp.role.charAt(0).toUpperCase() + emp.role.slice(1)) : 'Staff'
+          return `${emp.full_name} (${empRole})`
+        }
+      }
+      if (name && name !== 'User') {
+        return `${name} (${currentRoleLabel})`
+      }
+      return currentUserDisplay
+    }
+    return name
+  }
 
   // Smart action bucketing for KPI cards
   const createdCount = logs.filter((l) => {
@@ -245,8 +304,8 @@ export function ActivityPage() {
                     </span>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground capitalize">{log.entity.replace(/_/g, ' ')}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[240px] truncate">
-                    {log.metadata ? JSON.stringify(log.metadata) : '—'}
+                  <TableCell className="text-xs text-muted-foreground max-w-[280px] truncate" title={formatActivityDetails(log)}>
+                    {formatActivityDetails(log)}
                   </TableCell>
                 </TableRow>
               ))}

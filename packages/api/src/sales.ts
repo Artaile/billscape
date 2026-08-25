@@ -6,9 +6,34 @@ import { recordVariantSale } from './variantInventory'
 async function getActorName(client: TypedSupabaseClient, userId: string): Promise<string> {
   if (!userId) return 'User'
   try {
-    const { data } = await client.from('employees').select('full_name').eq('auth_user_id', userId).maybeSingle()
-    if (data?.full_name) return data.full_name
-  } catch {}
+    const { data: mem } = await client
+      .from('org_memberships')
+      .select('role')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    const { data: emp } = await client
+      .from('employees')
+      .select('full_name, role')
+      .eq('auth_user_id', userId)
+      .maybeSingle()
+
+    const roleName = mem?.role || emp?.role || 'cashier'
+    const roleLabel = roleName.charAt(0).toUpperCase() + roleName.slice(1)
+
+    let name = emp?.full_name
+    if (!name) {
+      const { data: prof } = await client
+        .from('profiles')
+        .select('full_name, email')
+        .eq('id', userId)
+        .maybeSingle()
+      name = prof?.full_name || prof?.email?.split('@')[0]
+    }
+
+    if (!name) name = 'User'
+    return `${name} (${roleLabel})`
+  } catch { }
   return 'User'
 }
 
@@ -30,6 +55,7 @@ interface CreateSaleInput {
   card_amount?: number
   upi_amount?: number
   notes?: string
+  billed_by_name?: string
   gst_context: GSTContext
   created_by: string
   order_discount_type?: DiscountType
@@ -112,6 +138,15 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
     invoice_no = formatDocumentNumber(prefix || 'INVOICE', seq, { format, suffix })
   }
 
+  // Resolve operator name for billing metadata tag
+  let operatorName = input.billed_by_name
+  if (!operatorName && input.created_by) {
+    operatorName = await getActorName(client, input.created_by)
+  }
+  const cleanNotes = (input.notes || '').replace(/\[BILLED_BY:\s*".*?"\s*\]/g, '').trim()
+  const billedByTag = `[BILLED_BY: "${operatorName || 'Cashier'}"]`
+  const finalNotes = cleanNotes ? `${cleanNotes}\n${billedByTag}` : billedByTag
+
   const { data: sale, error: saleError } = await client
     .from('sales')
     .insert({
@@ -134,7 +169,7 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
       cash_amount: input.cash_amount ?? null,
       card_amount: input.card_amount ?? null,
       upi_amount: input.upi_amount ?? null,
-      notes: input.notes ?? null,
+      notes: finalNotes,
       created_by: input.created_by,
     })
     .select()
@@ -230,7 +265,30 @@ export async function createSale(client: TypedSupabaseClient, input: CreateSaleI
     console.error('Variant stock bookkeeping failed for sale', sale.id, variantError)
   }
 
-  const actorName = await getActorName(client, input.created_by)
+  // Variant stock is tracked separately from the product-level inventory trigger (see
+  // variant_inventory / Task 1 of the variant-redesign plan) — best-effort, mirrors the existing
+  // loyalty bookkeeping's non-blocking pattern in this same function: a variant-stock failure must
+  // never roll back or fail the sale itself.
+  try {
+    for (const item of input.items) {
+      if (item.variant_id) {
+        const { error: variantStockError } = await recordVariantSale(client, {
+          organizationId: input.organization_id,
+          variantId: item.variant_id,
+          qty: item.qty,
+          referenceId: sale.id,
+          createdBy: input.created_by,
+        })
+        if (variantStockError) {
+          console.error('Variant stock bookkeeping failed for sale', sale.id, item.variant_id, variantStockError)
+        }
+      }
+    }
+  } catch (variantError) {
+    console.error('Variant stock bookkeeping failed for sale', sale.id, variantError)
+  }
+
+  const actorName = input.billed_by_name || (await getActorName(client, input.created_by))
   await client.from('activity_log').insert({
     organization_id: input.organization_id,
     actor_id: input.created_by,

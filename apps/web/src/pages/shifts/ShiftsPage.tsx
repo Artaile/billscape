@@ -8,11 +8,16 @@ import {
   Receipt,
   Loader2,
   CalendarDays,
+  Search,
+  X,
+  Download,
+  ArrowUpDown,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { toast } from '@/hooks/use-toast'
 import { formatINR } from '@billscape/core'
+import { exportToCSV } from '@/lib/csvUtils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -135,7 +140,14 @@ export function ShiftsPage() {
   const [closingCash, setClosingCash] = useState('')
   const [closeNotes, setCloseNotes] = useState('')
 
-  // ── Fetch all shifts (newest first, max 20) ──
+  // Filter & Sort state
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'closed'>('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'sales-desc' | 'diff-desc'>('newest')
+
+  // ── Fetch all shifts (newest first, up to 200) ──
   const { data: shifts, isLoading: shiftsLoading } = useQuery<Shift[]>({
     queryKey: ['shifts', orgId],
     enabled: !!orgId,
@@ -145,11 +157,84 @@ export function ShiftsPage() {
         .select('*')
         .eq('organization_id', orgId!)
         .order('opened_at', { ascending: false })
-        .limit(20)
+        .limit(200)
       if (error) throw error
       return (data ?? []) as Shift[]
     },
   })
+
+  // Filtered & Sorted Shifts
+  const filteredShifts = (shifts ?? [])
+    .filter((s) => {
+      if (search.trim()) {
+        const q = search.trim().toLowerCase()
+        const matchNotes = s.notes?.toLowerCase().includes(q)
+        const matchUser = s.opened_by?.toLowerCase().includes(q)
+        const matchDate = formatDate(s.opened_at).toLowerCase().includes(q)
+        if (!matchNotes && !matchUser && !matchDate) return false
+      }
+      if (statusFilter !== 'all' && s.status !== statusFilter) return false
+      if (dateFrom && s.opened_at.slice(0, 10) < dateFrom) return false
+      if (dateTo && s.opened_at.slice(0, 10) > dateTo) return false
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime()
+        case 'oldest':
+          return new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime()
+        case 'sales-desc':
+          return (b.total_sales ?? 0) - (a.total_sales ?? 0)
+        case 'diff-desc':
+          return Math.abs(b.cash_difference ?? 0) - Math.abs(a.cash_difference ?? 0)
+        default:
+          return 0
+      }
+    })
+
+  const handleExportCSV = () => {
+    const listToExport = filteredShifts.length > 0 ? filteredShifts : (shifts ?? [])
+    if (listToExport.length === 0) {
+      toast.error('No shifts to export')
+      return
+    }
+
+    const headers = [
+      'Opened Date',
+      'Opened Time',
+      'Closed Time',
+      'Status',
+      'Opened By',
+      'Duration',
+      'Opening Cash (Rs)',
+      'Closing Cash (Rs)',
+      'Expected Cash (Rs)',
+      'Total Sales (Rs)',
+      'Bill Count',
+      'Cash Difference (Rs)',
+      'Notes',
+    ]
+
+    const rows = listToExport.map((s) => [
+      formatDate(s.opened_at),
+      formatTime(s.opened_at),
+      s.closed_at ? formatTime(s.closed_at) : 'Active Open',
+      s.status.toUpperCase(),
+      s.opened_by,
+      formatDuration(s.opened_at, s.closed_at),
+      s.opening_cash,
+      s.closing_cash ?? '',
+      s.expected_cash ?? '',
+      s.total_sales,
+      s.bill_count,
+      s.cash_difference ?? 0,
+      s.notes ?? '',
+    ])
+
+    exportToCSV(`shifts_export_${new Date().toISOString().split('T')[0]}.csv`, headers, rows)
+    toast.success(`Exported ${listToExport.length} shifts`)
+  }
 
   // Derived: active shift
   const activeShift = shifts?.find((s) => s.status === 'open') ?? null
@@ -396,12 +481,62 @@ export function ShiftsPage() {
 
       {/* Shift History Table */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-zinc-800">
           <div className="flex items-center gap-2 text-white font-semibold">
             <Clock size={16} className="text-indigo-400" />
             Shift History
           </div>
-          <span className="text-xs text-zinc-500">Last 20 shifts</span>
+          <Button variant="outline" size="sm" onClick={handleExportCSV} className="text-xs border-zinc-700 bg-zinc-800 hover:bg-zinc-700">
+            <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
+          </Button>
+        </div>
+
+        {/* Filters & Search Controls */}
+        <div className="p-4 border-b border-zinc-800/80 bg-zinc-950/40 flex flex-wrap items-center justify-between gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+            <Input
+              placeholder="Search cashier or notes..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 h-8 text-xs bg-zinc-900 border-zinc-700"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 text-xs text-zinc-400">
+              <ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="flex h-8 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 text-xs focus:outline-none text-zinc-200"
+              >
+                <option value="newest">Sort: Opened (Newest)</option>
+                <option value="oldest">Sort: Opened (Oldest)</option>
+                <option value="sales-desc">Sort: Sales (High to Low)</option>
+                <option value="diff-desc">Sort: Cash Diff (Highest)</option>
+              </select>
+            </div>
+
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 w-auto text-xs bg-zinc-900 border-zinc-700" />
+            <span className="text-xs text-zinc-500">to</span>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 w-auto text-xs bg-zinc-900 border-zinc-700" />
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="flex h-8 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 text-xs focus:outline-none text-zinc-200"
+            >
+              <option value="all">All Status</option>
+              <option value="open">Active Open</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
         </div>
 
         {shiftsLoading ? (
@@ -409,10 +544,10 @@ export function ShiftsPage() {
             <Loader2 className="animate-spin mr-2" size={18} />
             Loading shifts…
           </div>
-        ) : !shifts || shifts.length === 0 ? (
+        ) : !filteredShifts || filteredShifts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
             <Clock size={36} className="mb-3 opacity-40" />
-            <p>No shifts recorded yet</p>
+            <p>No shifts match your search or filter</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -430,7 +565,7 @@ export function ShiftsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shifts.map((shift) => {
+                {filteredShifts.map((shift) => {
                   const diff = shift.cash_difference
                   const openerLabel = shift.opened_by.slice(0, 8) + '…'
                   return (

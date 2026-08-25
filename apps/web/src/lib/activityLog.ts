@@ -45,6 +45,36 @@ export async function logActivity({
 
     if (!resolvedUserId) return
 
+    // Ensure actor_name includes role e.g. "muhammadfazilsl455 (Owner)"
+    if (resolvedUserId && organizationId && (!resolvedUserName || !resolvedUserName.includes('('))) {
+      let roleLabel = 'User'
+      try {
+        const { data: mem } = await supabase
+          .from('org_memberships')
+          .select('role')
+          .eq('organization_id', organizationId)
+          .eq('user_id', resolvedUserId)
+          .maybeSingle()
+
+        if (mem?.role) {
+          roleLabel = mem.role.charAt(0).toUpperCase() + mem.role.slice(1)
+        } else {
+          const { data: emp } = await supabase
+            .from('employees')
+            .select('role')
+            .eq('organization_id', organizationId)
+            .eq('auth_user_id', resolvedUserId)
+            .maybeSingle()
+          if (emp?.role) {
+            roleLabel = emp.role.charAt(0).toUpperCase() + emp.role.slice(1)
+          }
+        }
+      } catch {}
+
+      const cleanName = resolvedUserName || 'User'
+      resolvedUserName = `${cleanName} (${roleLabel})`
+    }
+
     await supabase.from('activity_log').insert({
       organization_id: organizationId,
       actor_id: resolvedUserId,

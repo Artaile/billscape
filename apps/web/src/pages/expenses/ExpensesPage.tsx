@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Loader2, Receipt, Eye, Pencil, Search, X } from 'lucide-react'
+import { Plus, Trash2, Loader2, Receipt, Eye, Pencil, Search, X, Download, Upload, FileSpreadsheet, ArrowUpDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
@@ -10,14 +10,22 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { logActivity } from '@/lib/activityLog'
+import { exportToCSV, parseCSV } from '@/lib/csvUtils'
 import { ExpenseFormDialog } from '@/components/expenses/ExpenseFormDialog'
 import { ExpenseCategoriesTab } from '@/components/expenses/ExpenseCategoriesTab'
 import type { Expense, ExpenseCategory } from '@/components/expenses/types'
 
 export function ExpensesPage() {
-  const { org, role } = useAuth()
+  const { org, user, role } = useAuth()
   const orgId = org?.id
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -31,6 +39,10 @@ export function ExpensesPage() {
   const [typeFilter, setTypeFilter] = useState<'all' | 'direct' | 'indirect'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'unpaid'>('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
+  const [sortBy, setSortBy] = useState<'date-newest' | 'date-oldest' | 'amount-desc' | 'amount-asc' | 'category-asc'>('date-newest')
+  const [isImporting, setIsImporting] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ['expenses', orgId],
@@ -102,19 +114,123 @@ export function ExpensesPage() {
     },
   })
 
-  const filtered = expenses.filter((e) => {
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      const matches = e.description?.toLowerCase().includes(q) || e.expense_no?.toLowerCase().includes(q) || e.category?.toLowerCase().includes(q)
-      if (!matches) return false
+  const filtered = expenses
+    .filter((e) => {
+      if (search.trim()) {
+        const q = search.trim().toLowerCase()
+        const matches = e.description?.toLowerCase().includes(q) || e.expense_no?.toLowerCase().includes(q) || e.category?.toLowerCase().includes(q)
+        if (!matches) return false
+      }
+      if (dateFrom && e.expense_date < dateFrom) return false
+      if (dateTo && e.expense_date > dateTo) return false
+      if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
+      if (typeFilter !== 'all' && e.expense_type !== typeFilter) return false
+      if (statusFilter !== 'all' && e.status !== statusFilter) return false
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date-newest':
+          return new Date(b.expense_date || 0).getTime() - new Date(a.expense_date || 0).getTime()
+        case 'date-oldest':
+          return new Date(a.expense_date || 0).getTime() - new Date(b.expense_date || 0).getTime()
+        case 'amount-desc':
+          return b.amount - a.amount
+        case 'amount-asc':
+          return a.amount - b.amount
+        case 'category-asc':
+          return (a.category || '').localeCompare(b.category || '')
+        default:
+          return 0
+      }
+    })
+
+  const handleDownloadTemplate = () => {
+    const headers = ['Category', 'Amount (Rs)', 'Description', 'Type', 'Status', 'Expense Date']
+    const sampleRows = [
+      ['Rent', '15000', 'Shop rent for this month', 'direct', 'paid', new Date().toISOString().split('T')[0]],
+      ['Electricity', '3400', 'TNEB power bill', 'indirect', 'paid', new Date().toISOString().split('T')[0]],
+    ]
+    exportToCSV('expenses_import_template', headers, sampleRows)
+  }
+
+  const handleExportCSV = () => {
+    const listToExport = filtered.length > 0 ? filtered : expenses
+    if (listToExport.length === 0) {
+      toast.error('No expenses to export')
+      return
     }
-    if (dateFrom && e.expense_date < dateFrom) return false
-    if (dateTo && e.expense_date > dateTo) return false
-    if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
-    if (typeFilter !== 'all' && e.expense_type !== typeFilter) return false
-    if (statusFilter !== 'all' && e.status !== statusFilter) return false
-    return true
-  })
+
+    const headers = ['Expense No', 'Category', 'Amount (Rs)', 'Type', 'Status', 'Expense Date', 'Description', 'Supplier']
+    const rows = listToExport.map((e) => [
+      e.expense_no ?? '',
+      e.category ?? 'Uncategorized',
+      e.amount,
+      (e.expense_type ?? 'direct').toUpperCase(),
+      (e.status ?? 'paid').toUpperCase(),
+      e.expense_date ? formatDate(e.expense_date) : '',
+      e.description ?? '',
+      e.suppliers?.name ?? '',
+    ])
+
+    exportToCSV(`expenses_export_${new Date().toISOString().split('T')[0]}.csv`, headers, rows)
+    toast.success(`Exported ${listToExport.length} expenses`)
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !orgId) return
+    setIsImporting(true)
+    try {
+      const records = await parseCSV(file)
+      if (!records.length) {
+        toast.error('Import Failed', 'CSV file is empty or invalid format')
+        return
+      }
+
+      let importedCount = 0
+      for (const row of records) {
+        const category = row['category'] || row['expense category'] || 'General'
+        const rawAmount = row['amount (rs)'] || row['amount'] || '0'
+        const amount = parseFloat(rawAmount) || 0
+        if (amount <= 0) continue
+
+        const description = row['description'] || row['notes'] || ''
+        const rawType = (row['type'] || row['expense type'] || 'direct').toLowerCase()
+        const expenseType = rawType === 'indirect' ? 'indirect' : 'direct'
+        const rawStatus = (row['status'] || 'paid').toLowerCase()
+        const status = rawStatus === 'unpaid' ? 'unpaid' : 'paid'
+        const expenseDate = row['expense date'] || row['date'] || new Date().toISOString().split('T')[0]
+
+        await supabase.from('expenses').insert({
+          organization_id: orgId,
+          created_by: user?.id,
+          category,
+          amount,
+          description,
+          expense_type: expenseType,
+          status,
+          expense_date: expenseDate,
+        })
+        importedCount++
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ['expenses', orgId] })
+      await queryClient.invalidateQueries({ queryKey: ['expense_category_counts', orgId] })
+      await logActivity({
+        organizationId: orgId,
+        action: 'imported',
+        entity: 'expense',
+        metadata: { count: importedCount, filename: file.name },
+      })
+      toast.success(`Import Complete`, `Successfully imported ${importedCount} expenses!`)
+    } catch (err: any) {
+      toast.error('Import Failed', err.message || 'Failed to parse CSV file')
+    } finally {
+      setIsImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   const totalAll = expenses.reduce((sum, e) => sum + e.amount, 0)
   const totalPaid = expenses.filter((e) => e.status === 'paid').reduce((sum, e) => sum + e.amount, 0)
@@ -128,12 +244,23 @@ export function ExpensesPage() {
           <h1 className="text-xl font-bold text-foreground">Expenses</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Track and manage your business expenses</p>
         </div>
-        {canManage && (
-          <Button onClick={() => { setEditTarget(null); setShowDialog(true) }}>
-            <Plus className="h-4 w-4" />
-            Add Expense
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canManage && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setShowImport(true)} disabled={isImporting}>
+                {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Upload className="h-3.5 w-3.5 mr-1 text-indigo-400" />}
+                Import CSV
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExportCSV}>
+                <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
+              </Button>
+              <Button onClick={() => { setEditTarget(null); setShowDialog(true) }}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add Expense
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="expenses">
@@ -159,7 +286,7 @@ export function ExpensesPage() {
             </div>
           </div>
 
-          {/* Filters */}
+          {/* Filters & Sort */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -175,6 +302,22 @@ export function ExpensesPage() {
                 </button>
               )}
             </div>
+
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="flex h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-foreground"
+              >
+                <option value="date-newest">Sort: Date (Newest)</option>
+                <option value="date-oldest">Sort: Date (Oldest)</option>
+                <option value="amount-desc">Sort: Amount (High to Low)</option>
+                <option value="amount-asc">Sort: Amount (Low to High)</option>
+                <option value="category-asc">Sort: Category (A to Z)</option>
+              </select>
+            </div>
+
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 w-auto" />
             <span className="text-xs text-muted-foreground">to</span>
             <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 w-auto" />
@@ -322,6 +465,85 @@ export function ExpensesPage() {
         onOpenChange={(o) => { setShowDialog(o); if (!o) setEditTarget(null) }}
         editTarget={editTarget}
       />
+
+      {/* Import Expenses Modal */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-100">
+              <FileSpreadsheet className="h-5 w-5 text-indigo-400" />
+              Import Expenses from CSV
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Step 1 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  1
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Download the template</p>
+                    <p className="text-[11px] text-zinc-400">Sample CSV format with column headers and example expense rows</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadTemplate}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400" />
+                    Download Template (CSV)
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-400">
+                  2
+                </span>
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-200">Upload your filled CSV file</p>
+                    <p className="text-[11px] text-zinc-400">Select your completed expense CSV file to batch import records</p>
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => {
+                      handleFileChange(e)
+                      setShowImport(false)
+                    }}
+                    accept=".csv"
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImporting}
+                    className="w-full text-xs gap-1.5 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                  >
+                    {isImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5 text-indigo-400" />}
+                    Choose CSV file
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setShowImport(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

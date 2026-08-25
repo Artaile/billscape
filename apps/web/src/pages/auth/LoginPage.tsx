@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Store, Mail, Lock, Loader2, UserPlus, LogIn, ArrowLeft, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/contexts/AuthContext'
 import { toast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,14 +29,9 @@ const signUpSchema = z.object({
 
 const emailSchema = signInSchema
 
-const forgotSchema = z.object({
-  email: z.string().email('Enter a valid email address'),
-})
-
-type EmailValues = z.infer<typeof emailSchema>
-type ForgotValues = z.infer<typeof forgotSchema>
-
-type Mode = 'signin' | 'signup' | 'forgot' | 'verify-email' | 'forgot-sent'
+type AuthMode = 'signin' | 'signup' | 'forgot' | 'verify-email' | 'forgot-sent'
+type SignInValues = z.infer<typeof signInSchema>
+type ForgotValues = z.infer<typeof emailSchema>
 
 function getPasswordStrength(pw: string) {
   const checks = {
@@ -50,39 +46,38 @@ function getPasswordStrength(pw: string) {
 
 export function LoginPage() {
   const navigate = useNavigate()
-  const [mode, setMode] = useState<Mode>('signin')
+  const { refreshOrg } = useAuth()
+  const [mode, setMode] = useState<AuthMode>('signin')
   const [loading, setLoading] = useState(false)
-  const [verifyEmail, setVerifyEmail] = useState('')
+  const [verifyEmail, setVerifyEmail] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [passwordValue, setPasswordValue] = useState('')
+
+  const schema = mode === 'signup' ? signUpSchema : signInSchema
 
   const {
     register,
     handleSubmit,
-    reset,
     formState: { errors },
-  } = useForm<EmailValues>({
-    resolver: zodResolver(mode === 'signup' ? signUpSchema : signInSchema),
+    reset,
+  } = useForm<SignInValues>({
+    resolver: zodResolver(schema),
   })
 
   const {
     register: registerForgot,
     handleSubmit: handleForgotSubmit,
-    reset: resetForgot,
     formState: { errors: forgotErrors },
   } = useForm<ForgotValues>({
-    resolver: zodResolver(forgotSchema),
+    resolver: zodResolver(emailSchema),
   })
 
-  const switchMode = (m: Mode) => {
-    setMode(m)
-    setShowPassword(false)
-    setPasswordValue('')
+  const switchMode = (next: AuthMode) => {
+    setMode(next)
     reset()
-    resetForgot()
   }
 
-  const onSubmit = async (values: EmailValues) => {
+  const onSubmit = async (values: SignInValues) => {
     setLoading(true)
     try {
       if (mode === 'signup') {
@@ -100,7 +95,7 @@ export function LoginPage() {
         if (data.user && data.user.identities?.length === 0) {
           toast.error(
             'Account already exists',
-            'This email is already registered but not verified yet. Use "Resend verification email" below, or sign in if you already verified it.'
+            'This email is already registered but not verified yet. Use "Resend verification email" below, or log in if you already verified it.'
           )
           setVerifyEmail(values.email)
           setMode('verify-email')
@@ -114,10 +109,12 @@ export function LoginPage() {
           password: values.password,
         })
         if (error) {
-          toast.error('Sign in failed', error.message)
+          toast.error('Log in failed', error.message)
           return
         }
-        navigate('/')
+        // Refresh session & org in AuthContext before navigating to ensure 0 race conditions
+        await refreshOrg()
+        navigate('/', { replace: true })
       }
     } catch {
       toast.error('Unexpected error', 'Please try again.')
@@ -314,7 +311,7 @@ export function LoginPage() {
                 className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors mx-auto"
               >
                 <ArrowLeft className="h-3 w-3" />
-                Back to Sign In
+                Back to Log In
               </button>
             </div>
           )}
@@ -335,7 +332,7 @@ export function LoginPage() {
                   )}
                 >
                   <LogIn className="h-3.5 w-3.5" />
-                  Sign In
+                  Log In
                 </button>
                 <button
                   type="button"
@@ -455,7 +452,7 @@ export function LoginPage() {
                   {loading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      {mode === 'signup' ? 'Creating account...' : 'Signing in...'}
+                      {mode === 'signup' ? 'Creating account...' : 'Logging in...'}
                     </>
                   ) : mode === 'signup' ? (
                     <>
@@ -463,7 +460,7 @@ export function LoginPage() {
                       Create Account
                     </>
                   ) : (
-                    'Sign in'
+                    'Log in'
                   )}
                 </Button>
               </form>

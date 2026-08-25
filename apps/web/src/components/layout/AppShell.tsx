@@ -25,6 +25,7 @@ import {
   Clock,
   BookOpen,
   UserCog,
+  User,
   Shield,
   Bell,
   CheckCircle2,
@@ -178,24 +179,28 @@ function NavLinkItem({
   brandColor,
   onNavigate,
   compact,
+  forceShowText,
 }: {
   item: NavItem
   isActive: boolean
   brandColor: string
   onNavigate: (href: string) => void
   compact?: boolean
+  forceShowText?: boolean
 }) {
   const Icon = item.icon
   return (
-    <li>
+    <li className="relative group/nav">
       <Link
         to={item.href}
+        title={item.label}
         onClick={(e) => {
           e.preventDefault()
           onNavigate(item.href)
         }}
         className={cn(
           'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+          forceShowText ? 'justify-start' : 'justify-center md:justify-start lg:justify-start',
           compact && 'py-1.5 text-[13px]',
           isActive
             ? 'text-white shadow-sm'
@@ -204,16 +209,28 @@ function NavLinkItem({
         style={isActive ? { backgroundColor: brandColor } : undefined}
       >
         <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-3.5 w-3.5')} />
-        <span>{item.label}</span>
+        <span className={cn('truncate', forceShowText ? 'inline' : 'md:hidden lg:inline')}>{item.label}</span>
         {item.badge && (
           <span
-            className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+            className={cn('ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold', forceShowText ? 'inline' : 'md:hidden lg:inline')}
             style={{ backgroundColor: `${brandColor}30`, color: brandColor }}
           >
             {item.badge}
           </span>
         )}
       </Link>
+      {/* Tooltip on md screens when icon-only and not hover-expanded */}
+      {!forceShowText && (
+        <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-3 hidden md:group-hover/nav:flex lg:group-hover/nav:hidden items-center gap-1.5 z-50 rounded-lg bg-zinc-950/95 border border-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 shadow-2xl backdrop-blur-md whitespace-nowrap">
+          <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-0 h-0 border-y-[5px] border-y-transparent border-r-[6px] border-r-zinc-800" />
+          <span>{item.label}</span>
+          {item.badge && (
+            <span className="rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 text-[10px]">
+              {item.badge}
+            </span>
+          )}
+        </div>
+      )}
     </li>
   )
 }
@@ -245,6 +262,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const { user, org, role, permissions, signOut } = useAuth()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
 
@@ -267,10 +285,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     return initial
   })
 
-  // Auto-expand a group the moment its route becomes active, but only on that transition —
-  // navigating between siblings within an already-active group must not re-force it open after
-  // the user has manually collapsed it (previouslyActiveGroups tracks what was active last render
-  // so a group already active on both the previous and current location is left alone).
+  // Auto-expand the single active group when navigating, closing others
   const previouslyActiveGroupsRef = React.useRef<Set<string>>(new Set())
   useEffect(() => {
     const currentlyActive = new Set<string>()
@@ -278,11 +293,8 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       if (entry.kind === 'group' && isGroupActive(entry.group)) {
         currentlyActive.add(entry.group.label)
         if (!previouslyActiveGroupsRef.current.has(entry.group.label)) {
-          setOpenGroups((prev) => {
-            const next = { ...prev, [entry.group.label]: true }
-            localStorage.setItem('billscape_nav_groups', JSON.stringify(next))
-            return next
-          })
+          setOpenGroups({ [entry.group.label]: true })
+          localStorage.setItem('billscape_nav_groups', JSON.stringify({ [entry.group.label]: true }))
         }
       }
     }
@@ -290,9 +302,11 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname, location.search])
 
+  // Single accordion open logic: opening one group closes all other groups
   const toggleGroup = (label: string) => {
     setOpenGroups((prev) => {
-      const next = { ...prev, [label]: !prev[label] }
+      const isCurrentlyOpen = !!prev[label]
+      const next: Record<string, boolean> = isCurrentlyOpen ? {} : { [label]: true }
       localStorage.setItem('billscape_nav_groups', JSON.stringify(next))
       return next
     })
@@ -518,135 +532,189 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
     onError: (err: Error) => toast.error('Failed to process expense', err.message)
   })
 
-  const SidebarContent = () => (
-    <>
-      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-sidebar-border">
-        {org?.branding?.logo_url ? (
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg overflow-hidden border border-border bg-white dark:bg-zinc-900 p-0.5 shrink-0 shadow-sm">
-            <img
-              src={org.branding.logo_url}
-              alt={org?.name || 'Shop Logo'}
-              className="h-full w-full object-contain"
-            />
+  const SidebarContent = ({ forceExpanded }: { forceExpanded?: boolean }) => {
+    const isExpanded = forceExpanded || false
+    return (
+      <>
+        <div className="flex items-center gap-2.5 px-4 py-5 border-b border-sidebar-border">
+          {org?.branding?.logo_url ? (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg overflow-hidden border border-border bg-white dark:bg-zinc-900 p-0.5 shrink-0 shadow-sm">
+              <img
+                src={org.branding.logo_url}
+                alt={org?.name || 'Shop Logo'}
+                className="h-full w-full object-contain"
+              />
+            </div>
+          ) : (
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
+              style={{ backgroundColor: brandColor }}
+            >
+              <Store className="h-4 w-4 text-white" />
+            </div>
+          )}
+          <div className={cn("flex flex-col min-w-0", isExpanded ? "flex" : "md:hidden lg:flex")}>
+            <span className="text-sm font-bold text-foreground tracking-wide truncate">BillScape</span>
+            <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+              {org?.name ?? 'Your Shop'}
+            </span>
           </div>
-        ) : (
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-lg shrink-0"
-            style={{ backgroundColor: brandColor }}
-          >
-            <Store className="h-4 w-4 text-white" />
-          </div>
-        )}
-        <div className="flex flex-col min-w-0">
-          <span className="text-sm font-bold text-foreground tracking-wide truncate">BillScape</span>
-          <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
-            {org?.name ?? 'Your Shop'}
-          </span>
         </div>
-      </div>
 
-      <nav className="flex-1 overflow-y-auto py-4 px-2">
-        <ul className="space-y-0.5">
-          {NAV_ENTRIES.map((entry) => {
-            if (entry.kind === 'item') {
-              if (entry.item.permissionKey && permissions?.[entry.item.permissionKey] === false) return null
-              return (
-                <NavLinkItem
-                  key={entry.item.href}
-                  item={entry.item}
-                  isActive={isNavItemActive(entry.item, location.pathname, location.search)}
-                  brandColor={brandColor}
-                  onNavigate={(href) => {
-                    if (isNavItemActive(entry.item, location.pathname, location.search)) {
-                      setSidebarOpen(false)
-                      return
-                    }
-                    requestNavigation(() => {
-                      setSidebarOpen(false)
-                      navigate(href)
-                    })
-                  }}
-                />
+        <nav className="flex-1 overflow-y-auto py-4 px-2">
+          <ul className="space-y-0.5">
+            {NAV_ENTRIES.map((entry) => {
+              if (entry.kind === 'item') {
+                if (entry.item.permissionKey && permissions?.[entry.item.permissionKey] === false) return null
+                return (
+                  <NavLinkItem
+                    key={entry.item.href}
+                    item={entry.item}
+                    isActive={isNavItemActive(entry.item, location.pathname, location.search)}
+                    brandColor={brandColor}
+                    forceShowText={isExpanded}
+                    onNavigate={(href) => {
+                      if (isNavItemActive(entry.item, location.pathname, location.search)) {
+                        setSidebarOpen(false)
+                        return
+                      }
+                      requestNavigation(() => {
+                        setSidebarOpen(false)
+                        navigate(href)
+                      })
+                    }}
+                  />
+                )
+              }
+
+              const visibleItems = entry.group.items.filter(
+                (item) => !item.permissionKey || permissions?.[item.permissionKey] !== false
               )
-            }
+              if (visibleItems.length === 0) return null
+              const GroupIcon = entry.group.icon
+              const isOpen = openGroups[entry.group.label] ?? false
+              const groupActive = isGroupActive(entry.group)
 
-            const visibleItems = entry.group.items.filter(
-              (item) => !item.permissionKey || permissions?.[item.permissionKey] !== false
-            )
-            if (visibleItems.length === 0) return null
-            const GroupIcon = entry.group.icon
-            const isOpen = openGroups[entry.group.label] ?? false
-            const groupActive = isGroupActive(entry.group)
+              return (
+                <li key={entry.group.label} className="relative group/nav">
+                  <button
+                    onClick={() => toggleGroup(entry.group.label)}
+                    title={entry.group.label}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+                      isExpanded ? 'justify-start' : 'justify-center md:justify-start lg:justify-start',
+                      groupActive ? 'text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                    )}
+                  >
+                    <GroupIcon className="h-4 w-4 shrink-0" />
+                    <span className={cn("flex-1 text-left truncate", isExpanded ? "inline" : "md:hidden lg:inline")}>
+                      {entry.group.label}
+                    </span>
+                    <ChevronRight
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0 transition-transform',
+                        isExpanded ? 'block' : 'md:hidden lg:block',
+                        isOpen && 'rotate-90'
+                      )}
+                    />
+                  </button>
 
-            return (
-              <li key={entry.group.label}>
-                <button
-                  onClick={() => toggleGroup(entry.group.label)}
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
-                    groupActive ? 'text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                  {/* Submenu Flyout for md (icon-only) screens when NOT hover-expanded */}
+                  {!isExpanded && (
+                    <div className="absolute left-full top-0 ml-3 hidden md:group-hover/nav:flex lg:group-hover/nav:hidden flex-col z-50 min-w-[180px] rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 shadow-2xl backdrop-blur-md transition-all">
+                      <div className="px-3 py-1.5 text-[11px] font-semibold text-zinc-400 border-b border-zinc-800/80 mb-1 flex items-center gap-2">
+                        <GroupIcon className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                        <span className="truncate">{entry.group.label}</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        {visibleItems.map((item) => {
+                          const ItemIcon = item.icon
+                          const active = isNavItemActive(item, location.pathname, location.search)
+                          return (
+                            <button
+                              key={item.href}
+                              onClick={() => {
+                                if (active) return
+                                requestNavigation(() => navigate(item.href))
+                              }}
+                              className={cn(
+                                'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors w-full text-left',
+                                active
+                                  ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                                  : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
+                              )}
+                            >
+                              <ItemIcon className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{item.label}</span>
+                              {item.badge && (
+                                <span className="ml-auto rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.2 text-[9px]">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                   )}
-                >
-                  <GroupIcon className="h-4 w-4 shrink-0" />
-                  <span className="flex-1 text-left">{entry.group.label}</span>
-                  <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')} />
-                </button>
-                {isOpen && (
-                  <ul className="mt-0.5 space-y-0.5 border-l border-border ml-5 pl-2">
-                    {visibleItems.map((item) => (
-                      <NavLinkItem
-                        key={item.href}
-                        item={item}
-                        isActive={isNavItemActive(item, location.pathname, location.search)}
-                        brandColor={brandColor}
-                        compact
-                        onNavigate={(href) => {
-                          if (isNavItemActive(item, location.pathname, location.search)) {
-                            setSidebarOpen(false)
-                            return
-                          }
-                          requestNavigation(() => {
-                            setSidebarOpen(false)
-                            navigate(href)
-                          })
-                        }}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      </nav>
 
-      <div className="border-t border-border p-3">
-        <div className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm">
-          <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-            style={{ backgroundColor: brandColor }}
-          >
-            {initials}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="truncate text-xs font-medium text-foreground">{displayName}</p>
-            <p className="truncate text-[10px] text-muted-foreground">{user?.email}</p>
-          </div>
-        </div>
-      </div>
-    </>
-  )
+                  {/* Standard Inline Accordion for lg (full text) screens or when hover-expanded */}
+                  {isOpen && (
+                    <ul className={cn("mt-0.5 space-y-0.5 border-l border-border ml-5 pl-2", isExpanded ? "block" : "hidden lg:block")}>
+                      {visibleItems.map((item) => (
+                        <NavLinkItem
+                          key={item.href}
+                          item={item}
+                          isActive={isNavItemActive(item, location.pathname, location.search)}
+                          brandColor={brandColor}
+                          compact
+                          forceShowText={isExpanded}
+                          onNavigate={(href) => {
+                            if (isNavItemActive(item, location.pathname, location.search)) {
+                              setSidebarOpen(false)
+                              return
+                            }
+                            requestNavigation(() => {
+                              setSidebarOpen(false)
+                              navigate(href)
+                            })
+                          }}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </nav>
+      </>
+    )
+  }
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-sidebar border-r border-border no-print">
-        <SidebarContent />
+      {/* Desktop sidebar (Fixed layout width w-16 lg:w-56; floats absolutely on hover so main content width never shrinks) */}
+      <aside
+        onMouseEnter={() => setIsSidebarHovered(true)}
+        onMouseLeave={() => setIsSidebarHovered(false)}
+        className="hidden md:flex flex-col w-16 lg:w-56 shrink-0 bg-sidebar border-r border-border no-print relative z-40"
+      >
+        <div
+          className={cn(
+            "flex flex-col h-full bg-sidebar border-r border-border transition-all duration-300",
+            isSidebarHovered
+              ? "absolute left-0 top-0 w-56 shadow-2xl z-50 bg-sidebar"
+              : "w-full"
+          )}
+        >
+          <SidebarContent forceExpanded={isSidebarHovered} />
+        </div>
       </aside>
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden no-print">
+        <div className="fixed inset-0 z-50 md:hidden no-print">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
@@ -666,7 +734,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 lg:px-6 no-print">
           <button
-            className="lg:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
+            className="md:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary"
             onClick={() => setSidebarOpen(true)}
           >
             <Menu className="h-5 w-5" />
@@ -912,14 +980,29 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
                   className="fixed inset-0 z-30"
                   onClick={() => setUserMenuOpen(false)}
                 />
-                <div className="absolute right-0 top-full z-40 mt-1 w-52 rounded-lg border border-border bg-card shadow-xl py-1">
+                <div className="absolute right-0 top-full z-40 mt-1 w-56 rounded-lg border border-border bg-card shadow-xl py-1">
                   <div className="px-3 py-2 border-b border-border">
-                    <p className="text-xs font-medium text-foreground truncate">{displayName}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{user?.email}</p>
+                    <div className="flex items-center justify-between gap-1">
+                      <p className="text-xs font-semibold text-foreground truncate">{displayName}</p>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 uppercase shrink-0">
+                        {role || 'Cashier'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground truncate mt-0.5">{user?.email}</p>
                   </div>
                   <button
-                    onClick={handleSignOut}
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      requestNavigation(() => navigate('/profile'))
+                    }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                  >
+                    <User className="h-4 w-4 text-indigo-400" />
+                    My Profile
+                  </button>
+                  <button
+                    onClick={handleSignOut}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-400/10 transition-colors border-t border-border mt-1 pt-1"
                   >
                     <LogOut className="h-4 w-4" />
                     Sign out
