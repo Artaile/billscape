@@ -2066,7 +2066,7 @@ export type Database = {
         | "service"
         | "general"
       org_plan: "free" | "pro" | "enterprise"
-      org_status: "active" | "suspended"
+      org_status: "active" | "suspended" | "deleted"
       payment_mode: "cash" | "card" | "upi" | "split"
       stock_movement_reason:
         | "sale"
@@ -2212,7 +2212,7 @@ export const Constants = {
         "general",
       ],
       org_plan: ["free", "pro", "enterprise"],
-      org_status: ["active", "suspended"],
+      org_status: ["active", "suspended", "deleted"],
       payment_mode: ["cash", "card", "upi", "split"],
       stock_movement_reason: [
         "sale",

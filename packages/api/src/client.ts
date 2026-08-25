@@ -21,6 +21,8 @@ export function getSupabaseClient(): TypedSupabaseClient {
   return _client
 }
 
+declare const process: { env: Record<string, string | undefined> } | undefined
+
 function getEnvVar(name: string): string {
   const viteKey = `VITE_${name}`
   const expoKey = `EXPO_PUBLIC_${name}`

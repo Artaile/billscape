@@ -14,6 +14,8 @@ import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { logActivity } from '@/lib/activityLog'
 import { exportToCSV, parseCSV } from '@/lib/csvUtils'
+import { usePlanLimits } from '@/hooks/usePlanLimits'
+import { PlanLimitModal } from '@/components/common/PlanLimitModal'
 
 interface Employee {
   id: string
@@ -42,6 +44,8 @@ export function EmployeesPage() {
   const { org } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
+
+  const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota, handleInsertError } = usePlanLimits()
 
   const [search, setSearch] = useState('')
   const [showDialog, setShowDialog] = useState(false)
@@ -194,7 +198,9 @@ export function EmployeesPage() {
     }
   }
 
-  function openNew() {
+  async function openNew() {
+    const { allowed } = await checkQuota('employees')
+    if (!allowed) return
     setEditing(null)
     setForm(EMPTY)
     setShowDialog(true)
@@ -220,6 +226,10 @@ export function EmployeesPage() {
       const phoneDigits = form.phone?.replace(/\D/g, '') || ''
       if (phoneDigits && phoneDigits.length !== 10) {
         throw new Error('Enter a valid 10-digit Indian mobile number')
+      }
+      if (!editing) {
+        const { allowed } = await checkQuota('employees')
+        if (!allowed) throw new Error('Quota exceeded')
       }
       const payload = {
         organization_id: orgId!,
@@ -259,7 +269,12 @@ export function EmployeesPage() {
       toast.success(editing ? 'Employee updated' : 'Employee added')
       setShowDialog(false)
     },
-    onError: (err: Error) => toast.error('Failed to save', err.message),
+    onError: (err: any) => {
+      const handled = handleInsertError(err)
+      if (!handled && err.message !== 'Quota exceeded') {
+        toast.error('Save failed', err.message)
+      }
+    },
   })
 
   const deleteMutation = useMutation({
@@ -624,6 +639,7 @@ export function EmployeesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PlanLimitModal open={limitModalOpen} onClose={() => setLimitModalOpen(false)} limitInfo={limitInfo} />
     </div>
   )
 }

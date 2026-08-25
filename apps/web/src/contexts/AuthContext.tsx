@@ -7,6 +7,7 @@ import type { UserRole } from '@billscape/core'
 interface OrgInfo {
   id: string
   name: string
+  plan?: string
   state_code: string
   gstin?: string
   address?: string
@@ -154,13 +155,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const [orgResult, settingsResult] = await Promise.all([
-        supabase.from('organizations').select('id,name,state_code,gstin,address,city,pincode,phone,email,pan,business_type,website').eq('id', orgId).single(),
+        supabase.from('organizations').select('id,name,state_code,gstin,address,city,pincode,phone,email,pan,business_type,website,plan').eq('id', orgId).single(),
         supabase.from('org_settings').select('branding,feature_flags,invoice_template').eq('organization_id', orgId).single(),
       ])
 
       const org: OrgInfo = {
         id: orgId,
         name: orgResult.data?.name ?? 'My Shop',
+        plan: orgResult.data?.plan ?? 'free',
         state_code: orgResult.data?.state_code ?? 'TN',
         gstin: orgResult.data?.gstin ?? undefined,
         address: orgResult.data?.address ?? undefined,

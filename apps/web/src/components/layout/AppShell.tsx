@@ -254,17 +254,64 @@ function QuickAddLink({
     </button>
   )
 }
-
 export function AppShell({ children }: { children?: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { requestNavigation } = useNavigationGuard()
   const { user, org, role, permissions, signOut } = useAuth()
+  const orgId = org?.id
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isSidebarHovered, setIsSidebarHovered] = useState(false)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
+
+  const { data: planFeatures } = useQuery({
+    queryKey: ['org-plan-features', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data: orgPlan } = await supabase
+        .from('org_plans')
+        .select('plan_id, plans(features)')
+        .eq('organization_id', orgId!)
+        .eq('status', 'active')
+        .maybeSingle()
+
+      if (orgPlan?.plans) {
+        return (orgPlan.plans as any).features as Record<string, boolean>
+      }
+
+      const { data: orgData } = await supabase
+        .from('organizations')
+        .select('plan')
+        .eq('id', orgId!)
+        .single()
+
+      const pEnum = orgData?.plan || 'free'
+      const { data: pMatched } = await supabase
+        .from('plans')
+        .select('features')
+        .ilike('name', `%${pEnum}%`)
+        .maybeSingle()
+
+      return (pMatched?.features ?? {}) as Record<string, boolean>
+    },
+  })
+
+  const isNavAllowed = (key?: string) => {
+    if (!key) return true
+    if (permissions && permissions[key] === false) return false
+    if (planFeatures) {
+      const aliasMap: Record<string, string> = {
+        billing: 'pos_billing',
+        promotions: 'offers',
+        activity: 'activity_log',
+      }
+      const targetFeature = aliasMap[key] || key
+      if (planFeatures[targetFeature] === false) return false
+    }
+    return true
+  }
 
   const isGroupActive = (group: NavGroup) =>
     group.items.some((item) => isNavItemActive(item, location.pathname, location.search))
@@ -333,7 +380,6 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const queryClient = useQueryClient()
   const today = new Date().toISOString().split('T')[0]
   const currentMonth = today.substring(0, 7)
-  const orgId = org?.id
 
   const { data: recurringTemplates } = useQuery({
     queryKey: ['recurring_templates', orgId],
@@ -565,7 +611,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
           <ul className="space-y-0.5">
             {NAV_ENTRIES.map((entry) => {
               if (entry.kind === 'item') {
-                if (entry.item.permissionKey && permissions?.[entry.item.permissionKey] === false) return null
+                if (!isNavAllowed(entry.item.permissionKey)) return null
                 return (
                   <NavLinkItem
                     key={entry.item.href}
@@ -588,7 +634,7 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
               }
 
               const visibleItems = entry.group.items.filter(
-                (item) => !item.permissionKey || permissions?.[item.permissionKey] !== false
+                (item) => isNavAllowed(item.permissionKey)
               )
               if (visibleItems.length === 0) return null
               const GroupIcon = entry.group.icon

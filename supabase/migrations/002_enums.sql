@@ -3,4 +3,5 @@ CREATE TYPE business_type AS ENUM ('grocery', 'textile', 'pharmacy', 'electronic
 CREATE TYPE payment_mode AS ENUM ('cash', 'card', 'upi', 'split');
 CREATE TYPE stock_movement_reason AS ENUM ('sale', 'purchase', 'adjustment', 'return', 'damage', 'opening');
 CREATE TYPE org_plan AS ENUM ('free', 'pro', 'enterprise');
-CREATE TYPE org_status AS ENUM ('active', 'suspended');
+CREATE TYPE org_status AS ENUM ('active', 'suspended', 'deleted');
+

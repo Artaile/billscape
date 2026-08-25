@@ -208,6 +208,12 @@ export function OnboardingPage() {
         .maybeSingle()
 
       if (mem?.organization_id && data.selected_plan_id) {
+        const { data: pData } = await supabase.from('plans').select('name').eq('id', data.selected_plan_id).maybeSingle()
+        const pName = pData?.name?.toLowerCase() || ''
+        const mappedPlan = pName.includes('pro') ? 'pro' : pName.includes('enterprise') ? 'enterprise' : 'free'
+
+        await supabase.from('organizations').update({ plan: mappedPlan }).eq('id', mem.organization_id)
+
         const expiryDate = new Date()
         expiryDate.setDate(expiryDate.getDate() + 14) // 14-day trial default
         await supabase.from('org_plans').upsert({

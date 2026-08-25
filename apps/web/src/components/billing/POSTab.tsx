@@ -36,6 +36,8 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePlanLimits } from '@/hooks/usePlanLimits'
+import { PlanLimitModal } from '@/components/common/PlanLimitModal'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
@@ -91,6 +93,8 @@ export function POSTab() {
   const { org, user, role } = useAuth()
   const orgId = org?.id
   const queryClient = useQueryClient()
+
+  const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota, handleInsertError } = usePlanLimits()
 
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([])
@@ -709,6 +713,11 @@ export function POSTab() {
       const roleLabel = role ? (role.charAt(0).toUpperCase() + role.slice(1)) : 'Cashier'
       const operatorWithRole = `${operatorName} (${roleLabel})`
 
+      const { allowed } = await checkQuota('invoices')
+      if (!allowed) {
+        throw new Error('Quota exceeded')
+      }
+
       const result = await createSale(supabase as Parameters<typeof createSale>[0], {
         organization_id: orgId,
         customer_id: selectedCustomer?.id,
@@ -777,8 +786,11 @@ export function POSTab() {
       toast.success(`Sale complete! Invoice: ${d.sale.invoice_no}`)
       // Reset customer only after invoice is closed (keep for display in invoice)
     },
-    onError: (err: Error) => {
-      toast.error('Sale failed', err.message)
+    onError: (err: any) => {
+      const handled = handleInsertError(err)
+      if (!handled && err.message !== 'Quota exceeded') {
+        toast.error('Sale failed', err.message)
+      }
     },
   })
 
@@ -1654,6 +1666,7 @@ export function POSTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PlanLimitModal open={limitModalOpen} onClose={() => setLimitModalOpen(false)} limitInfo={limitInfo} />
     </div>
   )
 }

@@ -36,6 +36,9 @@ import { Separator } from '@/components/ui/separator'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
+import { usePlanLimits } from '@/hooks/usePlanLimits'
+import { PlanLimitModal } from '@/components/common/PlanLimitModal'
+
 const GST_RATES = [0, 5, 12, 18, 28] as const
 
 export function ProductFormPage() {
@@ -45,6 +48,8 @@ export function ProductFormPage() {
   const queryClient = useQueryClient()
   const { org } = useAuth()
   const orgId = org?.id
+
+  const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota, handleInsertError } = usePlanLimits()
 
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -440,13 +445,20 @@ export function ProductFormPage() {
       navigate('/products')
     },
     onError: (err: Error) => {
-      toast.error('Save failed', err.message)
+      const handled = handleInsertError(err)
+      if (!handled) {
+        toast.error('Save failed', err.message)
+      }
     },
   })
 
   const [initialStock, setInitialStock] = useState(0)
 
-  const onSubmit = handleSubmit((values) => {
+  const onSubmit = handleSubmit(async (values) => {
+    if (!isEdit) {
+      const { allowed } = await checkQuota('products')
+      if (!allowed) return
+    }
     if (hasVariants) {
       if (variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) {
         toast.error('Incomplete variant', 'Each variant row needs a Size or Color — remove empty rows before saving.')
@@ -1135,6 +1147,7 @@ export function ProductFormPage() {
           </div>
         </div>
       </form>
+      <PlanLimitModal open={limitModalOpen} onClose={() => setLimitModalOpen(false)} limitInfo={limitInfo} />
     </div>
   )
 }

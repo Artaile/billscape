@@ -34,6 +34,8 @@ import type { Product } from '@billscape/core'
 import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
 
 import { logActivity } from '@/lib/activityLog'
+import { usePlanLimits } from '@/hooks/usePlanLimits'
+import { PlanLimitModal } from '@/components/common/PlanLimitModal'
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = React.useState(value)
@@ -93,11 +95,20 @@ export function ProductsPage() {
   const { org } = useAuth()
   const orgId = org?.id
 
+  const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota } = usePlanLimits()
+
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ProductWithInventory | null>(null)
   const [printTarget, setPrintTarget] = useState<ProductWithInventory | null>(null)
   const [importing, setImporting] = useState(false)
+
+  const handleAddProductClick = async () => {
+    const { allowed } = await checkQuota('products')
+    if (allowed) {
+      navigate('/products/new')
+    }
+  }
 
   const debouncedSearch = useDebounce(search, 300)
 
@@ -282,7 +293,7 @@ export function ProductsPage() {
           <Button variant="outline" size="sm" onClick={exportCSV}>
             <Download className="h-4 w-4" /> Export CSV
           </Button>
-          <Button onClick={() => navigate('/products/new')}>
+          <Button onClick={handleAddProductClick}>
             <Plus className="h-4 w-4" /> Add Product
           </Button>
         </div>
@@ -485,6 +496,8 @@ export function ProductsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <PlanLimitModal open={limitModalOpen} onClose={() => setLimitModalOpen(false)} limitInfo={limitInfo} />
     </div>
   )
 }

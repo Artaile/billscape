@@ -27,6 +27,8 @@ import {
 import { toast } from '@/hooks/use-toast'
 import { logActivity } from '@/lib/activityLog'
 import { exportToCSV, parseCSV } from '@/lib/csvUtils'
+import { usePlanLimits } from '@/hooks/usePlanLimits'
+import { PlanLimitModal } from '@/components/common/PlanLimitModal'
 import type { Customer } from '@billscape/core'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -83,6 +85,9 @@ interface CustomerWithLastSale extends Customer {
 export function CustomersPage() {
   const { org } = useAuth()
   const orgId = org?.id
+
+  const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota, handleInsertError } = usePlanLimits()
+
   const queryClient = useQueryClient()
 
   const [search, setSearch] = useState('')
@@ -252,8 +257,18 @@ export function CustomersPage() {
     },
   })
 
+  const handleAddCustomerClick = async () => {
+    const { allowed } = await checkQuota('customers')
+    if (allowed) {
+      setShowForm(true)
+    }
+  }
+
   const createMutation = useMutation({
     mutationFn: async (values: CustomerFormValues) => {
+      const { allowed } = await checkQuota('customers')
+      if (!allowed) throw new Error('Quota exceeded')
+
       const openBal = Number(values.opening_balance) || 0
       const initialBalance = values.opening_balance_type === 'to_pay' ? -openBal : openBal
 
@@ -290,8 +305,11 @@ export function CustomersPage() {
       reset()
       setShowForm(false)
     },
-    onError: (err: Error) => {
-      toast.error('Failed to add customer', err.message)
+    onError: (err: any) => {
+      const handled = handleInsertError(err)
+      if (!handled && err.message !== 'Quota exceeded') {
+        toast.error('Failed to add customer', err.message)
+      }
     },
   })
 
@@ -310,7 +328,7 @@ export function CustomersPage() {
           <Button variant="outline" size="sm" onClick={handleExportCSV}>
             <Download className="h-3.5 w-3.5 mr-1 text-blue-400" /> Export CSV
           </Button>
-          <Button onClick={() => setShowForm(true)}>
+          <Button onClick={handleAddCustomerClick}>
             <Plus className="h-4 w-4 mr-1" /> Add Customer
           </Button>
         </div>
@@ -715,6 +733,7 @@ export function CustomersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PlanLimitModal open={limitModalOpen} onClose={() => setLimitModalOpen(false)} limitInfo={limitInfo} />
     </div>
   )
 }

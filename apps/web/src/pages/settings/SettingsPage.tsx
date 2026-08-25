@@ -38,6 +38,7 @@ import {
   Sparkles,
   CheckCircle2,
   Clock,
+  AlertTriangle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -1507,7 +1508,131 @@ export function SettingsPage() {
     },
   })
 
+  // Fetch system plans created by Super Admin in DB
+  const { data: systemPlans = [] } = useQuery({
+    queryKey: ['system-plans'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('plans')
+        .select('id, name, description, monthly_price, yearly_price, trial_days, is_default, is_active, limits, features')
+        .eq('is_active', true)
+        .order('monthly_price', { ascending: true })
+      if (error) {
+        console.error('Error fetching plans:', error)
+        return []
+      }
+      return data ?? []
+    },
+  })
+
+  // Fetch current org subscription plan
+  const { data: currentOrgPlan } = useQuery({
+    queryKey: ['current-org-plan', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data: orgData } = await supabase
+        .from('organizations')
+        .select('plan')
+        .eq('id', orgId!)
+        .single()
+
+      const { data: orgPlanData, error: opErr } = await supabase
+        .from('org_plans')
+        .select('status, expiry_date, plan_id, plans(id, name, monthly_price)')
+        .eq('organization_id', orgId!)
+        .maybeSingle()
+
+      if (opErr) {
+        console.warn('org_plans fetch notice:', opErr.message)
+      }
+
+      let activePlanId = orgPlanData?.plan_id
+      let activePlanName = (orgPlanData?.plans as any)?.name
+      let activeMonthlyPrice = (orgPlanData?.plans as any)?.monthly_price
+
+      if (!activePlanName && activePlanId) {
+        const { data: pData } = await supabase
+          .from('plans')
+          .select('id, name, monthly_price')
+          .eq('id', activePlanId)
+          .maybeSingle()
+        if (pData?.name) {
+          activePlanName = pData.name
+          activeMonthlyPrice = pData.monthly_price
+        }
+      }
+
+      if (!activePlanName) {
+        const fallbackEnum = orgData?.plan || 'free'
+        const matchedPlan = systemPlans.find((p) => {
+          const pName = p.name.toLowerCase()
+          if (fallbackEnum === 'pro') return pName.includes('pro')
+          if (fallbackEnum === 'enterprise') return pName.includes('enterprise')
+          return pName.includes('free') || pName.includes('starter')
+        })
+        if (matchedPlan) {
+          activePlanId = matchedPlan.id
+          activePlanName = matchedPlan.name
+          activeMonthlyPrice = matchedPlan.monthly_price
+        } else {
+          activePlanName = fallbackEnum === 'pro' ? 'Pro' : fallbackEnum === 'enterprise' ? 'Enterprise' : 'Free Trial'
+          activeMonthlyPrice = 0
+        }
+      }
+
+      return {
+        planId: activePlanId || null,
+        planName: activePlanName,
+        planCode: (orgData?.plan || 'free').toLowerCase(),
+        monthlyPrice: activeMonthlyPrice ?? 0,
+        status: orgPlanData?.status || 'active',
+        expiryDate: orgPlanData?.expiry_date || null,
+      }
+    },
+  })
+
+  // Plan Upgrade / Downgrade State & Mutation
+  const [planActionTarget, setPlanActionTarget] = useState<any | null>(null)
+
+  const changePlanMutation = useMutation({
+    mutationFn: async (targetPlan: { id: string; name: string }) => {
+      if (!orgId) throw new Error('No active organization found')
+
+      const pName = targetPlan.name.toLowerCase()
+      const mappedPlan = pName.includes('enterprise') ? 'enterprise' : pName.includes('pro') ? 'pro' : 'free'
+
+      // 1. Update organizations table
+      const { error: orgErr } = await supabase
+        .from('organizations')
+        .update({ plan: mappedPlan })
+        .eq('id', orgId)
+      if (orgErr) throw orgErr
+
+      // 2. Update org_plans table
+      await supabase.from('org_plans').upsert({
+        organization_id: orgId,
+        plan_id: targetPlan.id,
+        status: 'active',
+        billing_cycle: 'monthly',
+        start_date: new Date().toISOString().split('T')[0],
+      }, { onConflict: 'organization_id' })
+    },
+    onSuccess: async (_, targetPlan) => {
+      await refreshOrg()
+      queryClient.invalidateQueries({ queryKey: ['current-org-plan', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['platform-tenants'] })
+      queryClient.invalidateQueries({ queryKey: ['platform-subscriptions'] })
+      setPlanActionTarget(null)
+
+      toast.success(`Plan updated to ${targetPlan.name}`)
+    },
+    onError: (err: Error) => {
+      toast.error('Failed to change plan', err.message)
+    },
+  })
+
   // Fetch available roles
+
   const { data: roles = [] } = useQuery({
     queryKey: ['roles', orgId],
     enabled: !!orgId,
@@ -2202,11 +2327,52 @@ export function SettingsPage() {
                   )}
                 </Button>
               </div>
+              {/* Card 0: Current Plan Details */}
+              <div className="rounded-xl border border-indigo-500/30 bg-gradient-to-r from-card via-card to-indigo-950/20 overflow-hidden shadow-sm">
+                <div className="px-6 py-3.5 border-b border-border/80 bg-secondary/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-indigo-400" />
+                    <h3 className="font-semibold text-sm text-foreground">Current Subscription Plan</h3>
+                  </div>
+                  <Badge variant={currentOrgPlan?.planCode === 'pro' ? 'default' : 'secondary'} className="capitalize px-2.5 py-0.5 text-xs font-semibold">
+                    {currentOrgPlan?.planName || 'Free / Starter Plan'}
+                  </Badge>
+                </div>
+                <div className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base font-bold text-foreground">
+                        {currentOrgPlan?.planName || 'Free / Starter Plan'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Active
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {currentOrgPlan?.planCode === 'pro'
+                        ? 'Full access to POS, Multi-user RBAC, Advanced Reports, Loyalty & Priority Support.'
+                        : 'Standard billing, inventory management, and GST invoicing tools for your retail shop.'}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSectionChange('billing')}
+                    className="gap-2 shrink-0 border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10 hover:text-indigo-300 text-xs font-medium"
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    Manage Plan / Upgrade
+                  </Button>
+                </div>
+              </div>
+
               {/* Card 1: Business Identity */}
               <div className="rounded-lg border border-border bg-card overflow-hidden">
                 <div className="px-6 py-4 border-b border-border bg-secondary/20">
                   <h3 className="font-semibold text-foreground">Business Identity</h3>
                 </div>
+
                 <div className="p-6 space-y-6">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
@@ -2726,44 +2892,124 @@ export function SettingsPage() {
 
           {/* Billing */}
           <TabsContent value="billing">
-            <div className="rounded-lg border border-border bg-card p-6 space-y-4">
-              <h2 className="text-base font-semibold text-foreground">Plan & Billing</h2>
-
-              <div className="rounded-lg border border-indigo-800 bg-indigo-950/30 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-indigo-300">Free Plan</p>
-                    <p className="text-xs text-zinc-400 mt-1">Unlimited bills, 1 user, basic reports</p>
-                  </div>
-                  <Badge variant="default">Active</Badge>
+            <div className="rounded-xl border border-border bg-card p-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
+                    <CreditCard className="h-6 w-6 text-primary" /> Plan &amp; Billing
+                  </h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">Manage your subscription plan, features, and billing history.</p>
                 </div>
+                <Badge variant="default" className="capitalize text-xs font-semibold px-3 py-1">
+                  Active: {currentOrgPlan?.planName || 'Free Trial'}
+                </Badge>
               </div>
 
-              <div className="grid grid-cols-1 gap-3">
-                <div className="rounded-lg border border-zinc-700 p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-white">Pro Plan</p>
-                      <p className="text-xs text-zinc-400 mt-1">Unlimited users, advanced reports, WhatsApp invoices</p>
-                      <ul className="mt-2 space-y-1">
-                        {['Unlimited staff accounts', 'WhatsApp invoice sharing', 'Advanced analytics', 'Priority support', 'Custom invoice template'].map((f) => (
-                          <li key={f} className="flex items-center gap-1.5 text-xs text-zinc-400">
-                            <div className="h-1 w-1 rounded-full bg-indigo-400" />
-                            {f}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-white">₹499</p>
-                      <p className="text-xs text-zinc-500">/month</p>
-                    </div>
-                  </div>
-                  <Button className="mt-4 w-full" variant="outline">
-                    Upgrade to Pro
-                  </Button>
+              {systemPlans.length === 0 ? (
+                <div className="flex items-center justify-center p-12 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading subscription plans...
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                  {systemPlans.map((p) => {
+                    const isActive = (currentOrgPlan?.planId === p.id) || (currentOrgPlan?.planName?.toLowerCase() === p.name.toLowerCase())
+                    const currentPrice = currentOrgPlan?.monthlyPrice ?? 0
+                    const isDowngrade = !isActive && p.monthly_price < currentPrice
+                    const isUpgrade = !isActive && p.monthly_price > currentPrice
+
+                    // Feature highlights for standard plans
+                    const featureList: string[] = []
+                    if (p.limits?.branches) featureList.push(`${p.limits.branches === -1 ? 'Unlimited' : p.limits.branches} Branch${(p.limits.branches ?? 1) > 1 ? 'es' : ''}`)
+                    if (p.limits?.employees) featureList.push(`${p.limits.employees === -1 ? 'Unlimited' : p.limits.employees} Staff Accounts`)
+                    if (p.limits?.products) featureList.push(`${p.limits.products === -1 ? 'Unlimited' : p.limits.products} Products`)
+                    if (p.limits?.monthly_invoices) featureList.push(`${p.limits.monthly_invoices === -1 ? 'Unlimited' : p.limits.monthly_invoices} Monthly Invoices`)
+
+                    if (p.features?.pos_billing) featureList.push('POS Billing & Receipt Printing')
+                    if (p.features?.gst_invoicing) featureList.push('GST Tax Invoicing')
+                    if (p.features?.reports) featureList.push('Financial Reports & Analytics')
+                    if (p.features?.loyalty) featureList.push('Loyalty Points Engine')
+                    if (p.features?.multi_branch) featureList.push('Multi-Branch Inventory Sync')
+                    if (p.features?.api_access) featureList.push('ERP API Access & Integrations')
+
+                    return (
+                      <div
+                        key={p.id}
+                        className={cn(
+                          'rounded-xl border p-4 flex flex-col justify-between transition-all relative overflow-hidden',
+                          isActive
+                            ? 'border-indigo-500/60 bg-indigo-950/30 ring-2 ring-indigo-500/30 shadow-lg'
+                            : p.name.toLowerCase().includes('pro')
+                            ? 'border-indigo-500/30 bg-gradient-to-b from-indigo-950/10 to-card hover:border-indigo-500/50'
+                            : 'border-border bg-card hover:border-border/80'
+                        )}
+                      >
+                        {p.is_default && !isActive && (
+                          <div className="absolute top-3 right-3">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold text-emerald-400 uppercase tracking-wider border border-emerald-500/30">
+                              Default Trial
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="space-y-3">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              {p.name.toLowerCase().includes('pro') || p.name.toLowerCase().includes('enterprise') ? (
+                                <Sparkles className="h-4 w-4 text-indigo-400 shrink-0" />
+                              ) : null}
+                              <span className="text-base font-bold text-foreground">{p.name}</span>
+                            </div>
+                            {p.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{p.description}</p>}
+                          </div>
+
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-2xl font-black text-foreground">₹{p.monthly_price}</span>
+                            <span className="text-xs text-muted-foreground">/ month</span>
+                          </div>
+
+                          <Separator />
+
+                          <ul className="space-y-2 text-xs">
+                            {featureList.map((f, idx) => (
+                              <li key={idx} className={cn('flex items-center gap-2', isActive ? 'text-foreground font-medium' : 'text-muted-foreground')}>
+                                <CheckCircle2 className={cn('h-3.5 w-3.5 shrink-0', p.name.toLowerCase().includes('enterprise') ? 'text-purple-400' : p.name.toLowerCase().includes('pro') ? 'text-indigo-400' : 'text-emerald-500')} />
+                                <span className="text-[11px]">{f}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="pt-5">
+                          {isActive ? (
+                            <Button disabled className="w-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-semibold cursor-default text-xs" variant="ghost">
+                              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse mr-2" />
+                              Current Active Plan
+                            </Button>
+                          ) : isDowngrade ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => setPlanActionTarget(p)}
+                              className="w-full border-amber-500/40 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300 font-medium text-xs"
+                            >
+                              Downgrade to {p.name}
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              onClick={() => setPlanActionTarget(p)}
+                              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-md gap-1.5 text-xs"
+                            >
+                              <Sparkles className="h-3.5 w-3.5" />
+                              Upgrade to {p.name}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </TabsContent>
 
@@ -4483,6 +4729,82 @@ export function SettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Plan Action Confirmation Dialog (Upgrade or Downgrade) */}
+      {(() => {
+        if (!planActionTarget) return null
+        const currentPrice = currentOrgPlan?.monthlyPrice ?? 0
+        const isDowngrade = planActionTarget.monthly_price < currentPrice
+
+        const targetTitle = planActionTarget.name
+        const currentTitle = currentOrgPlan?.planName || 'Current Plan'
+        const priceText = `₹${planActionTarget.monthly_price} / month`
+
+        return (
+          <Dialog open={!!planActionTarget} onOpenChange={(open) => !open && setPlanActionTarget(null)}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <div className={cn('flex items-center gap-2 font-bold text-lg', isDowngrade ? 'text-amber-400' : 'text-indigo-400')}>
+                  {isDowngrade ? <AlertTriangle className="h-5 w-5 text-amber-400" /> : <Sparkles className="h-5 w-5 text-indigo-400" />}
+                  {isDowngrade ? `Confirm Downgrade to ${targetTitle}` : `Upgrade to ${targetTitle}`}
+                </div>
+                <DialogDescription className="text-xs text-slate-300 mt-1">
+                  {isDowngrade
+                    ? `Are you sure you want to downgrade from ${currentTitle} to ${targetTitle}?`
+                    : `Upgrade your shop to unlock higher limits and premium capabilities.`}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                {isDowngrade ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-3">
+                    <p className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      You will lose access to higher tier limits/features:
+                    </p>
+                    <ul className="space-y-2 text-xs text-slate-300 pl-1">
+                      <li className="flex items-center gap-2 text-amber-200/90">
+                        <span className="text-red-400 font-bold text-sm">✕</span> Maximum limit reduced to {planActionTarget.limits?.products === -1 ? 'Unlimited' : planActionTarget.limits?.products ?? 100} products
+                      </li>
+                      <li className="flex items-center gap-2 text-amber-200/90">
+                        <span className="text-red-400 font-bold text-sm">✕</span> Maximum limit reduced to {planActionTarget.limits?.monthly_invoices === -1 ? 'Unlimited' : planActionTarget.limits?.monthly_invoices ?? 500} monthly invoices
+                      </li>
+                      <li className="flex items-center gap-2 text-amber-200/90">
+                        <span className="text-red-400 font-bold text-sm">✕</span> Maximum staff accounts reduced to {planActionTarget.limits?.employees === -1 ? 'Unlimited' : planActionTarget.limits?.employees ?? 5} users
+                      </li>
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-white">{targetTitle} Subscription</span>
+                      <span className="text-base font-black text-indigo-300">{priceText}</span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Payment gateway integration will be connected in future releases. Upgrading now immediately activates {targetTitle} features for your shop.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button type="button" variant="outline" onClick={() => setPlanActionTarget(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  disabled={changePlanMutation.isPending}
+                  onClick={() => changePlanMutation.mutate(planActionTarget)}
+                  className={cn('font-semibold gap-2', isDowngrade ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white')}
+                >
+                  {changePlanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : isDowngrade ? null : <Sparkles className="h-4 w-4" />}
+                  {isDowngrade ? 'Proceed Downgrade' : 'Proceed Upgrade'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )
+      })()}
     </div>
   )
 }

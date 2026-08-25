@@ -60,7 +60,15 @@ export function PlatformSubscriptionsPage() {
         auto_renew: assignCycle !== 'lifetime',
       }, { onConflict: 'organization_id' })
       if (error) throw error
+
+      const selectedPlan = data?.plans.find((p: any) => p.id === assignPlanId)
+      const pName = selectedPlan?.name?.toLowerCase() || ''
+      const mappedPlan = pName.includes('pro') ? 'pro' : pName.includes('enterprise') ? 'enterprise' : 'free'
+      await supabase.from('organizations').update({ plan: mappedPlan }).eq('id', assignOrgId)
+
       queryClient.invalidateQueries({ queryKey: ['platform-subscriptions'] })
+      queryClient.invalidateQueries({ queryKey: ['platform-tenants'] })
+      queryClient.invalidateQueries({ queryKey: ['current-org-plan'] })
       setAssignOrgId(''); setAssignPlanId('')
     } catch (err: any) {
       alert(err.message)

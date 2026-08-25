@@ -18,16 +18,70 @@ interface Plan {
   created_at: string
 }
 
-const FEATURE_LABELS: Record<string, string> = {
-  pos_billing: 'POS Billing',
-  inventory: 'Inventory',
-  reports: 'Reports',
-  loyalty: 'Loyalty Program',
-  offers: 'Offers & Coupons',
-  gst_invoicing: 'GST Invoicing',
-  multi_branch: 'Multi-Branch',
-  api_access: 'API Access',
-}
+export const FEATURE_GROUPS = [
+  {
+    category: 'GENERAL',
+    features: [
+      { key: 'dashboard', label: 'Dashboard & Overview' },
+      { key: 'pos_billing', label: 'POS Billing' },
+      { key: 'shifts', label: 'Shifts & Cash Registers' },
+    ],
+  },
+  {
+    category: 'CATALOG & INVENTORY',
+    features: [
+      { key: 'products', label: 'Products & Variants' },
+      { key: 'categories', label: 'Product Categories' },
+      { key: 'inventory', label: 'Stock & Inventory Control' },
+      { key: 'barcode_labels', label: 'Barcode Printing' },
+    ],
+  },
+  {
+    category: 'SALES & FINANCE',
+    features: [
+      { key: 'gst_invoicing', label: 'GST Invoicing' },
+      { key: 'sales_history', label: 'Sales History' },
+      { key: 'purchases', label: 'Purchases & Inward Stock' },
+      { key: 'suppliers', label: 'Suppliers & Vendors' },
+      { key: 'expenses', label: 'Expenses Tracking' },
+      { key: 'returns', label: 'Sales Returns & Refunds' },
+      { key: 'quotations', label: 'Quotations & Estimates' },
+      { key: 'ledger', label: 'Party Ledger (Khata)' },
+    ],
+  },
+  {
+    category: 'PEOPLE & MARKETING',
+    features: [
+      { key: 'customers', label: 'Customer Management' },
+      { key: 'loyalty', label: 'Loyalty Program' },
+      { key: 'offers', label: 'Offers & Coupons' },
+      { key: 'employees', label: 'Employees & Staff' },
+      { key: 'roles', label: 'Roles & Permissions' },
+    ],
+  },
+  {
+    category: 'ANALYTICS & AUDIT',
+    features: [
+      { key: 'reports', label: 'Reports & Analytics' },
+      { key: 'activity_log', label: 'Audit Trail & Activity Log' },
+    ],
+  },
+  {
+    category: 'ADVANCED & SETTINGS',
+    features: [
+      { key: 'multi_branch', label: 'Multi-Branch Support' },
+      { key: 'api_access', label: 'Developer API Access' },
+      { key: 'invoice_customization', label: 'Custom Invoice Templates' },
+    ],
+  },
+]
+
+export const ALL_FEATURE_LABELS: Record<string, string> = FEATURE_GROUPS.reduce((acc, group) => {
+  group.features.forEach((f) => {
+    acc[f.key] = f.label
+  })
+  return acc
+}, {} as Record<string, string>)
 
 const LIMIT_LABELS: Record<string, string> = {
   products: 'Products',
@@ -37,10 +91,14 @@ const LIMIT_LABELS: Record<string, string> = {
 }
 
 const DEFAULT_LIMITS = { products: 100, employees: 5, branches: 1, monthly_invoices: 500 }
-const DEFAULT_FEATURES = {
-  pos_billing: true, inventory: true, reports: true,
-  loyalty: true, offers: true, gst_invoicing: true,
-  multi_branch: false, api_access: false,
+const DEFAULT_FEATURES: Record<string, boolean> = {
+  dashboard: true, pos_billing: true, shifts: true,
+  products: true, categories: true, inventory: true, barcode_labels: true,
+  gst_invoicing: true, sales_history: true, purchases: true, suppliers: true,
+  expenses: true, returns: true, quotations: true, ledger: true,
+  customers: true, loyalty: true, offers: true, employees: true, roles: true,
+  reports: true, activity_log: true,
+  multi_branch: false, api_access: false, invoice_customization: true,
 }
 
 function PlanFormModal({
@@ -58,7 +116,10 @@ function PlanFormModal({
   const [yearlyPrice, setYearlyPrice] = useState(String(plan?.yearly_price ?? ''))
   const [trialDays, setTrialDays] = useState(String(plan?.trial_days ?? 14))
   const [limits, setLimits] = useState<Record<string, number>>(plan?.limits ?? DEFAULT_LIMITS)
-  const [features, setFeatures] = useState<Record<string, boolean>>(plan?.features ?? DEFAULT_FEATURES)
+  const [features, setFeatures] = useState<Record<string, boolean>>(() => ({
+    ...DEFAULT_FEATURES,
+    ...(plan?.features ?? {}),
+  }))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -92,21 +153,31 @@ function PlanFormModal({
     }
   }
 
+  const toggleGroupAll = (groupFeatures: { key: string }[], enable: boolean) => {
+    setFeatures((prev) => {
+      const next = { ...prev }
+      groupFeatures.forEach((f) => {
+        next[f.key] = enable
+      })
+      return next
+    })
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl overflow-hidden">
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <h2 className="text-base font-semibold text-white">{plan ? 'Edit Plan' : 'Create New Plan'}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="px-6 py-5 space-y-5 max-h-[75vh] overflow-y-auto">
-          <div className="grid grid-cols-1 gap-4">
+        <div className="px-6 py-5 space-y-6 max-h-[78vh] overflow-y-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300">Plan Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Pro, Enterprise"
+                placeholder="e.g. Starter, Pro, Enterprise"
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div className="space-y-1.5">
@@ -139,7 +210,7 @@ function PlanFormModal({
           {/* Limits */}
           <div className="space-y-3">
             <p className="text-xs font-medium text-slate-300 uppercase tracking-wide">Resource Limits (-1 = Unlimited)</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {Object.entries(LIMIT_LABELS).map(([key, label]) => (
                 <div key={key} className="space-y-1.5">
                   <label className="text-[11px] text-slate-400">{label}</label>
@@ -155,24 +226,57 @@ function PlanFormModal({
             </div>
           </div>
 
-          {/* Features */}
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-slate-300 uppercase tracking-wide">Features</p>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(FEATURE_LABELS).map(([key, label]) => (
-                <label key={key} className="flex items-center gap-2.5 cursor-pointer select-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5">
-                  <div
-                    onClick={() => setFeatures((f) => ({ ...f, [key]: !f[key] }))}
-                    className={cn('h-4 w-4 rounded border flex items-center justify-center transition-colors cursor-pointer shrink-0',
-                      features[key] ? 'bg-indigo-600 border-indigo-600' : 'border-slate-600 bg-slate-900'
-                    )}
-                  >
-                    {features[key] && <Check className="h-2.5 w-2.5 text-white" />}
-                  </div>
-                  <span className="text-xs text-slate-300">{label}</span>
-                </label>
-              ))}
+          {/* Categorized Features */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-700/70 pb-2">
+              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Feature Access Toggles</p>
+              <span className="text-[11px] text-slate-400">Enable or disable module access for tenants on this plan</span>
             </div>
+
+            {FEATURE_GROUPS.map((group) => {
+              const allEnabled = group.features.every((f) => features[f.key])
+              return (
+                <div key={group.category} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-300 tracking-wider uppercase">{group.category}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupAll(group.features, !allEnabled)}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium"
+                    >
+                      {allEnabled ? 'Disable all' : 'Enable all'}
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {group.features.map((f) => {
+                      const enabled = !!features[f.key]
+                      return (
+                        <label
+                          key={f.key}
+                          onClick={() => setFeatures((prev) => ({ ...prev, [f.key]: !prev[f.key] }))}
+                          className={cn(
+                            'flex items-center gap-3 cursor-pointer select-none rounded-lg border px-3 py-2.5 transition-all',
+                            enabled
+                              ? 'border-indigo-500/40 bg-indigo-500/10 text-white'
+                              : 'border-slate-800 bg-slate-900/50 text-slate-400 hover:border-slate-700'
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              'h-4 w-4 rounded border flex items-center justify-center transition-colors shrink-0',
+                              enabled ? 'bg-indigo-600 border-indigo-600' : 'border-slate-600 bg-slate-900'
+                            )}
+                          >
+                            {enabled && <Check className="h-2.5 w-2.5 text-white" />}
+                          </div>
+                          <span className="text-xs font-medium">{f.label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
           {error && (
@@ -312,7 +416,7 @@ export function PlatformPlansPage() {
                     .filter(([, v]) => v)
                     .map(([k]) => (
                       <span key={k} className="rounded-md bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">
-                        {FEATURE_LABELS[k] ?? k}
+                        {ALL_FEATURE_LABELS[k] ?? k}
                       </span>
                     ))}
                 </div>
