@@ -555,6 +555,15 @@ export function ProductFormPage() {
         toast.error('Incomplete variant', 'Each variant needs a name before saving.')
         return
       }
+      // Track Variants can be left ON with every variant row deleted (e.g. removing rows one by
+      // one) — the check above only rejects a BLANK-named row, and [].some(...) is vacuously
+      // false for an empty list, so this must be checked separately. Without this, has_variants
+      // saves as true with zero real variants: the product shows "Multiple prices" everywhere
+      // (POS, Products list) but has nothing to actually sell, a dead end for the cashier.
+      if (validVariantCount === 0) {
+        toast.error('No variants added', 'Add at least one variant, or turn off Track Variants before saving.')
+        return
+      }
     }
     if (hasBatches) {
       const incompleteBatch = batches.find((b) => !b.batch_no.trim() || !b.expiry_date)
