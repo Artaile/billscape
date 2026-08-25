@@ -46,7 +46,7 @@ export function ProductFormPage() {
   const { id } = useParams<{ id: string }>()
   const isEdit = !!id
   const queryClient = useQueryClient()
-  const { org } = useAuth()
+  const { org, user } = useAuth()
   const orgId = org?.id
   const taxInclusive = org?.branding?.tax_inclusive ?? false
 
@@ -462,16 +462,43 @@ export function ProductFormPage() {
             }))
           ).select('id')
 
-          // A genuinely new variant has no prior stock — seed variant_inventory at 0. Any
-          // real opening stock for it is entered via a Purchase, same as a non-variant product.
           if (insertedVariants && insertedVariants.length > 0) {
-            await supabase.from('variant_inventory').insert(
-              insertedVariants.map((iv: { id: string }) => ({
-                product_variant_id: iv.id,
-                organization_id: orgId!,
-                stock_qty: 0,
-              }))
-            )
+            // CREATE-only: a brand new product's variants are being seeded for the very first
+            // time, so the Qty the user just typed on this page IS real opening stock — same as
+            // the base (non-variant) product's own "Opening Stock" field only applying at
+            // creation. This must NEVER run during an edit: `toInsert` here also covers a
+            // genuinely NEW variant row added while editing an otherwise-existing product, and
+            // for that case stock still seeds at 0 (real stock only ever enters via a Purchase
+            // once the product exists) — editing must never be a stock-adjustment path, per the
+            // stock-preservation fix this session (d5c6451 / 48fdbbc). `insertedVariants` is
+            // returned in the same order as `toInsert` was inserted, so index-matching is safe.
+            const stockRows = insertedVariants.map((iv: { id: string }, i: number) => ({
+              product_variant_id: iv.id,
+              organization_id: orgId!,
+              stock_qty: !isEdit && toInsert[i]?.qty ? Number(toInsert[i].qty) : 0,
+            }))
+            await supabase.from('variant_inventory').insert(stockRows)
+
+            // Log an opening-stock movement per variant that actually got real stock, mirroring
+            // how the base product's own Opening Stock is logged once at creation (see
+            // InventoryPage.tsx's openingMutation for the same reason/shape). reference_id is
+            // null — an opening balance has no purchase/sale to point at.
+            if (!isEdit && user) {
+              const openingMovements = stockRows
+                .filter((r) => r.stock_qty > 0)
+                .map((r) => ({
+                  organization_id: orgId!,
+                  product_variant_id: r.product_variant_id,
+                  qty_change: r.stock_qty,
+                  reason: 'opening' as const,
+                  reference_id: null,
+                  note: 'Opening stock entry',
+                  created_by: user.id,
+                }))
+              if (openingMovements.length > 0) {
+                await supabase.from('variant_stock_movements').insert(openingMovements)
+              }
+            }
           }
         }
       }
@@ -669,64 +696,71 @@ export function ProductFormPage() {
               <IndianRupee className="h-4 w-4 text-indigo-400" />Pricing & Tax
             </h2>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="price">Retail Price (₹) *</Label>
-                <Input
-                  id="price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('price', { valueAsNumber: true })}
-                />
-                {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
-                {taxInclusive && watchedPrice > 0 && watchedTaxRate > 0 && (() => {
-                  const { base, tax } = splitInclusiveGST(watchedPrice, watchedTaxRate)
-                  return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
-                })()}
+            {!hasVariants && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="price">Retail Price (₹) *</Label>
+                  <Input
+                    id="price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('price', { valueAsNumber: true })}
+                  />
+                  {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
+                  {taxInclusive && watchedPrice > 0 && watchedTaxRate > 0 && (() => {
+                    const { base, tax } = splitInclusiveGST(watchedPrice, watchedTaxRate)
+                    return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                  })()}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cost_price">Cost Price (₹)</Label>
+                  <Input
+                    id="cost_price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('cost_price', { valueAsNumber: true })}
+                  />
+                  {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
+                  {taxInclusive && watchedCostPrice > 0 && watchedTaxRate > 0 && (() => {
+                    const { base, tax } = splitInclusiveGST(watchedCostPrice, watchedTaxRate)
+                    return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                  })()}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mrp">MRP (₹)</Label>
+                  <Input
+                    id="mrp"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('mrp', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                  />
+                  {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="special_price">Special Price (₹)</Label>
+                  <Input
+                    id="special_price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('special_price', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                  />
+                  {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cost_price">Cost Price (₹)</Label>
-                <Input
-                  id="cost_price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('cost_price', { valueAsNumber: true })}
-                />
-                {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
-                {taxInclusive && watchedCostPrice > 0 && watchedTaxRate > 0 && (() => {
-                  const { base, tax } = splitInclusiveGST(watchedCostPrice, watchedTaxRate)
-                  return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
-                })()}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="mrp">MRP (₹)</Label>
-                <Input
-                  id="mrp"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('mrp', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
-                />
-                {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="special_price">Special Price (₹)</Label>
-                <Input
-                  id="special_price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('special_price', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
-                />
-                {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
-              </div>
-            </div>
+            )}
+            {hasVariants && (
+              <p className="text-xs text-zinc-500 -mt-1">
+                Retail/Cost/MRP/Special Price are set per-variant below — the GST rate here is still used as each new variant's default.
+              </p>
+            )}
 
             <div className="space-y-1.5">
               <Label>GST Rate *</Label>
@@ -894,8 +928,19 @@ export function ProductFormPage() {
                 <div
                   onClick={() => {
                     setHasVariants((v) => !v)
-                    if (!hasVariants && variants.length === 0) {
-                      setVariants([emptyVariantRow(watchedTaxRate)])
+                    if (!hasVariants) {
+                      if (variants.length === 0) {
+                        setVariants([emptyVariantRow(watchedTaxRate)])
+                      }
+                      // price is a required field (ProductSchema: z.number().positive()) but the
+                      // field itself is hidden once variants are on — a variant-only product has
+                      // no meaningful top-level retail price, so seed a placeholder non-zero
+                      // value rather than leaving whatever default (often 0) was already in the
+                      // form, which would otherwise fail validation on a field the user can no
+                      // longer see or edit.
+                      if (!watchedPrice || watchedPrice <= 0) {
+                        setValue('price', 1, { shouldValidate: true })
+                      }
                     }
                   }}
                   className={cn(

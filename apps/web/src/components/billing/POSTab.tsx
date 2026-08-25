@@ -798,7 +798,8 @@ export function POSTab() {
                     <p className="text-xs font-medium text-zinc-200 leading-tight line-clamp-2">
                       {product.name}
                     </p>
-                    <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>
+                    {!hasVariants && <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>}
+                    {hasVariants && <p className="text-sm font-bold text-indigo-300">Multiple prices</p>}
                     {hasVariants ? (
                       <div className="mt-auto">
                         <Badge variant="secondary" className="text-[9px] px-1.5 py-0">Variants</Badge>
