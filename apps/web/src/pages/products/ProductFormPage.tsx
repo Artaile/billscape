@@ -1153,13 +1153,22 @@ export function ProductFormPage() {
             </div>
 
             <div className="flex items-center justify-center gap-2">
-              <span className="text-lg font-bold text-indigo-300">{formatINR(watchedPrice || 0)}</span>
-              {watchedMrp != null && watchedMrp > 0 && watchedMrp !== watchedPrice && (
-                <span className="text-xs text-zinc-500 line-through">{formatINR(watchedMrp)}</span>
+              {!hasVariants && (
+                <>
+                  <span className="text-lg font-bold text-indigo-300">{formatINR(watchedPrice || 0)}</span>
+                  {watchedMrp != null && watchedMrp > 0 && watchedMrp !== watchedPrice && (
+                    <span className="text-xs text-zinc-500 line-through">{formatINR(watchedMrp)}</span>
+                  )}
+                </>
               )}
+              {hasVariants && <span className="text-sm text-zinc-500">Priced per variant</span>}
             </div>
 
-            {marginPct != null && (
+            {/* price is seeded to a non-zero placeholder (see the variants-enable handler above)
+                purely to satisfy ProductSchema's price > 0 validation once the field is hidden —
+                it is not a real price, so neither it nor a margin computed against it (which can
+                also be stale from before the toggle) should be shown once variants are on. */}
+            {!hasVariants && marginPct != null && (
               <div className="flex justify-between items-center text-xs px-1">
                 <span className="text-zinc-500">Margin</span>
                 <span className={cn('font-semibold', marginPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
