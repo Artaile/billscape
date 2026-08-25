@@ -94,6 +94,7 @@ interface OnboardingData {
   gstin: string
   state_code: string
   primary_color: string
+  selected_plan_id: string
   logo_url?: string
 }
 
@@ -104,6 +105,7 @@ export function OnboardingPage() {
   const [loading, setLoading] = useState(false)
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [plans, setPlans] = useState<any[]>([])
 
   const [data, setData] = useState<OnboardingData>({
     shop_name: '',
@@ -111,7 +113,24 @@ export function OnboardingPage() {
     gstin: '',
     state_code: 'TN',
     primary_color: '#6366f1',
+    selected_plan_id: '',
   })
+
+  React.useEffect(() => {
+    // Fetch available active plans for onboarding
+    supabase
+      .from('plans')
+      .select('*')
+      .eq('is_active', true)
+      .order('monthly_price', { ascending: true })
+      .then(({ data: fetchedPlans }) => {
+        if (fetchedPlans && fetchedPlans.length > 0) {
+          setPlans(fetchedPlans)
+          const defaultPlan = fetchedPlans.find((p) => p.is_default) || fetchedPlans[0]
+          setData((prev) => ({ ...prev, selected_plan_id: defaultPlan.id }))
+        }
+      })
+  }, [])
 
   const form1 = useForm<Step1Values>({
     resolver: zodResolver(step1Schema),
@@ -180,6 +199,28 @@ export function OnboardingPage() {
         return
       }
 
+      // Assign the selected plan to org_plans
+      const { data: mem } = await supabase
+        .from('memberships')
+        .select('organization_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle()
+
+      if (mem?.organization_id && data.selected_plan_id) {
+        const expiryDate = new Date()
+        expiryDate.setDate(expiryDate.getDate() + 14) // 14-day trial default
+        await supabase.from('org_plans').upsert({
+          organization_id: mem.organization_id,
+          plan_id: data.selected_plan_id,
+          status: 'trial',
+          billing_cycle: 'monthly',
+          start_date: new Date().toISOString().split('T')[0],
+          expiry_date: expiryDate.toISOString().split('T')[0],
+          auto_renew: true,
+        }, { onConflict: 'organization_id' })
+      }
+
       await refreshOrg()
       navigate('/dashboard')
     } catch (err) {
@@ -189,7 +230,7 @@ export function OnboardingPage() {
     }
   }
 
-  const steps = ['Shop Details', 'Tax & Location', 'Branding', 'Review']
+  const steps = ['Shop Details', 'Tax & Location', 'Branding', 'Choose Plan', 'Review']
 
   return (
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
@@ -447,8 +488,68 @@ export function OnboardingPage() {
             </div>
           )}
 
-          {/* Step 4: Review */}
+          {/* Step 4: Choose Plan */}
           {step === 4 && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Choose your plan</h2>
+                <p className="text-sm text-zinc-400 mt-1">Select a plan to start your 14-day free trial.</p>
+              </div>
+
+              <div className="grid gap-3">
+                {plans.length === 0 ? (
+                  <div className="rounded-lg border border-zinc-800 bg-zinc-800/50 p-4 text-center text-sm text-zinc-400">
+                    Loading subscription plans...
+                  </div>
+                ) : (
+                  plans.map((plan) => (
+                    <div
+                      key={plan.id}
+                      onClick={() => setData((prev) => ({ ...prev, selected_plan_id: plan.id }))}
+                      className={cn(
+                        'cursor-pointer rounded-xl border p-4 transition-all flex items-center justify-between',
+                        data.selected_plan_id === plan.id
+                          ? 'border-indigo-500 bg-indigo-600/10 ring-2 ring-indigo-500/20'
+                          : 'border-zinc-800 bg-zinc-800/50 hover:border-zinc-700 hover:bg-zinc-800'
+                      )}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white text-sm">{plan.name}</span>
+                          {plan.is_default && (
+                            <span className="rounded-full bg-indigo-500/20 text-indigo-400 px-2 py-0.5 text-[10px] font-semibold">
+                              Recommended
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-400 mt-0.5">{plan.description}</p>
+                      </div>
+                      <div className="text-right shrink-0 ml-3">
+                        <span className="text-base font-bold text-white">
+                          {plan.monthly_price === 0 ? 'Free' : `₹${plan.monthly_price}`}
+                        </span>
+                        {plan.monthly_price > 0 && <span className="text-xs text-zinc-400">/mo</span>}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setStep(3)}>
+                  <ChevronLeft className="h-4 w-4" />
+                  Back
+                </Button>
+                <Button className="flex-1" onClick={() => setStep(5)} disabled={!data.selected_plan_id}>
+                  Continue
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 5: Review */}
+          {step === 5 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-white">Review & Launch</h2>
@@ -463,6 +564,12 @@ export function OnboardingPage() {
                 <div className="flex items-center justify-between px-4 py-3">
                   <span className="text-xs text-zinc-400">Business Type</span>
                   <span className="text-sm font-medium text-zinc-200 capitalize">{data.business_type}</span>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3">
+                  <span className="text-xs text-zinc-400">Selected Plan</span>
+                  <span className="text-sm font-medium text-indigo-400">
+                    {plans.find((p) => p.id === data.selected_plan_id)?.name ?? 'Selected Plan'}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3">
                   <span className="text-xs text-zinc-400">State</span>
@@ -502,7 +609,7 @@ export function OnboardingPage() {
               </div>
 
               <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" onClick={() => setStep(3)}>
+                <Button variant="outline" className="flex-1" onClick={() => setStep(4)}>
                   <ChevronLeft className="h-4 w-4" />
                   Back
                 </Button>

@@ -1,11 +1,42 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Building2, TrendingUp, CreditCard, AlertTriangle, Users2, Receipt } from 'lucide-react'
+import {
+  Building2,
+  TrendingUp,
+  CreditCard,
+  AlertTriangle,
+  Users2,
+  Receipt,
+  Calendar,
+  Filter,
+} from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from 'recharts'
 
-function KPICard({ label, value, icon: Icon, color, sub }: {
-  label: string; value: string | number; icon: React.ElementType; color: string; sub?: string
+function KPICard({
+  label,
+  value,
+  icon: Icon,
+  color,
+  sub,
+}: {
+  label: string
+  value: string | number
+  icon: React.ElementType
+  color: string
+  sub?: string
 }) {
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5">
@@ -23,9 +54,85 @@ function KPICard({ label, value, icon: Icon, color, sub }: {
   )
 }
 
+const CustomSalesTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="rounded-xl border border-slate-700 bg-slate-900/95 p-3 shadow-2xl text-xs space-y-1 backdrop-blur-md">
+        <p className="text-slate-400 font-medium">{label}</p>
+        <p className="text-base font-bold text-indigo-400">
+          {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(
+            payload[0].value
+          )}
+        </p>
+        <p className="text-[10px] text-slate-500">Platform Sales Volume</p>
+      </div>
+    )
+  }
+  return null
+}
+
+const CustomTenantsTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="rounded-xl border border-slate-700 bg-slate-900/95 p-3 shadow-2xl text-xs space-y-1 backdrop-blur-md">
+        <p className="text-slate-400 font-medium">{label}</p>
+        <p className="text-base font-bold text-emerald-400">
+          +{payload[0].value} New Shops
+        </p>
+        <p className="text-[10px] text-slate-500">Tenant Registrations</p>
+      </div>
+    )
+  }
+  return null
+}
+
 export function PlatformDashboardPage() {
+  // Global Top Dashboard Date Range State
+  const [globalPreset, setGlobalPreset] = useState<'7d' | '30d' | 'custom'>('7d')
+  const [globalFrom, setGlobalFrom] = useState('')
+  const [globalTo, setGlobalTo] = useState('')
+
+  // Chart 1 (Sales) Independent Date Range State
+  const [salesPreset, setSalesPreset] = useState<'7d' | '30d' | 'custom'>('7d')
+  const [salesFrom, setSalesFrom] = useState('')
+  const [salesTo, setSalesTo] = useState('')
+
+  // Chart 2 (Tenants) Independent Date Range State
+  const [tenantsPreset, setTenantsPreset] = useState<'7d' | '30d' | 'custom'>('7d')
+  const [tenantsFrom, setTenantsFrom] = useState('')
+  const [tenantsTo, setTenantsTo] = useState('')
+
+  // Helper to compute date boundaries
+  function getRangeDates(preset: '7d' | '30d' | 'custom', customFromStr: string, customToStr: string) {
+    const now = new Date()
+    let end = new Date(now)
+    let start = new Date(now)
+    if (preset === '7d') {
+      start.setDate(now.getDate() - 7)
+    } else if (preset === '30d') {
+      start.setDate(now.getDate() - 30)
+    } else if (preset === 'custom' && customFromStr && customToStr) {
+      start = new Date(customFromStr)
+      end = new Date(customToStr)
+      end.setHours(23, 59, 59, 999)
+    }
+    return { start, end }
+  }
+
+  // Fetch Dashboard Stats & Analytics Data
   const { data: stats, isLoading } = useQuery({
-    queryKey: ['platform-dashboard'],
+    queryKey: [
+      'platform-dashboard',
+      globalPreset,
+      globalFrom,
+      globalTo,
+      salesPreset,
+      salesFrom,
+      salesTo,
+      tenantsPreset,
+      tenantsFrom,
+      tenantsTo,
+    ],
     queryFn: async () => {
       const [orgs, plans, orgPlans, sales] = await Promise.all([
         supabase.from('organizations').select('id, name, status, created_at'),
@@ -34,12 +141,38 @@ export function PlatformDashboardPage() {
         supabase.from('sales').select('grand_total, created_at'),
       ])
 
-      const allOrgs = orgs.data ?? []
+      const allOrgs = (orgs.data ?? []).filter((o) => o.status !== 'deleted')
       const allOrgPlans = (orgPlans.data ?? []) as any[]
       const allSales = sales.data ?? []
 
-      const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+      // Global Date Filter calculation
+      const globalRange = getRangeDates(globalPreset, globalFrom, globalTo)
+      const rangeSales = allSales.filter((s) => {
+        const d = new Date(s.created_at)
+        return d >= globalRange.start && d <= globalRange.end
+      })
+      const rangeOrgs = allOrgs.filter((o) => {
+        const d = new Date(o.created_at)
+        return d >= globalRange.start && d <= globalRange.end
+      })
+
+      // Sales Chart Date Filter calculation
+      const salesRange = getRangeDates(salesPreset, salesFrom, salesTo)
+      const chartSalesData = generateDailyChart(
+        allSales,
+        salesRange.start,
+        salesRange.end,
+        (s) => s.grand_total ?? 0
+      )
+
+      // Tenants Chart Date Filter calculation
+      const tenantsRange = getRangeDates(tenantsPreset, tenantsFrom, tenantsTo)
+      const chartTenantsData = generateDailyChart(
+        allOrgs,
+        tenantsRange.start,
+        tenantsRange.end,
+        () => 1
+      )
 
       return {
         totalTenants: allOrgs.length,
@@ -51,9 +184,12 @@ export function PlatformDashboardPage() {
         mrr: allOrgPlans
           .filter((op) => op.status === 'active')
           .reduce((sum: number, op: any) => sum + (op.plans?.monthly_price ?? 0), 0),
-        totalSalesThisMonth: allSales
-          .filter((s) => new Date(s.created_at) >= monthStart)
-          .reduce((sum, s) => sum + (s.grand_total ?? 0), 0),
+        globalSalesTotal: rangeSales.reduce((sum, s) => sum + (s.grand_total ?? 0), 0),
+        globalTenantsCount: rangeOrgs.length,
+        salesChartPoints: chartSalesData.points,
+        salesChartTotal: chartSalesData.total,
+        tenantsChartPoints: chartTenantsData.points,
+        tenantsChartTotal: chartTenantsData.total,
         recentTenants: allOrgs
           .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
           .slice(0, 5)
@@ -68,13 +204,88 @@ export function PlatformDashboardPage() {
     },
   })
 
-  const fmt = (n: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
+  // Helper to construct daily aggregated points
+  function generateDailyChart<T extends { created_at: string }>(
+    items: T[],
+    start: Date,
+    end: Date,
+    valFn: (item: T) => number
+  ) {
+    const daysCount = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))
+    const map: Record<string, { label: string; value: number }> = {}
+
+    for (let i = 0; i <= daysCount; i++) {
+      const d = new Date(start)
+      d.setDate(start.getDate() + i)
+      const key = d.toISOString().split('T')[0]
+      const label = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+      map[key] = { label, value: 0 }
+    }
+
+    let total = 0
+    items.forEach((item) => {
+      const d = new Date(item.created_at)
+      if (d >= start && d <= end) {
+        const key = d.toISOString().split('T')[0]
+        if (map[key]) {
+          const val = valFn(item)
+          map[key].value += val
+          total += val
+        }
+      }
+    })
+
+    return { points: Object.values(map), total }
+  }
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 
   return (
     <div className="p-4 lg:p-6 space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-white">Platform Dashboard</h1>
-        <p className="text-sm text-slate-400 mt-0.5">Overview of all tenants and revenue</p>
+      {/* Top Header & Global Date Filter Dropdown */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-white">Platform Dashboard</h1>
+          <p className="text-sm text-slate-400 mt-0.5">Overview of all tenants, sales analytics and revenue</p>
+        </div>
+
+        {/* Global Filter Controls Bar */}
+        <div className="flex flex-wrap items-center gap-3 bg-slate-900 border border-slate-700/50 p-2 rounded-xl">
+          <div className="flex items-center gap-1.5 text-slate-400 text-xs px-1 font-medium">
+            <Filter className="h-3.5 w-3.5 text-indigo-400" /> Global Range:
+          </div>
+
+          {/* Dropdown Selector */}
+          <select
+            value={globalPreset}
+            onChange={(e) => setGlobalPreset(e.target.value as any)}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer font-medium"
+          >
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last Month (30 Days)</option>
+            <option value="custom">Custom Date Range</option>
+          </select>
+
+          {/* Custom Date Pickers */}
+          {globalPreset === 'custom' && (
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-700">
+              <input
+                type="date"
+                value={globalFrom}
+                onChange={(e) => setGlobalFrom(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white focus:outline-none"
+              />
+              <span className="text-xs text-slate-500">to</span>
+              <input
+                type="date"
+                value={globalTo}
+                onChange={(e) => setGlobalTo(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white focus:outline-none"
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* KPI Row 1 */}
@@ -104,12 +315,170 @@ export function PlatformDashboardPage() {
             <KPICard label="MRR" value={fmt(stats?.mrr ?? 0)} icon={CreditCard} color="bg-violet-600" sub="Monthly recurring revenue" />
             <KPICard label="Active Subscriptions" value={stats?.activeSubscriptions ?? 0} icon={CreditCard} color="bg-blue-600" />
             <KPICard label="Active Plans" value={stats?.activePlans ?? 0} icon={CreditCard} color="bg-cyan-600" />
-            <KPICard label="Platform Sales (This Month)" value={fmt(stats?.totalSalesThisMonth ?? 0)} icon={Receipt} color="bg-pink-600" sub="Across all tenants" />
+            <KPICard
+              label={`Platform Sales (${globalPreset === '7d' ? '7 Days' : globalPreset === '30d' ? '30 Days' : 'Selected Period'})`}
+              value={fmt(stats?.globalSalesTotal ?? 0)}
+              icon={Receipt}
+              color="bg-pink-600"
+              sub={`${stats?.globalTenantsCount ?? 0} new tenants in period`}
+            />
           </>
         )}
       </div>
 
-      {/* Tables */}
+      {/* Recharts Interactive Analytics Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Chart 1: Sales Revenue Area Chart */}
+        <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/50 pb-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Sales & Revenue Analytics</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Daily sales volume across all tenant stores</p>
+            </div>
+
+            {/* Per-Chart Independent Filter Dropdown */}
+            <div className="flex items-center gap-2">
+              <select
+                value={salesPreset}
+                onChange={(e) => setSalesPreset(e.target.value as any)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last Month (30d)</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Custom Date Pickers for Sales Chart */}
+          {salesPreset === 'custom' && (
+            <div className="flex items-center gap-2 bg-slate-800/60 p-2 rounded-lg border border-slate-700 text-xs">
+              <span className="text-slate-400">From:</span>
+              <input
+                type="date"
+                value={salesFrom}
+                onChange={(e) => setSalesFrom(e.target.value)}
+                className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-white"
+              />
+              <span className="text-slate-400">To:</span>
+              <input
+                type="date"
+                value={salesTo}
+                onChange={(e) => setSalesTo(e.target.value)}
+                className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-white"
+              />
+            </div>
+          )}
+
+          {/* Interactive Recharts Area */}
+          <div className="h-64 w-full pt-2">
+            {isLoading || !stats?.salesChartPoints ? (
+              <div className="flex items-center justify-center h-full text-slate-500 text-xs animate-pulse">
+                Loading sales chart...
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={stats.salesChartPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                  <XAxis dataKey="label" stroke="#64748b" fontSize={11} tickLine={false} />
+                  <YAxis
+                    stroke="#64748b"
+                    fontSize={10}
+                    tickLine={false}
+                    tickFormatter={(val) => `₹${val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}`}
+                  />
+                  <Tooltip content={<CustomSalesTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="value"
+                    stroke="#6366f1"
+                    strokeWidth={2.5}
+                    fillOpacity={1}
+                    fill="url(#salesGrad)"
+                    activeDot={{ r: 6, stroke: '#818cf8', strokeWidth: 2, fill: '#1e1b4b' }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Chart 2: Tenant Growth Bar Chart */}
+        <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/50 pb-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white">New Tenant Registrations</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Shops registered per day</p>
+            </div>
+
+            {/* Per-Chart Independent Filter Dropdown */}
+            <div className="flex items-center gap-2">
+              <select
+                value={tenantsPreset}
+                onChange={(e) => setTenantsPreset(e.target.value as any)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+              >
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last Month (30d)</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Custom Date Pickers for Tenants Chart */}
+          {tenantsPreset === 'custom' && (
+            <div className="flex items-center gap-2 bg-slate-800/60 p-2 rounded-lg border border-slate-700 text-xs">
+              <span className="text-slate-400">From:</span>
+              <input
+                type="date"
+                value={tenantsFrom}
+                onChange={(e) => setTenantsFrom(e.target.value)}
+                className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-white"
+              />
+              <span className="text-slate-400">To:</span>
+              <input
+                type="date"
+                value={tenantsTo}
+                onChange={(e) => setTenantsTo(e.target.value)}
+                className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-white"
+              />
+            </div>
+          )}
+
+          {/* Interactive Recharts Bar */}
+          <div className="h-64 w-full pt-2">
+            {isLoading || !stats?.tenantsChartPoints ? (
+              <div className="flex items-center justify-center h-full text-slate-500 text-xs animate-pulse">
+                Loading tenant growth chart...
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stats.tenantsChartPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="tenantsGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.9} />
+                      <stop offset="95%" stopColor="#059669" stopOpacity={0.5} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                  <XAxis dataKey="label" stroke="#64748b" fontSize={11} tickLine={false} />
+                  <YAxis stroke="#64748b" fontSize={10} tickLine={false} allowDecimals={false} />
+                  <Tooltip content={<CustomTenantsTooltip />} />
+                  <Bar dataKey="value" fill="url(#tenantsGrad)" radius={[6, 6, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Tables Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Tenants */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-900 overflow-hidden">

@@ -4,7 +4,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Search, Plus, Loader2, Building2, ArrowLeft,
   Users, Package, Receipt, ShieldAlert, ShieldCheck,
-  Trash2, Edit2, ChevronRight,
+  Trash2, Edit2, ChevronRight, RotateCcw, AlertTriangle, X
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
@@ -18,7 +18,13 @@ export function PlatformTenantsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [createName, setCreateName] = useState('')
   const [creating, setCreating] = useState(false)
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'trial'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'trial' | 'deleted'>('all')
+
+  // Modals for confirmation
+  const [suspendTarget, setSuspendTarget] = useState<{ id: string; name: string; currentStatus: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [restoreTarget, setRestoreTarget] = useState<{ id: string; name: string } | null>(null)
+  const [confirmInput, setConfirmInput] = useState('')
 
   const { data: tenants = [], isLoading } = useQuery({
     queryKey: ['platform-tenants'],
@@ -42,15 +48,37 @@ export function PlatformTenantsPage() {
       const { error } = await supabase.from('organizations').update({ status }).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['platform-tenants'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['platform-tenants'] })
+      setSuspendTarget(null)
+      setConfirmInput('')
+    },
   })
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('organizations').delete().eq('id', id)
+      // Soft-delete: update status to 'deleted'
+      const { error } = await supabase.from('organizations').update({ status: 'deleted' }).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['platform-tenants'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['platform-tenants'] })
+      setDeleteTarget(null)
+      setConfirmInput('')
+    },
+  })
+
+  const restoreMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // Restore soft-deleted shop back to active
+      const { error } = await supabase.from('organizations').update({ status: 'active' }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['platform-tenants'] })
+      setRestoreTarget(null)
+      setConfirmInput('')
+    },
   })
 
   async function handleCreate() {
@@ -80,9 +108,12 @@ export function PlatformTenantsPage() {
     const matchSearch = search.trim()
       ? t.name.toLowerCase().includes(search.toLowerCase())
       : true
-    const matchStatus = statusFilter === 'all' ? true
-      : statusFilter === 'trial' ? t.orgPlan?.status === 'trial'
-      : t.status === statusFilter
+    const matchStatus =
+      statusFilter === 'all'
+        ? t.status !== 'deleted' // Hide deleted in 'all' view
+        : statusFilter === 'trial'
+        ? t.orgPlan?.status === 'trial'
+        : t.status === statusFilter
     return matchSearch && matchStatus
   })
 
@@ -131,12 +162,12 @@ export function PlatformTenantsPage() {
             className="rounded-lg border border-slate-700 bg-slate-900 pl-9 pr-4 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64"
           />
         </div>
-        <div className="flex rounded-lg bg-slate-800 p-1 gap-1">
-          {(['all', 'active', 'trial', 'suspended'] as const).map((f) => (
+        <div className="flex rounded-lg bg-slate-800 p-1 gap-1 flex-wrap">
+          {(['all', 'active', 'trial', 'suspended', 'deleted'] as const).map((f) => (
             <button key={f} onClick={() => setStatusFilter(f)}
               className={cn('rounded-md px-3 py-1 text-xs font-medium transition-all capitalize',
                 statusFilter === f ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white')}>
-              {f}
+              {f === 'deleted' ? 'Deleted (Trash 60d)' : f}
             </button>
           ))}
         </div>
@@ -198,7 +229,9 @@ export function PlatformTenantsPage() {
                   </td>
                   <td className="px-4 py-4">
                     <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                      t.status === 'active' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
+                      t.status === 'active' ? 'bg-emerald-500/15 text-emerald-400' :
+                      t.status === 'suspended' ? 'bg-amber-500/15 text-amber-400' :
+                      'bg-red-500/15 text-red-400'
                     )}>
                       {t.status.toUpperCase()}
                     </span>
@@ -212,30 +245,42 @@ export function PlatformTenantsPage() {
                       >
                         <Edit2 className="h-3.5 w-3.5" />
                       </button>
-                      {t.status === 'active' ? (
+                      {t.status === 'deleted' ? (
                         <button
-                          onClick={() => { if (confirm(`Suspend ${t.name}?`)) suspendMutation.mutate({ id: t.id, status: 'suspended' }) }}
-                          className="p-1.5 rounded-lg text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
-                          title="Suspend"
+                          onClick={() => { setRestoreTarget({ id: t.id, name: t.name }); setConfirmInput('') }}
+                          className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/20 transition-colors flex items-center gap-1 text-xs px-2"
+                          title="Restore Shop"
                         >
-                          <ShieldAlert className="h-3.5 w-3.5" />
+                          <RotateCcw className="h-3.5 w-3.5" /> Restore
                         </button>
                       ) : (
-                        <button
-                          onClick={() => suspendMutation.mutate({ id: t.id, status: 'active' })}
-                          className="p-1.5 rounded-lg text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
-                          title="Reactivate"
-                        >
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                        </button>
+                        <>
+                          {t.status === 'active' ? (
+                            <button
+                              onClick={() => { setSuspendTarget({ id: t.id, name: t.name, currentStatus: 'active' }); setConfirmInput('') }}
+                              className="p-1.5 rounded-lg text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+                              title="Suspend"
+                            >
+                              <ShieldAlert className="h-3.5 w-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => suspendMutation.mutate({ id: t.id, status: 'active' })}
+                              className="p-1.5 rounded-lg text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                              title="Reactivate"
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => { setDeleteTarget({ id: t.id, name: t.name }); setConfirmInput('') }}
+                            className="p-1.5 rounded-lg text-red-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            title="Delete (Soft Delete)"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
                       )}
-                      <button
-                        onClick={() => { if (confirm(`Permanently delete ${t.name}? This cannot be undone.`)) deleteMutation.mutate(t.id) }}
-                        className="p-1.5 rounded-lg text-red-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -244,6 +289,126 @@ export function PlatformTenantsPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Suspend Confirmation Modal */}
+      {suspendTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-lg">
+                <AlertTriangle className="h-5 w-5" />
+                Suspend Shop
+              </div>
+              <button onClick={() => setSuspendTarget(null)} className="text-slate-400 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-300">
+              Are you sure you want to suspend <span className="font-semibold text-white">{suspendTarget.name}</span>? Users in this shop will be temporarily blocked from logging in.
+            </p>
+            <div className="space-y-1.5 pt-1">
+              <label className="text-xs text-slate-400">
+                To confirm, type <span className="font-mono text-amber-400 font-bold">{suspendTarget.name}</span> below:
+              </label>
+              <input
+                autoFocus
+                value={confirmInput}
+                onChange={(e) => setConfirmInput(e.target.value)}
+                placeholder={suspendTarget.name}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setSuspendTarget(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">
+                Cancel
+              </button>
+              <button
+                disabled={confirmInput !== suspendTarget.name || suspendMutation.isPending}
+                onClick={() => suspendMutation.mutate({ id: suspendTarget.id, status: 'suspended' })}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40"
+              >
+                {suspendMutation.isPending ? 'Suspending...' : 'Confirm Suspend'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete (Soft Delete) Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-red-400 font-bold text-lg">
+                <Trash2 className="h-5 w-5" />
+                Soft-Delete Shop (60 Days Retention)
+              </div>
+              <button onClick={() => setDeleteTarget(null)} className="text-slate-400 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-300">
+              Are you sure you want to soft-delete <span className="font-semibold text-white">{deleteTarget.name}</span>? This shop will be moved to Trash for 60 days where you can restore it anytime.
+            </p>
+            <div className="space-y-1.5 pt-1">
+              <label className="text-xs text-slate-400">
+                To confirm, type <span className="font-mono text-red-400 font-bold">{deleteTarget.name}</span> below:
+              </label>
+              <input
+                autoFocus
+                value={confirmInput}
+                onChange={(e) => setConfirmInput(e.target.value)}
+                placeholder={deleteTarget.name}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setDeleteTarget(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">
+                Cancel
+              </button>
+              <button
+                disabled={confirmInput !== deleteTarget.name || deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate(deleteTarget.id)}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-500 disabled:opacity-40"
+              >
+                {deleteMutation.isPending ? 'Deleting...' : 'Confirm Soft Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Confirmation Modal */}
+      {restoreTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-lg">
+                <RotateCcw className="h-5 w-5" />
+                Restore Deleted Shop
+              </div>
+              <button onClick={() => setRestoreTarget(null)} className="text-slate-400 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-300">
+              Restore <span className="font-semibold text-white">{restoreTarget.name}</span> back to active status? All shop data and access will be fully restored.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setRestoreTarget(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">
+                Cancel
+              </button>
+              <button
+                disabled={restoreMutation.isPending}
+                onClick={() => restoreMutation.mutate(restoreTarget.id)}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40"
+              >
+                {restoreMutation.isPending ? 'Restoring...' : 'Restore Shop'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -260,7 +425,7 @@ export function PlatformTenantDetailPage() {
     queryFn: async () => {
       const [orgRes, membersRes, orgPlanRes, productsRes, salesRes, plansRes] = await Promise.all([
         supabase.from('organizations').select('*').eq('id', id!).single(),
-        supabase.from('memberships').select('id, role, user_id, profiles(full_name, email)').eq('organization_id', id!),
+        supabase.from('memberships').select('id, role, user_id, created_at, profiles(full_name, phone)').eq('organization_id', id!),
         supabase.from('org_plans').select('*, plans(name, monthly_price, limits)').eq('organization_id', id!).maybeSingle(),
         supabase.from('products').select('id').eq('organization_id', id!).eq('is_active', true),
         supabase.from('sales').select('grand_total').eq('organization_id', id!),
@@ -434,26 +599,26 @@ export function PlatformTenantDetailPage() {
           </div>
         </div>
 
-        {/* Members */}
+        {/* Dashboard Users */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-slate-400" />
-            <h2 className="text-sm font-semibold text-white">Team Members ({members.length})</h2>
+            <h2 className="text-sm font-semibold text-white">Dashboard Users ({members.length})</h2>
           </div>
           <div className="space-y-2">
             {members.length === 0 ? (
-              <p className="text-sm text-slate-500">No members</p>
+              <p className="text-sm text-slate-500">No dashboard users found</p>
             ) : (
               members.map((m) => (
                 <div key={m.id} className="flex items-center justify-between rounded-lg bg-slate-800 px-3 py-2.5">
                   <div>
-                    <p className="text-sm font-medium text-white">{m.profiles?.full_name || m.profiles?.email || 'Unknown'}</p>
-                    <p className="text-[11px] text-slate-500">{m.profiles?.email}</p>
+                    <p className="text-sm font-medium text-white">{m.profiles?.full_name || 'Store User'}</p>
+                    {m.profiles?.phone && <p className="text-[11px] text-slate-400">📞 {m.profiles.phone}</p>}
                   </div>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize',
-                    m.role === 'owner' ? 'bg-orange-500/15 text-orange-400' :
-                    m.role === 'manager' ? 'bg-purple-500/15 text-purple-400' :
-                    'bg-blue-500/15 text-blue-400'
+                  <span className={cn('rounded-full px-2.5 py-1 text-[10px] font-semibold capitalize border',
+                    m.role === 'owner' ? 'bg-orange-500/15 text-orange-400 border-orange-500/30' :
+                    m.role === 'manager' ? 'bg-purple-500/15 text-purple-400 border-purple-500/30' :
+                    'bg-blue-500/15 text-blue-400 border-blue-500/30'
                   )}>
                     {m.role}
                   </span>

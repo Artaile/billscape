@@ -10,6 +10,10 @@ export function PlatformSettingsPage() {
   const [currency, setCurrency] = useState('INR')
   const [timezone, setTimezone] = useState('Asia/Kolkata')
   const [defaultTrialDays, setDefaultTrialDays] = useState(14)
+  const [retentionDays, setRetentionDays] = useState(60)
+  const [maxProductsLimit, setMaxProductsLimit] = useState(100)
+  const [maxEmployeesLimit, setMaxEmployeesLimit] = useState(5)
+  const [maxInvoicesLimit, setMaxInvoicesLimit] = useState(500)
   const [allowRegistrations, setAllowRegistrations] = useState(true)
   const [maintenanceMode, setMaintenanceMode] = useState(false)
   const [privacyUrl, setPrivacyUrl] = useState('')
@@ -27,6 +31,10 @@ export function PlatformSettingsPage() {
         setCurrency(data.currency ?? 'INR')
         setTimezone(data.timezone ?? 'Asia/Kolkata')
         setDefaultTrialDays(data.default_trial_days ?? 14)
+        setRetentionDays(data.retention_days ?? 60)
+        setMaxProductsLimit(data.max_products_limit ?? 100)
+        setMaxEmployeesLimit(data.max_employees_limit ?? 5)
+        setMaxInvoicesLimit(data.max_invoices_limit ?? 500)
         setAllowRegistrations(data.allow_registrations ?? true)
         setMaintenanceMode(data.maintenance_mode ?? false)
         setPrivacyUrl(data.privacy_policy_url ?? '')
@@ -47,6 +55,10 @@ export function PlatformSettingsPage() {
         currency,
         timezone,
         default_trial_days: defaultTrialDays,
+        retention_days: retentionDays,
+        max_products_limit: maxProductsLimit,
+        max_employees_limit: maxEmployeesLimit,
+        max_invoices_limit: maxInvoicesLimit,
         allow_registrations: allowRegistrations,
         maintenance_mode: maintenanceMode,
         privacy_policy_url: privacyUrl.trim() || null,
@@ -94,7 +106,7 @@ export function PlatformSettingsPage() {
       {/* Regional & Registration */}
       <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5 space-y-4">
         <h2 className="text-sm font-semibold text-white border-b border-slate-700/50 pb-3">Regional & Registration</h2>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-slate-300">Currency</label>
             <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
@@ -118,6 +130,11 @@ export function PlatformSettingsPage() {
             <input type="number" min={0} max={365} value={defaultTrialDays}
               onChange={(e) => setDefaultTrialDays(parseInt(e.target.value) || 0)} className={inputCls} />
           </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-300">Soft Delete Retention (Days)</label>
+            <input type="number" min={1} max={365} value={retentionDays}
+              onChange={(e) => setRetentionDays(parseInt(e.target.value) || 60)} className={inputCls} />
+          </div>
         </div>
 
         <div className="space-y-3 pt-2">
@@ -132,6 +149,28 @@ export function PlatformSettingsPage() {
               <p className="text-xs text-slate-400">When off, new signups are blocked</p>
             </div>
           </label>
+        </div>
+      </div>
+
+      {/* Plan & System Limit Controls */}
+      <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5 space-y-4">
+        <h2 className="text-sm font-semibold text-white border-b border-slate-700/50 pb-3">Plan & System Limit Controls</h2>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-300">Default Product Limit</label>
+            <input type="number" min={1} value={maxProductsLimit}
+              onChange={(e) => setMaxProductsLimit(parseInt(e.target.value) || 100)} className={inputCls} />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-300">Default Staff Limit</label>
+            <input type="number" min={1} value={maxEmployeesLimit}
+              onChange={(e) => setMaxEmployeesLimit(parseInt(e.target.value) || 5)} className={inputCls} />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-slate-300">Default Invoices / Mo Limit</label>
+            <input type="number" min={1} value={maxInvoicesLimit}
+              onChange={(e) => setMaxInvoicesLimit(parseInt(e.target.value) || 500)} className={inputCls} />
+          </div>
         </div>
       </div>
 
