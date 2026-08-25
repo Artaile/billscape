@@ -45,6 +45,14 @@ export interface PurchaseLineInput {
   conversion_factor?: number
 }
 
+export interface VariantLineSeed {
+  variantId: string
+  qty: number
+  purchasePrice: number
+  taxRate: GSTRate
+  variantName: string
+}
+
 export interface CreatePurchaseInput {
   organization_id: string
   supplier_id: string | null
@@ -73,7 +81,7 @@ async function createProductForLine(
   line: PurchaseLineInput,
   attempt = 0,
 ): Promise<
-  | { id: string; variantSeeds: { variantId: string; qty: number }[] }
+  | { id: string; variantSeeds: VariantLineSeed[] }
   | { error: { code?: string; message: string }; collidingField: 'sku' | 'barcode_value' | null }
 > {
   if (!line.unit_id) {
@@ -106,7 +114,7 @@ async function createProductForLine(
     // Best-effort: variants/batches entered during purchase item entry. Same filtering rules as
     // ProductFormPage's own save mutation (empty rows dropped). A failure here should not fail
     // the whole purchase — the product itself was already created successfully.
-    const variantSeeds: { variantId: string; qty: number }[] = []
+    const variantSeeds: VariantLineSeed[] = []
     const validVariants = (line.variants ?? []).filter((v) => v.variant_name.trim())
     if (validVariants.length > 0) {
       const { data: insertedVariants, error: variantsError } = await client.from('product_variants').insert(
@@ -139,7 +147,15 @@ async function createProductForLine(
         )
         insertedVariants.forEach((iv: { id: string }, i: number) => {
           const qty = validVariants[i]?.qty ? Number(validVariants[i].qty) : 0
-          if (qty > 0) variantSeeds.push({ variantId: iv.id, qty })
+          if (qty > 0) {
+            variantSeeds.push({
+              variantId: iv.id,
+              qty,
+              purchasePrice: validVariants[i].purchase_price ? Number(validVariants[i].purchase_price) : 0,
+              taxRate: validVariants[i].tax_rate,
+              variantName: validVariants[i].variant_name,
+            })
+          }
         })
       }
     }
@@ -194,11 +210,11 @@ async function resolveItems(
   createdBy: string,
   items: PurchaseLineInput[],
 ): Promise<
-  | { items: (PurchaseLineInput & { product_id: string })[]; variantSeeds: { variantId: string; qty: number }[]; error: null }
+  | { items: (PurchaseLineInput & { product_id: string; variantLineSeeds: VariantLineSeed[] })[]; variantSeeds: VariantLineSeed[]; error: null }
   | { items: null; variantSeeds: null; error: { message: string; line: PurchaseLineInput; collidingField: 'sku' | 'barcode_value' | null } }
 > {
-  const resolvedItems: (PurchaseLineInput & { product_id: string })[] = []
-  const variantSeeds: { variantId: string; qty: number }[] = []
+  const resolvedItems: (PurchaseLineInput & { product_id: string; variantLineSeeds: VariantLineSeed[] })[] = []
+  const variantSeeds: VariantLineSeed[] = []
   for (const line of items) {
     if (!line.is_new_product && line.product_id) {
       if (line.update_existing_pricing) {
@@ -215,7 +231,7 @@ async function resolveItems(
           .eq('id', line.product_id)
           .eq('organization_id', orgId)
       }
-      resolvedItems.push({ ...line, product_id: line.product_id })
+      resolvedItems.push({ ...line, product_id: line.product_id, variantLineSeeds: [] })
       continue
     }
 
@@ -223,7 +239,7 @@ async function resolveItems(
     if ('error' in result) {
       return { items: null, variantSeeds: null, error: { message: result.error.message, line, collidingField: result.collidingField } }
     }
-    resolvedItems.push({ ...line, product_id: result.id })
+    resolvedItems.push({ ...line, product_id: result.id, variantLineSeeds: result.variantSeeds })
     variantSeeds.push(...result.variantSeeds)
   }
   return { items: resolvedItems, variantSeeds, error: null }
