@@ -38,6 +38,35 @@ export function recordVariantPurchase(
   return adjustVariantStock(client, { ...args, reason: 'purchase' })
 }
 
+// Reverses a previously-recorded variant purchase (used when editing a purchase — the
+// original quantities must be un-applied before the new ones are inserted). Deliberately NOT
+// implemented via adjustVariantStock, whose sign-forcing logic (`reason === 'sale' ? negative :
+// positive`) cannot express a reversal without changing behavior for recordVariantSale/
+// recordVariantPurchase, which must stay exactly as they are. reason: 'adjustment' matches the
+// existing parent-product reversal's own convention in purchases.ts's updatePurchase.
+export async function reverseVariantPurchase(
+  client: TypedSupabaseClient,
+  args: { organizationId: string; variantId: string; qty: number; referenceId?: string; createdBy: string },
+) {
+  const signedQty = -Math.abs(args.qty)
+  const { error: rpcError } = await client.rpc('increment_variant_inventory', {
+    p_org_id: args.organizationId,
+    p_variant_id: args.variantId,
+    p_qty: signedQty,
+  })
+  if (rpcError) return { error: rpcError }
+
+  const { error: logError } = await client.from('variant_stock_movements').insert({
+    organization_id: args.organizationId,
+    product_variant_id: args.variantId,
+    qty_change: signedQty,
+    reason: 'adjustment',
+    reference_id: args.referenceId ?? null,
+    created_by: args.createdBy,
+  })
+  return { error: logError }
+}
+
 export async function getVariantStock(client: TypedSupabaseClient, orgId: string, variantId: string) {
   const { data, error } = await client
     .from('variant_inventory')
