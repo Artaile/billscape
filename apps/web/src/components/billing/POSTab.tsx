@@ -30,13 +30,15 @@ import {
   ArrowDownToLine,
   Star,
   Gift,
+  Camera,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
+import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
 import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
-import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer, getVariantStockMap } from '@billscape/api'
+import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer, getVariantStockMap, getVariantStock } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
 import { Button } from '@/components/ui/button'
@@ -97,6 +99,7 @@ export function POSTab() {
   const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null)
   const [showInvoice, setShowInvoice] = useState(false)
   const [productSearch, setProductSearch] = useState('')
+  const [cameraScanOpen, setCameraScanOpen] = useState(false)
   const [heldBills, setHeldBills] = useState<HeldBill[]>(() => {
     try { return JSON.parse(sessionStorage.getItem(HELD_BILLS_KEY) ?? '[]') } catch { return [] }
   })
@@ -441,19 +444,104 @@ export function POSTab() {
     setProductSearch('')
   }, [])
 
-  // USB scanner keyboard wedge handler
-  const handleBarcodeScan = useCallback(
-    (code: string) => {
+  // Resolves a scanned/typed code to a product OR a variant and adds it directly to the cart —
+  // shared by the USB scanner's keyboard-wedge input, the mobile camera scan dialog, and the
+  // visible search box's Enter key, so all three input methods behave identically. A barcode is
+  // specific to one exact item (unlike a name search, which can match many), so a resolved code
+  // always adds directly — no picker dialog, matching how a physical scan is meant to be a single
+  // step. Checks the parent product's own barcode first (the common, non-variant case), then
+  // falls back to product_variants — a variant's barcode was previously never resolved at all,
+  // silently reporting "Product not found" even though the code was valid.
+  const resolveBarcodeAndAddToCart = useCallback(
+    async (code: string) => {
       const found = products?.find((p) => p.barcode_value === code)
       if (found) {
         addToCart(found)
-      } else {
-        toast({ title: `Product not found: ${code}`, variant: 'warning' })
+        return
       }
+
+      if (!orgId) {
+        toast.error(`Product not found: ${code}`, '')
+        return
+      }
+
+      const { data: variantMatch } = await supabase
+        .from('product_variants')
+        .select('id, variant_name, sale_price, tax_rate, product_id')
+        .eq('organization_id', orgId)
+        .eq('barcode_value', code)
+        .maybeSingle()
+
+      if (!variantMatch) {
+        toast.error(`Product not found: ${code}`, '')
+        return
+      }
+
+      const parentProduct = products?.find((p) => p.id === variantMatch.product_id)
+      if (!parentProduct) {
+        // The variant's parent product exists but isn't in the currently-loaded `products` page
+        // (e.g. inactive, or outside the 50-row limit) — fetch just what addToCart needs directly
+        // rather than silently failing.
+        const { data: parent } = await supabase
+          .from('products')
+          .select('id, name, hsn_code, track_stock, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+          .eq('organization_id', orgId)
+          .eq('id', variantMatch.product_id)
+          .maybeSingle()
+        if (!parent) {
+          toast.error(`Product not found: ${code}`, '')
+          return
+        }
+        return addVariantMatchToCart(variantMatch, parent as any, code)
+      }
+
+      addVariantMatchToCart(variantMatch, parentProduct, code)
     },
-    [products, addToCart],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products, addToCart, orgId],
   )
-  const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(handleBarcodeScan)
+
+  // Shared tail of resolveBarcodeAndAddToCart once both the matched variant and its parent
+  // product are known — checks the variant's own REAL stock (variant_inventory, via
+  // getVariantStock) before adding, mirroring the variant picker dialog's own out-of-stock gate,
+  // since addToCart itself only skips the PARENT stock check for a variant line and never
+  // independently verifies variant stock on its own.
+  const addVariantMatchToCart = useCallback(
+    async (
+      variant: { id: string; variant_name: string | null; sale_price: number | null; tax_rate: number | null; product_id: string },
+      parentProduct: {
+        id: string; name: string; hsn_code?: string | null; track_stock: boolean
+        inventory?: unknown; unit?: unknown; secondary_unit?: unknown; conversion_factor?: number | null
+      },
+      code: string,
+    ) => {
+      if (!orgId) return
+      const { data: stock } = await getVariantStock(supabase, orgId, variant.id)
+      const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+      if (!allowNegativeStock && stock <= 0) {
+        toast.error(`Out of stock: ${parentProduct.name} — ${variant.variant_name || 'Variant'}`, `Scanned barcode: ${code}`)
+        return
+      }
+      const displayName = variant.variant_name || 'Variant'
+      addToCart({
+        id: parentProduct.id,
+        name: `${parentProduct.name} — ${displayName}`,
+        price: variant.sale_price ?? 0,
+        tax_rate: variant.tax_rate ?? 0,
+        hsn_code: parentProduct.hsn_code,
+        inventory: parentProduct.inventory,
+        track_stock: parentProduct.track_stock,
+        unit: parentProduct.unit,
+        secondary_unit: parentProduct.secondary_unit,
+        conversion_factor: parentProduct.conversion_factor,
+        variant_id: variant.id,
+        variant_name: displayName,
+      })
+    },
+    [addToCart, orgId, org],
+  )
+
+  const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(resolveBarcodeAndAddToCart)
 
   // A cart line is identified by product_id + variant_id together, not product_id alone — two
   // different variants of the same parent product must be addressable as separate lines, or
@@ -726,26 +814,56 @@ export function POSTab() {
       <div className="flex flex-col w-full lg:w-[40%] xl:w-[35%] overflow-hidden order-2">
         {/* Search bar */}
         <div className="p-3 border-b border-border">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-            <Input
-              placeholder="Search products... (scan barcode or type)"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              className="pl-9 pr-9"
-            />
-            {productSearch && (
-              <button
-                type="button"
-                onClick={() => setProductSearch('')}
-                aria-label="Clear search"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+              <Input
+                placeholder="Search products... (scan barcode or type)"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  // Manually typing a full barcode and pressing Enter behaves like a scan —
+                  // resolve it (product first, then a variant's own barcode) and add directly,
+                  // same as the USB scanner / camera scan dialog. Live filter-as-you-type is
+                  // untouched; this only fires on an explicit Enter, never mid-typing.
+                  if (e.key === 'Enter' && productSearch.trim()) {
+                    e.preventDefault()
+                    resolveBarcodeAndAddToCart(productSearch.trim())
+                  }
+                }}
+                className="pl-9 pr-9"
+              />
+              {productSearch && (
+                <button
+                  type="button"
+                  onClick={() => setProductSearch('')}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title="Scan with camera"
+              onClick={() => setCameraScanOpen(true)}
+              className="shrink-0"
+            >
+              <Camera className="h-4 w-4" />
+            </Button>
           </div>
         </div>
+        <ScanBarcodeDialog
+          open={cameraScanOpen}
+          onOpenChange={setCameraScanOpen}
+          onScan={(code) => {
+            setCameraScanOpen(false)
+            resolveBarcodeAndAddToCart(code)
+          }}
+        />
 
         {/* Product grid */}
         <div className="flex-1 overflow-y-auto p-3">

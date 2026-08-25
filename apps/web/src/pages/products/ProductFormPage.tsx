@@ -767,36 +767,38 @@ export function ProductFormPage() {
             )}
             {hasVariants && (
               <p className="text-xs text-zinc-500 -mt-1">
-                Retail/Cost/MRP/Special Price are set per-variant below — the GST rate here is still used as each new variant's default.
+                Retail/Cost/MRP/Special Price and GST are set per-variant below.
               </p>
             )}
 
-            <div className="space-y-1.5">
-              <Label>GST Rate *</Label>
-              <Controller
-                name="tax_rate"
-                control={control}
-                render={({ field }) => (
-                  <div className="flex gap-2 flex-wrap">
-                    {GST_RATES.map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => field.onChange(rate)}
-                        className={cn(
-                          'px-3 py-1.5 rounded-md text-sm font-medium border transition-all',
-                          field.value === rate
-                            ? 'bg-indigo-600 border-indigo-500 text-white'
-                            : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
-                        )}
-                      >
-                        {rate}%
-                      </button>
-                    ))}
-                  </div>
-                )}
-              />
-            </div>
+            {!hasVariants && (
+              <div className="space-y-1.5">
+                <Label>GST Rate *</Label>
+                <Controller
+                  name="tax_rate"
+                  control={control}
+                  render={({ field }) => (
+                    <div className="flex gap-2 flex-wrap">
+                      {GST_RATES.map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => field.onChange(rate)}
+                          className={cn(
+                            'px-3 py-1.5 rounded-md text-sm font-medium border transition-all',
+                            field.value === rate
+                              ? 'bg-indigo-600 border-indigo-500 text-white'
+                              : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
+                          )}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                />
+              </div>
+            )}
           </div>
 
           {/* Stock */}
@@ -1051,60 +1053,73 @@ export function ProductFormPage() {
             )}
           </div>
 
-          {/* Barcode */}
-          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              <QrCode className="h-4 w-4 text-indigo-400" />Barcode
-            </h2>
-            <div className="flex gap-2 max-w-sm">
-              <Input
-                placeholder="e.g. 8901234567890"
-                {...register('barcode_value')}
-                className="font-mono text-sm"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => setScanOpen(true)}
-                title="Scan barcode"
-                className="shrink-0"
-              >
-                <Camera className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleAutoGenerateBarcode}
-                title="Auto-generate barcode"
-                className="shrink-0"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {barcodeValue && (
-              <div className="inline-flex flex-col items-center gap-2 p-3 rounded-lg bg-secondary border border-border">
-                <svg ref={barcodeRef} className="max-w-[200px]" />
+          {/* Barcode — hidden once variants are on: each variant carries its own barcode below,
+              and the parent's own barcode_value is never scanned/searched against once a
+              product has variants (POS resolves a scanned/typed code against product_variants
+              first for a has_variants product), so leaving this visible/editable here was
+              confusing about which barcode actually matters. */}
+          {!hasVariants && (
+            <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <QrCode className="h-4 w-4 text-indigo-400" />Barcode
+              </h2>
+              <div className="flex gap-2 max-w-sm">
+                <Input
+                  placeholder="e.g. 8901234567890"
+                  {...register('barcode_value')}
+                  className="font-mono text-sm"
+                />
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
-                  onClick={handlePrintLabel}
+                  size="icon"
+                  onClick={() => setScanOpen(true)}
+                  title="Scan barcode"
+                  className="shrink-0"
                 >
-                  <Printer className="h-3.5 w-3.5" />
-                  Print Label (58×40mm)
+                  <Camera className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleAutoGenerateBarcode}
+                  title="Auto-generate barcode"
+                  className="shrink-0"
+                >
+                  <RefreshCw className="h-4 w-4" />
                 </Button>
               </div>
-            )}
 
-            <ScanBarcodeDialog
-              open={scanOpen}
-              onOpenChange={setScanOpen}
-              onScan={(code) => setValue('barcode_value', code, { shouldValidate: true })}
-            />
-          </div>
+              {barcodeValue && (
+                <div className="inline-flex flex-col items-center gap-2 p-3 rounded-lg bg-secondary border border-border">
+                  <svg ref={barcodeRef} className="max-w-[200px]" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrintLabel}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Print Label (58×40mm)
+                  </Button>
+                </div>
+              )}
+
+              <ScanBarcodeDialog
+                open={scanOpen}
+                onOpenChange={setScanOpen}
+                onScan={(code) => setValue('barcode_value', code, { shouldValidate: true })}
+              />
+            </div>
+          )}
+          {hasVariants && (
+            <div className="rounded-lg border border-border bg-card p-5">
+              <p className="text-xs text-zinc-500">
+                Barcode is set per-variant below — the parent product has no barcode of its own once variants are enabled.
+              </p>
+            </div>
+          )}
 
           {/* Image */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-4">
