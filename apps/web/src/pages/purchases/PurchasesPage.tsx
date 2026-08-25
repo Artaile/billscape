@@ -325,8 +325,7 @@ export function PurchasesPage() {
     ]
 
     const rows = listToExport.map((p) => {
-      const pay = parsePurchasePayment(p)
-      const cleanNotes = (p.notes || '').replace(/\[PAYMENT:\s*\{.*?\}\s*\]/g, '').trim()
+      const pay = paymentInfoFor(p)
       return [
         p.purchase_no ?? '',
         p.invoice_no ?? '',
@@ -337,7 +336,7 @@ export function PurchasesPage() {
         pay.balanceDue,
         pay.status.toUpperCase(),
         p.purchase_items?.length ?? 0,
-        cleanNotes,
+        p.notes || '',
       ]
     })
 
