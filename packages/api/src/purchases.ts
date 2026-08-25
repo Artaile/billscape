@@ -2,7 +2,7 @@ import type { TypedSupabaseClient } from './client'
 import type { GSTContext, GSTRate } from '@billscape/core'
 import { computeLineTax, computeGST, isInterState, generateBarcode, formatDocumentNumber } from '@billscape/core'
 import { generateProductCode } from './products'
-import { recordVariantPurchase } from './variantInventory'
+import { recordVariantPurchase, reverseVariantPurchase } from './variantInventory'
 import type { Database } from './database.types'
 
 type ProductInsert = Database['public']['Tables']['products']['Insert']
@@ -248,15 +248,53 @@ async function resolveItems(
 function buildItemRows(
   purchaseId: string,
   orgId: string,
-  resolvedItems: (PurchaseLineInput & { product_id: string })[],
+  resolvedItems: (PurchaseLineInput & { product_id: string; variantLineSeeds: VariantLineSeed[] })[],
   interstate: boolean,
 ) {
-  return resolvedItems.map((it) => {
+  const rows: {
+    purchase_id: string
+    organization_id: string
+    product_id: string
+    product_variant_id: string | null
+    product_name: string
+    tax_rate: GSTRate
+    qty: number
+    unit_cost: number
+    taxable_amount: number
+    cgst_amount: number
+    sgst_amount: number
+    igst_amount: number
+    line_total: number
+  }[] = []
+
+  for (const it of resolvedItems) {
+    if (it.variantLineSeeds.length > 0) {
+      for (const seed of it.variantLineSeeds) {
+        const lineTax = computeLineTax(seed.purchasePrice, seed.qty, 0, seed.taxRate, interstate)
+        rows.push({
+          purchase_id: purchaseId,
+          organization_id: orgId,
+          product_id: it.product_id,
+          product_variant_id: seed.variantId,
+          product_name: `${it.product_name} — ${seed.variantName}`,
+          tax_rate: seed.taxRate,
+          qty: seed.qty,
+          unit_cost: seed.purchasePrice,
+          taxable_amount: lineTax.taxableAmount,
+          cgst_amount: lineTax.cgst,
+          sgst_amount: lineTax.sgst,
+          igst_amount: lineTax.igst,
+          line_total: lineTax.lineTotal,
+        })
+      }
+      continue
+    }
     const lineTax = computeLineTax(it.unit_cost, it.qty, 0, it.tax_rate, interstate)
-    return {
+    rows.push({
       purchase_id: purchaseId,
       organization_id: orgId,
       product_id: it.product_id,
+      product_variant_id: null,
       product_name: it.product_name,
       tax_rate: it.tax_rate,
       qty: it.qty,
@@ -266,8 +304,9 @@ function buildItemRows(
       sgst_amount: lineTax.sgst,
       igst_amount: lineTax.igst,
       line_total: lineTax.lineTotal,
-    }
-  })
+    })
+  }
+  return rows
 }
 
 export async function createPurchase(client: TypedSupabaseClient, input: CreatePurchaseInput) {
@@ -277,14 +316,15 @@ export async function createPurchase(client: TypedSupabaseClient, input: CreateP
   if (resolved.error) return { data: null, error: resolved.error }
   const resolvedItems = resolved.items
 
+  const itemRows = buildItemRows(crypto.randomUUID(), input.organization_id, resolvedItems, interstate)
   const totals = computeGST(
     input.gst_context,
-    resolvedItems.map((it, i) => ({
+    itemRows.map((row, i) => ({
       product_id: String(i),
-      product_name: it.product_name,
-      tax_rate: it.tax_rate,
-      unit_price: it.unit_cost,
-      qty: it.qty,
+      product_name: row.product_name,
+      tax_rate: row.tax_rate,
+      unit_price: row.unit_cost,
+      qty: row.qty,
       discount_pct: 0,
     })),
   )
@@ -315,11 +355,11 @@ export async function createPurchase(client: TypedSupabaseClient, input: CreateP
     return { data: null, error: { message: purchaseError?.message ?? 'Failed to create purchase' } }
   }
 
-  const itemRows = buildItemRows(purchase.id, input.organization_id, resolvedItems, interstate)
+  const realItemRows = buildItemRows(purchase.id, input.organization_id, resolvedItems, interstate)
 
   // Stock is adjusted solely by the DB trigger `increment_stock_on_purchase` on this
   // insert — do NOT also upsert `inventory` here (that was the pre-existing double-count bug).
-  const { error: itemsError } = await client.from('purchase_items').insert(itemRows)
+  const { error: itemsError } = await client.from('purchase_items').insert(realItemRows)
   if (itemsError) {
     return { data: null, error: { message: itemsError.message } }
   }
@@ -371,11 +411,21 @@ export async function updatePurchase(
 
   const { data: oldItems, error: oldItemsError } = await client
     .from('purchase_items')
-    .select('product_id, qty')
+    .select('product_id, product_variant_id, qty')
     .eq('purchase_id', purchaseId)
   if (oldItemsError) return { data: null, error: oldItemsError }
 
   for (const item of oldItems ?? []) {
+    if (item.product_variant_id) {
+      await reverseVariantPurchase(client, {
+        organizationId: input.organization_id,
+        variantId: item.product_variant_id,
+        qty: item.qty,
+        referenceId: purchaseId,
+        createdBy: input.created_by,
+      })
+      continue
+    }
     if (!item.product_id) continue
     await client.rpc('increment_inventory', {
       p_org_id: input.organization_id,
@@ -397,14 +447,15 @@ export async function updatePurchase(
   if (resolved.error) return { data: null, error: resolved.error }
   const resolvedItems = resolved.items
 
+  const itemRows = buildItemRows(purchaseId, input.organization_id, resolvedItems, interstate)
   const totals = computeGST(
     input.gst_context,
-    resolvedItems.map((it, i) => ({
+    itemRows.map((row, i) => ({
       product_id: String(i),
-      product_name: it.product_name,
-      tax_rate: it.tax_rate,
-      unit_price: it.unit_cost,
-      qty: it.qty,
+      product_name: row.product_name,
+      tax_rate: row.tax_rate,
+      unit_price: row.unit_cost,
+      qty: row.qty,
       discount_pct: 0,
     })),
   )
@@ -441,7 +492,6 @@ export async function updatePurchase(
     .eq('organization_id', input.organization_id)
   if (deleteError) return { data: null, error: { message: deleteError.message } }
 
-  const itemRows = buildItemRows(purchaseId, input.organization_id, resolvedItems, interstate)
   const { error: itemsError } = await client.from('purchase_items').insert(itemRows)
   if (itemsError) return { data: null, error: { message: itemsError.message } }
 
