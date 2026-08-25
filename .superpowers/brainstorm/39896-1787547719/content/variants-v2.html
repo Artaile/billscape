@@ -1,0 +1,154 @@
+<style>
+  :root {
+    --bs-bg: #09090b; --bs-card: #18181b; --bs-border: #27272a; --bs-border-light: #3f3f46;
+    --bs-text: #f4f4f5; --bs-text-dim: #a1a1aa; --bs-text-faint: #71717a;
+    --bs-indigo: #6366f1; --bs-indigo-dim: rgba(99,102,241,0.12); --bs-emerald: #34d399; --bs-amber: #fbbf24; --bs-red: #f87171;
+  }
+  .bs-mock { background: var(--bs-bg); color: var(--bs-text); border: 1px solid var(--bs-border); border-radius: 10px; padding: 18px; font-family: -apple-system, "Inter", sans-serif; font-size: 13px; max-width: 920px; margin: 0 auto 24px; }
+  .bs-card { background: var(--bs-card); border: 1px solid var(--bs-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .bs-label { color: var(--bs-text-dim); font-size: 11px; margin-bottom: 4px; display:block; }
+  .bs-input { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-section-title { font-size: 12px; font-weight: 700; color: var(--bs-text); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .bs-section-title .n { width:18px; height:18px; border-radius:50%; background:var(--bs-indigo); color:white; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .bs-note { font-size: 10px; color: var(--bs-text-faint); margin-top: 4px; }
+  .toggle-on { background: var(--bs-indigo); color:white; border:none; border-radius:6px; padding:0 10px; font-size:11px; height:32px; display:flex; align-items:center; cursor:pointer; }
+  .del-icon { color: var(--bs-red); font-size:13px; cursor:pointer; flex-shrink:0; }
+  .mini-icon-btn { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border:1px solid var(--bs-border-light); border-radius:5px; color:var(--bs-text-dim); font-size:11px; flex-shrink:0; }
+  .add-link { color: var(--bs-indigo); font-size:11px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin-top:8px; }
+  .col-header { font-size:9px; color:var(--bs-text-faint); text-transform:uppercase; margin-bottom:3px; }
+
+  /* Card-per-variant */
+  .variant-card { background:#0f0f11; border:1px solid var(--bs-border); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .variant-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .variant-card-head .name { font-size:12px; font-weight:600; color:var(--bs-text); }
+  .variant-card-head .stock-pill { font-size:10px; color:var(--bs-emerald); background:rgba(52,211,153,0.1); padding:2px 8px; border-radius:999px; }
+  .vgrid { display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1.6fr; gap:8px; }
+  .vgrid.compact { grid-template-columns: 1fr 1fr 1fr; }
+  .expiry-chip { display:inline-flex; align-items:center; gap:6px; background:var(--bs-indigo-dim); color:var(--bs-indigo); font-size:10px; padding:3px 8px; border-radius:999px; margin-top:8px; cursor:pointer; }
+</style>
+
+<h2>Variant redesign: free-text name + per-variant rate/price/expiry</h2>
+<p class="subtitle">Two problems from before: (1) forced Size + Color fields don't fit every product — a phone variant is "256GB Blue", not size/color; (2) each variant can be bought/sold at its own rate and can expire on its own date. Fixed both below — one variant "card" per row instead of a cramped grid line.</p>
+
+<div class="bs-mock">
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">3</span> Sizes/Colors &amp; Batches</div>
+
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+      <div class="toggle-on">✓ Has variants</div>
+      <span class="bs-note" style="margin:0;">2 variants</span>
+    </div>
+
+    <!-- Variant 1 -->
+    <div class="variant-card">
+      <div class="variant-card-head">
+        <div style="flex:1; margin-right:10px;">
+          <div class="col-header">Variant Name *</div>
+          <input class="bs-input" value="256GB · Blue" readonly>
+        </div>
+        <span class="del-icon">🗑</span>
+      </div>
+      <div class="vgrid">
+        <div><div class="col-header">Barcode</div>
+          <div style="display:flex; gap:4px;">
+            <input class="bs-input" value="IPH15-256-BLU" readonly>
+            <div class="mini-icon-btn" title="Scan">📷</div>
+            <div class="mini-icon-btn" title="Generate">⌁</div>
+          </div>
+        </div>
+        <div><div class="col-header">Purchase Rate *</div><input class="bs-input" value="62,000" readonly></div>
+        <div><div class="col-header">Selling Price *</div><input class="bs-input" value="69,999" readonly></div>
+        <div><div class="col-header">Qty *</div><input class="bs-input" value="5" readonly></div>
+        <div><div class="col-header">Expiry (optional)</div><input class="bs-input" placeholder="dd/mm/yyyy"></div>
+      </div>
+    </div>
+
+    <!-- Variant 2 -->
+    <div class="variant-card">
+      <div class="variant-card-head">
+        <div style="flex:1; margin-right:10px;">
+          <div class="col-header">Variant Name *</div>
+          <input class="bs-input" value="512GB · Black" readonly>
+        </div>
+        <span class="del-icon">🗑</span>
+      </div>
+      <div class="vgrid">
+        <div><div class="col-header">Barcode</div>
+          <div style="display:flex; gap:4px;">
+            <input class="bs-input" value="IPH15-512-BLK" readonly>
+            <div class="mini-icon-btn" title="Scan">📷</div>
+            <div class="mini-icon-btn" title="Generate">⌁</div>
+          </div>
+        </div>
+        <div><div class="col-header">Purchase Rate *</div><input class="bs-input" value="74,000" readonly></div>
+        <div><div class="col-header">Selling Price *</div><input class="bs-input" value="82,999" readonly></div>
+        <div><div class="col-header">Qty *</div><input class="bs-input" value="3" readonly></div>
+        <div><div class="col-header">Expiry (optional)</div><input class="bs-input" placeholder="dd/mm/yyyy"></div>
+      </div>
+    </div>
+
+    <div class="add-link">+ Add another variant</div>
+  </div>
+</div>
+
+<h3>Same idea, but for a product where variants ARE just size/color (e.g. a T-shirt)</h3>
+<p class="subtitle">The Variant Name field is just free text either way — you type it however makes sense for that product. No forced Size/Color split.</p>
+
+<div class="bs-mock">
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">3</span> Sizes/Colors &amp; Batches</div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+      <div class="toggle-on">✓ Has variants</div>
+      <span class="bs-note" style="margin:0;">2 variants</span>
+    </div>
+    <div class="variant-card">
+      <div class="variant-card-head">
+        <div style="flex:1; margin-right:10px;">
+          <div class="col-header">Variant Name *</div>
+          <input class="bs-input" value="M · Red" readonly>
+        </div>
+        <span class="del-icon">🗑</span>
+      </div>
+      <div class="vgrid">
+        <div><div class="col-header">Barcode</div>
+          <div style="display:flex; gap:4px;">
+            <input class="bs-input" value="TSH-M-RED" readonly>
+            <div class="mini-icon-btn">📷</div>
+            <div class="mini-icon-btn">⌁</div>
+          </div>
+        </div>
+        <div><div class="col-header">Purchase Rate *</div><input class="bs-input" value="180" readonly></div>
+        <div><div class="col-header">Selling Price *</div><input class="bs-input" value="349" readonly></div>
+        <div><div class="col-header">Qty *</div><input class="bs-input" value="20" readonly></div>
+        <div><div class="col-header">Expiry (optional)</div><input class="bs-input" placeholder="dd/mm/yyyy"></div>
+      </div>
+    </div>
+    <div class="add-link">+ Add another variant</div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:8px;">
+  <div class="pros"><h4>Why a "card per variant" instead of a table row</h4><ul>
+    <li><strong>Variant Name is one free-text field</strong> — "256GB · Blue", "M · Red", "Large Pack", whatever fits the product. No forced Size+Color grid that breaks for non-apparel items.</li>
+    <li><strong>Purchase Rate and Selling Price live on every variant</strong> — a 256GB phone and a 512GB phone are bought and sold at different prices; this is no longer possible to get wrong.</li>
+    <li><strong>Expiry is per-variant too</strong> — if this SAME product has batch tracking needs that differ per variant (e.g. two colors received in different shipments with different expiry), it's captured right where the variant is, not in a separate disconnected Batches section.</li>
+    <li>A card layout (vs. a 5-column table row) has room to breathe — labels sit directly above their field, so nothing needs a legend/header row to be readable.</li>
+    <li>Barcode + Scan + Generate stays exactly where you'd expect it — top-left of each variant's field grid.</li>
+  </ul></div>
+  <div class="cons"><h4>Trade-off</h4><ul>
+    <li>Takes more vertical space per variant than a table row — fine for 2-5 variants (the common case), could get long for a product with 20 variants; a "collapse to summary" affordance (click a variant card to fold it to one line showing just name+stock) can be added later if that becomes a real complaint.</li>
+  </ul></div>
+</div>
+
+<h3>What happened to the separate "Batches" toggle?</h3>
+<p class="subtitle">Folded into the variant card above (each variant has its own optional Expiry field) — because in practice, if a product has variants, expiry is almost always tracked per-variant, not per-product. For a product with NO variants but that DOES expire (e.g. a single-SKU medicine), Batches stays as its own simple toggle below, unchanged from before.</p>
+
+<div class="bs-mock">
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">3</span> Batches / Expiry <span style="font-weight:400;color:var(--bs-text-faint);font-size:10px;">— for a product with no variants</span></div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <div class="toggle-on">✓ Has expiry/batches</div>
+      <span class="bs-note" style="margin:0;">1 batch</span>
+    </div>
+  </div>
+</div>

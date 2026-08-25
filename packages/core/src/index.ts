@@ -1,6 +1,7 @@
 export * from './types'
 export * from './money'
 export * from './tax/gst'
+export * from './tax/splitInclusiveGST'
 export * from './validation'
 export * from './codes'
 export * from './gstinStates'

@@ -1,0 +1,56 @@
+<h2>Variant card — GST Mode moved to Row 1, next to Tax %</h2>
+<p class="subtitle">Removed the small Incl/Excl toggle buttons from each price field. One shared GST Mode dropdown now sits in Row 1 next to Tax % — applies to both Retail Price and Purchase Price. Row 2 is now just plain amount fields, no toggle clutter.</p>
+
+<style>
+  .vcard { background:#18181b; border:1px solid #27272a; border-radius:10px; padding:14px; font-family:-apple-system,sans-serif; color:#e4e4e7; max-width:900px; }
+  .vhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .vhead span { font-size:11px; font-weight:600; color:#71717a; text-transform:uppercase; letter-spacing:0.05em; }
+  .row1 { display:grid; grid-template-columns: 1.4fr 1.4fr 0.9fr 0.6fr 0.9fr; gap:6px; margin-bottom:10px; }
+  .row2v2 { display:grid; grid-template-columns: 0.9fr 1.1fr 0.9fr 1.1fr 0.7fr 0.9fr; gap:6px; }
+  .field label { display:block; font-size:9px; text-transform:uppercase; color:#71717a; margin-bottom:2px; letter-spacing:0.03em; }
+  .field input, .field select { width:100%; height:30px; background:#09090b; border:1px solid #3f3f46; border-radius:5px; color:#e4e4e7; font-size:11px; padding:0 6px; box-sizing:border-box; }
+  .basehint { font-size:8px; color:#52525b; margin-top:2px; }
+  .divider { border:none; border-top:1px solid #27272a; margin:14px 0; }
+</style>
+
+<div class="vcard">
+  <div class="vhead"><span>Variant 1</span><span style="color:#f87171">🗑</span></div>
+  <div class="row1">
+    <div class="field"><label>Variant Name *</label><input value="9W"></div>
+    <div class="field"><label>Barcode</label><input value="LIGHT9W"></div>
+    <div class="field"><label>SKU (optional)</label><input placeholder="Auto or type"></div>
+    <div class="field"><label>Tax %</label><select><option>18%</option></select></div>
+    <div class="field"><label>GST Mode</label><select><option>Include</option><option>Exclude</option></select></div>
+  </div>
+  <div class="row2v2">
+    <div class="field"><label>MRP</label><input value="150"></div>
+    <div class="field">
+      <label>Retail Price *</label><input value="120">
+      <div class="basehint">Base ₹101.69 + GST ₹18.31</div>
+    </div>
+    <div class="field"><label>SP (Special)</label><input value="110"></div>
+    <div class="field">
+      <label>Purchase Price *</label><input value="80">
+      <div class="basehint">Base ₹67.80 + GST ₹12.20</div>
+    </div>
+    <div class="field"><label>Qty *</label><input value="20"></div>
+    <div class="field"><label>Expiry</label><input type="date"></div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:20px">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>This works — approve</h3>
+      <p>Row 1 has the shared GST Mode dropdown, Row 2 is clean price fields with base breakdown hints</p>
+    </div>
+  </div>
+  <div class="option" data-choice="revise" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Still needs changes</h3>
+      <p>Something else needs adjusting — tell me what in the terminal</p>
+    </div>
+  </div>
+</div>

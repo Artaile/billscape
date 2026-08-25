@@ -356,6 +356,11 @@ export interface CartItem {
   unit?: Unit
   secondary_unit?: Unit
   conversion_factor?: number
+  // Set only when this line is a specific product variant, not the base product — carries the
+  // variant's own id (for variant-stock bookkeeping in createSale) and display name (for
+  // receipts/cart rows). product_id above always stays the PARENT product's real id.
+  variant_id?: string
+  variant_name?: string
 }
 
 export interface TaxBreakupLine {

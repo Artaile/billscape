@@ -91,12 +91,27 @@ export async function deleteProduct(
 // Sequential per-org product code, e.g. PC0001, PC0002... — mirrors generatePurchaseNo's
 // COUNT-based approach in purchases.ts for consistency (same race-condition tradeoff,
 // acceptable since purchases already use this pattern in production).
+// Returns a `PC####` code guaranteed not to collide with any existing product's sku for this
+// org. A plain row-count-based guess (the previous implementation) breaks in two real ways:
+// (1) if any product's sku doesn't follow the PC#### scheme (renamed, imported, or from an
+// older numbering), the count drifts from the actual highest number in use, and (2) it makes
+// createProductForLine's unique-violation retry loop useless — retrying after a collision calls
+// this again, but since the failed insert never committed, the row count hasn't changed, so it
+// returns the EXACT SAME code and collides again on every retry attempt. Finding the actual max
+// existing PC#### suffix and incrementing past it fixes both: a genuinely new value every call,
+// and no dependency on every row happening to follow the scheme.
 export async function generateProductCode(client: TypedSupabaseClient, orgId: string) {
-  const { count } = await client
+  const { data } = await client
     .from('products')
-    .select('id', { count: 'exact', head: true })
+    .select('sku')
     .eq('organization_id', orgId)
-  return `PC${String((count ?? 0) + 1).padStart(4, '0')}`
+    .like('sku', 'PC%')
+  let maxN = 0
+  for (const row of data ?? []) {
+    const match = /^PC(\d+)$/.exec(row.sku ?? '')
+    if (match) maxN = Math.max(maxN, parseInt(match[1], 10))
+  }
+  return `PC${String(maxN + 1).padStart(4, '0')}`
 }
 
 export async function searchProducts(

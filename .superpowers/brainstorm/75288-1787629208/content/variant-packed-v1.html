@@ -1,0 +1,78 @@
+<h2>Variant card — packed 2 rows (MRP + Retail + SP + Purchase)</h2>
+<p class="subtitle">Row 2 now carries 4 price fields + Qty + Expiry. GST Mode is a tiny inline toggle next to Retail/Purchase only (MRP and SP don't need one). Compare to the current 2-price layout below.</p>
+
+<style>
+  .vcard { background:#18181b; border:1px solid #27272a; border-radius:10px; padding:14px; font-family:-apple-system,sans-serif; color:#e4e4e7; max-width:900px; }
+  .vhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .vhead span { font-size:11px; font-weight:600; color:#71717a; text-transform:uppercase; letter-spacing:0.05em; }
+  .row1 { display:grid; grid-template-columns: 1.6fr 1.6fr 1fr 0.7fr; gap:6px; margin-bottom:10px; }
+  .row2v1 { display:grid; grid-template-columns: 0.9fr 1.15fr 0.9fr 1.15fr 0.7fr 0.9fr; gap:6px; }
+  .field label { display:block; font-size:9px; text-transform:uppercase; color:#71717a; margin-bottom:2px; letter-spacing:0.03em; }
+  .field input, .field select { width:100%; height:30px; background:#09090b; border:1px solid #3f3f46; border-radius:5px; color:#e4e4e7; font-size:11px; padding:0 6px; box-sizing:border-box; }
+  .gsttoggle { display:flex; gap:2px; margin-top:2px; }
+  .gsttoggle button { flex:1; height:16px; font-size:8px; border-radius:3px; border:1px solid #3f3f46; background:#09090b; color:#71717a; }
+  .gsttoggle button.on { background:#4f46e5; color:white; border-color:#4f46e5; }
+  .basehint { font-size:8px; color:#52525b; margin-top:2px; }
+  .divider { border:none; border-top:1px solid #27272a; margin:14px 0; }
+  .old-label { font-size:11px; color:#a1a1aa; margin-bottom:6px; }
+</style>
+
+<div class="vcard">
+  <div class="vhead"><span>Variant 1</span><span style="color:#f87171">🗑</span></div>
+  <div class="row1">
+    <div class="field"><label>Variant Name *</label><input value="9W"></div>
+    <div class="field"><label>Barcode</label><input value="LIGHT9W"></div>
+    <div class="field"><label>SKU (optional)</label><input placeholder="Auto or type"></div>
+    <div class="field"><label>Tax %</label><select><option>18%</option></select></div>
+  </div>
+  <div class="row2v1">
+    <div class="field"><label>MRP</label><input value="150"></div>
+    <div class="field">
+      <label>Retail Price *</label><input value="120">
+      <div class="gsttoggle"><button class="on">Incl</button><button>Excl</button></div>
+      <div class="basehint">Base ₹101.69 + GST ₹18.31</div>
+    </div>
+    <div class="field"><label>SP (Special)</label><input value="110"></div>
+    <div class="field">
+      <label>Purchase Price *</label><input value="80">
+      <div class="gsttoggle"><button class="on">Incl</button><button>Excl</button></div>
+      <div class="basehint">Base ₹67.80 + GST ₹12.20</div>
+    </div>
+    <div class="field"><label>Qty *</label><input value="20"></div>
+    <div class="field"><label>Expiry</label><input type="date"></div>
+  </div>
+</div>
+
+<hr class="divider">
+<p class="old-label">For reference — current layout (Sale Price / Purchase Price only, no MRP/SP):</p>
+<div class="vcard" style="opacity:0.6">
+  <div class="row1">
+    <div class="field"><label>Variant Name *</label><input value="9W"></div>
+    <div class="field"><label>Barcode</label><input value="LIGHT9W"></div>
+    <div class="field"><label>SKU</label><input></div>
+    <div class="field"><label>Tax %</label><select><option>18%</option></select></div>
+  </div>
+  <div style="display:grid; grid-template-columns: 1.3fr 1fr 1.3fr 1fr 0.7fr 0.9fr; gap:6px;">
+    <div class="field" style="grid-column:span 2"><label>Sale Price</label><input value="120"></div>
+    <div class="field" style="grid-column:span 2"><label>Purchase Price</label><input value="80"></div>
+    <div class="field"><label>Qty *</label><input value="20"></div>
+    <div class="field"><label>Expiry</label><input type="date"></div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:20px">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>This packed layout works</h3>
+      <p>6 fields in Row 2 (MRP, Retail+GST, SP, Purchase+GST, Qty, Expiry) is readable enough</p>
+    </div>
+  </div>
+  <div class="option" data-choice="tootight" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Too tight / GST toggle too small</h3>
+      <p>Fields feel cramped, the Incl/Excl toggle buttons are too tiny to tap comfortably</p>
+    </div>
+  </div>
+</div>

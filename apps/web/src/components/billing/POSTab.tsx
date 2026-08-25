@@ -33,6 +33,7 @@ import {
   Tag,
   Percent,
   Sparkles,
+  Camera,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -40,8 +41,9 @@ import { usePlanLimits } from '@/hooks/usePlanLimits'
 import { PlanLimitModal } from '@/components/common/PlanLimitModal'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
+import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
 import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
-import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer } from '@billscape/api'
+import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer, getVariantStockMap, getVariantStock } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
 import { Button } from '@/components/ui/button'
@@ -89,6 +91,20 @@ interface CompletedSale {
   paymentDetail?: string
 }
 
+// Debounces the variant-barcode fallback lookup only — the base name/parent-barcode products
+// query below stays on the live value so the grid still filters instantly as the merchant types.
+// Without this, the extra product_variants round trip fired on every single keystroke (and every
+// sub-75ms character of a USB scanner burst, see useBarcodeScanner.ts) even though only the
+// FINAL, settled search term can ever produce a useful variant match.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
+
 export function POSTab() {
   const { org, user, role } = useAuth()
   const orgId = org?.id
@@ -105,6 +121,7 @@ export function POSTab() {
   const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null)
   const [showInvoice, setShowInvoice] = useState(false)
   const [productSearch, setProductSearch] = useState('')
+  const [cameraScanOpen, setCameraScanOpen] = useState(false)
   const [heldBills, setHeldBills] = useState<HeldBill[]>(() => {
     try { return JSON.parse(sessionStorage.getItem(HELD_BILLS_KEY) ?? '[]') } catch { return [] }
   })
@@ -373,14 +390,16 @@ export function POSTab() {
     })
   }, [cart, totals.is_interstate, org?.branding?.tax_inclusive])
 
+  const PRODUCTS_SELECT_COLS = 'id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor'
+
   // Fetch products
-  const { data: products } = useQuery({
+  const { data: baseProducts } = useQuery({
     queryKey: ['billing-products', orgId, productSearch],
     enabled: !!orgId,
     queryFn: async () => {
       let query = supabase
         .from('products')
-        .select('id, name, price, tax_rate, hsn_code, barcode_value, track_stock, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+        .select(PRODUCTS_SELECT_COLS)
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -392,6 +411,76 @@ export function POSTab() {
 
       const { data } = await query
       return data ?? []
+    },
+  })
+
+  // A typed/scanned code can match a VARIANT's own barcode rather than the parent product's — the
+  // base query above only ever checks products.barcode_value, so a variant barcode (e.g. from a
+  // printed variant label) matched nothing there and the grid went blank while the merchant was
+  // still typing, even though Enter correctly resolves and adds it (see resolveBarcodeAndAddToCart
+  // below). This fetches the parent products of any matching variants so the grid shows the
+  // has_variants product to click into (or so the row is already visible by the time Enter adds it
+  // directly), same UX as a name/parent-barcode match. Debounced (see useDebouncedValue above) and
+  // kept as its OWN query — not merged into the base query above — so it doesn't add a second
+  // Supabase round trip on every single keystroke (or every sub-75ms character of a USB scanner
+  // burst, see useBarcodeScanner.ts): only the settled search term ever triggers it.
+  const debouncedProductSearch = useDebouncedValue(productSearch, 300)
+  const { data: variantMatchedProducts } = useQuery({
+    queryKey: ['billing-products-variant-match', orgId, debouncedProductSearch],
+    enabled: !!orgId && !!debouncedProductSearch,
+    queryFn: async () => {
+      const { data: variantMatches } = await supabase
+        .from('product_variants')
+        .select('product_id')
+        .eq('organization_id', orgId!)
+        .or(`barcode_value.ilike.%${debouncedProductSearch}%,variant_name.ilike.%${debouncedProductSearch}%`)
+
+      const matchedParentIds = [...new Set((variantMatches ?? []).map((v) => v.product_id))]
+      if (matchedParentIds.length === 0) return []
+
+      const { data: extraProducts } = await supabase
+        .from('products')
+        .select(PRODUCTS_SELECT_COLS)
+        .eq('organization_id', orgId!)
+        .eq('is_active', true)
+        .in('id', matchedParentIds)
+
+      return extraProducts ?? []
+    },
+  })
+
+  const products = useMemo(() => {
+    if (!baseProducts) return baseProducts
+    if (!variantMatchedProducts || variantMatchedProducts.length === 0) return baseProducts
+    const extras = variantMatchedProducts.filter((p) => !baseProducts.some((bp) => bp.id === p.id))
+    return extras.length === 0 ? baseProducts : [...baseProducts, ...extras]
+  }, [baseProducts, variantMatchedProducts])
+
+  // Read-only variant picker: opened when a product with has_variants is clicked. Shows only
+  // name/sale price/real per-variant stock — never purchase price or tax-rate editing, per the
+  // cashier cost-visibility rule (CLAUDE.md rule 5).
+  const [variantPickerProduct, setVariantPickerProduct] = useState<{ id: string; name: string } | null>(null)
+
+  const { data: productVariants } = useQuery({
+    queryKey: ['product_variants_pos', variantPickerProduct?.id],
+    enabled: !!variantPickerProduct,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('product_variants')
+        .select('id, variant_name, barcode_value, sale_price, tax_rate')
+        .eq('product_id', variantPickerProduct!.id)
+        .eq('organization_id', orgId!)
+      if (error) throw error
+      return data ?? []
+    },
+  })
+
+  const { data: variantStockMap } = useQuery({
+    queryKey: ['variant_stock_pos', variantPickerProduct?.id, productVariants?.map((v) => v.id).join(',')],
+    enabled: !!orgId && !!productVariants && productVariants.length > 0,
+    queryFn: async () => {
+      const { data } = await getVariantStockMap(supabase, orgId!, productVariants!.map((v) => v.id))
+      return data
     },
   })
 
@@ -485,21 +574,33 @@ export function POSTab() {
     unit?: unknown
     secondary_unit?: unknown
     conversion_factor?: number | null
+    variant_id?: string
+    variant_name?: string
   }) => {
     const stock = getStock(product.inventory)
     const unit = getUnit(product.unit)
     const secondaryUnit = getUnit(product.secondary_unit)
     const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+    // A variant line's real stock is tracked in variant_inventory, not the parent product's own
+    // `inventory` row (which goes stale for any has_variants product — see Task 6 design
+    // decision). The variant picker dialog already checked real per-variant stock before ever
+    // calling addToCart, so the parent-inventory-based checks below must be skipped entirely for
+    // a variant line — otherwise a parent whose own inventory has drained to 0 (an expected,
+    // accepted side effect of selling variants) would wrongly block adding an in-stock variant.
+    const isVariantLine = !!product.variant_id
 
-    if (!allowNegativeStock && product.track_stock && stock <= 0) {
+    if (!isVariantLine && !allowNegativeStock && product.track_stock && stock <= 0) {
       toast.error(`Out of stock: ${product.name}`, 'Negative stock billing is disabled in Settings > Inventory.')
       return
     }
 
     setCart((prev) => {
-      const existing = prev.find((c) => c.product_id === product.id)
+      // A variant line is matched by product_id + variant_id together — two different variants
+      // of the same parent product must never merge into one cart line just because they share
+      // a product_id.
+      const existing = prev.find((c) => c.product_id === product.id && c.variant_id === product.variant_id)
       if (existing) {
-        if (!allowNegativeStock && product.track_stock && existing.qty >= stock) {
+        if (!isVariantLine && !allowNegativeStock && product.track_stock && existing.qty >= stock) {
           toast.error(`Insufficient stock: ${product.name}`, `Only ${stock} units available in inventory.`)
           return prev
         }
@@ -507,7 +608,7 @@ export function POSTab() {
         // decimal-allowed units like Kg) — first add below always starts at a full 1 unit.
         const step = qtyStepForUnit(existing.unit?.allow_decimal ?? false)
         return prev.map((c) =>
-          c.product_id === product.id ? { ...c, qty: c.qty + step } : c,
+          c.product_id === product.id && c.variant_id === product.variant_id ? { ...c, qty: c.qty + step } : c,
         )
       }
       const newItem: CartItem = {
@@ -524,43 +625,165 @@ export function POSTab() {
         unit,
         secondary_unit: secondaryUnit,
         conversion_factor: product.conversion_factor ?? undefined,
+        variant_id: product.variant_id,
+        variant_name: product.variant_name,
       }
       return [...prev, newItem]
     })
     setProductSearch('')
   }, [])
 
-  // USB scanner keyboard wedge handler
-  const handleBarcodeScan = useCallback(
-    (code: string) => {
-      const found = products?.find((p) => p.barcode_value === code)
+  // Resolves a scanned/typed code to a product OR a variant and adds it directly to the cart —
+  // shared by the USB scanner's keyboard-wedge input, the mobile camera scan dialog, and the
+  // visible search box's Enter key, so all three input methods behave identically. A barcode is
+  // specific to one exact item (unlike a name search, which can match many), so a resolved code
+  // always adds directly — no picker dialog, matching how a physical scan is meant to be a single
+  // step. Checks the parent product's own barcode first (the common, non-variant case), then
+  // falls back to product_variants — a variant's barcode was previously never resolved at all,
+  // silently reporting "Product not found" even though the code was valid.
+  const resolveBarcodeAndAddToCart = useCallback(
+    async (code: string) => {
+      // A has_variants product's own barcode_value can be stale/leftover from before it had
+      // variants (the Product form now hides that field once variants are on, so a merchant can
+      // no longer even see or clear it) — it must never be treated as directly addable, or a scan
+      // silently bills the parent's stale price/tax instead of a real variant's, and skips variant
+      // stock tracking entirely. Fall through to the variant lookup below instead.
+      const found = products?.find((p) => p.barcode_value === code && !(p as any).has_variants)
       if (found) {
         addToCart(found)
-      } else {
-        toast({ title: `Product not found: ${code}`, variant: 'warning' })
+        return
       }
-    },
-    [products, addToCart],
-  )
-  const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(handleBarcodeScan)
 
-  const updateQty = useCallback((productId: string, qty: number) => {
+      if (!orgId) {
+        toast.error(`Product not found: ${code}`, '')
+        return
+      }
+
+      const { data: variantMatch, error: variantError } = await supabase
+        .from('product_variants')
+        .select('id, variant_name, sale_price, tax_rate, product_id')
+        .eq('organization_id', orgId)
+        .eq('barcode_value', code)
+        .maybeSingle()
+
+      if (variantError) {
+        // .maybeSingle() errors (rather than silently picking one) if more than one row matches —
+        // don't collapse that into an ordinary "not found", which would hide a real duplicate-
+        // barcode data problem or network failure behind a message that looks like a bad scan.
+        toast.error(`Could not look up barcode: ${code}`, variantError.message)
+        return
+      }
+
+      if (!variantMatch) {
+        toast.error(`Product not found: ${code}`, '')
+        return
+      }
+
+      const parentProduct = products?.find((p) => p.id === variantMatch.product_id)
+      if (!parentProduct) {
+        // The variant's parent product exists but isn't in the currently-loaded `products` page
+        // (e.g. inactive, or outside the 50-row limit) — fetch just what addToCart needs directly
+        // rather than silently failing.
+        const { data: parent } = await supabase
+          .from('products')
+          .select('id, name, hsn_code, track_stock, tax_rate, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+          .eq('organization_id', orgId)
+          .eq('id', variantMatch.product_id)
+          .maybeSingle()
+        if (!parent) {
+          toast.error(`Product not found: ${code}`, '')
+          return
+        }
+        return addVariantMatchToCart(variantMatch, parent as any, code)
+      }
+
+      addVariantMatchToCart(variantMatch, parentProduct, code)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products, addToCart, orgId],
+  )
+
+  // Shared tail of resolveBarcodeAndAddToCart once both the matched variant and its parent
+  // product are known — checks the variant's own REAL stock (variant_inventory, via
+  // getVariantStock) before adding, mirroring the variant picker dialog's own out-of-stock gate,
+  // since addToCart itself only skips the PARENT stock check for a variant line and never
+  // independently verifies variant stock on its own.
+  const addVariantMatchToCart = useCallback(
+    async (
+      variant: { id: string; variant_name: string | null; sale_price: number | null; tax_rate: number | null; product_id: string },
+      parentProduct: {
+        id: string; name: string; hsn_code?: string | null; track_stock: boolean; tax_rate?: number
+        inventory?: unknown; unit?: unknown; secondary_unit?: unknown; conversion_factor?: number | null
+      },
+      code: string,
+    ) => {
+      if (!orgId) return
+      const { data: stock } = await getVariantStock(supabase, orgId, variant.id)
+      const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+      const displayName = variant.variant_name || 'Variant'
+      // A repeated scan of the same variant must be checked against remaining stock, not the
+      // static DB value on every call — otherwise scanning past available stock (e.g. 3 scans
+      // against a stock of 1) silently succeeds every time, since each call sees the same
+      // unchanged `stock` from the DB and addToCart's own qty-ceiling check is skipped entirely
+      // for variant lines (see addToCart's isVariantLine branch).
+      const alreadyInCart = cart.find((c) => c.product_id === parentProduct.id && c.variant_id === variant.id)?.qty ?? 0
+      // Match addToCart's own existing-line increment step (0.1 for a decimal-allowed unit like
+      // Kg, 1 for count-based units) — hardcoding +1 here would over-block a valid scan on a
+      // variant sold by weight, even though the actual add below only advances qty by the
+      // correct fractional step.
+      const step = qtyStepForUnit((parentProduct.unit as { allow_decimal?: boolean } | undefined)?.allow_decimal ?? false)
+      if (!allowNegativeStock && alreadyInCart + step > stock) {
+        toast.error(`Out of stock: ${parentProduct.name} — ${displayName}`, `Only ${stock} unit(s) available. Scanned barcode: ${code}`)
+        return
+      }
+      addToCart({
+        id: parentProduct.id,
+        name: `${parentProduct.name} — ${displayName}`,
+        price: variant.sale_price ?? 0,
+        // A variant's own tax_rate can be null (not every variant has one set) — fall back to the
+        // parent product's tax_rate rather than passing null through to computeGST/computeLineTax,
+        // matching the same fallback the variant picker dialog already uses.
+        tax_rate: variant.tax_rate ?? parentProduct.tax_rate ?? 0,
+        hsn_code: parentProduct.hsn_code,
+        inventory: parentProduct.inventory,
+        track_stock: parentProduct.track_stock,
+        unit: parentProduct.unit,
+        secondary_unit: parentProduct.secondary_unit,
+        conversion_factor: parentProduct.conversion_factor,
+        variant_id: variant.id,
+        variant_name: displayName,
+      })
+    },
+    [addToCart, orgId, org, cart],
+  )
+
+  const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(resolveBarcodeAndAddToCart)
+
+  // A cart line is identified by product_id + variant_id together, not product_id alone — two
+  // different variants of the same parent product must be addressable as separate lines, or
+  // qty/discount/remove on one variant would silently apply to every other variant sharing that
+  // product_id too. variantId is undefined for a non-variant line, so `c.variant_id === variantId`
+  // still correctly matches only non-variant lines against each other when variantId is undefined.
+  const isSameLine = (c: CartItem, productId: string, variantId?: string) =>
+    c.product_id === productId && c.variant_id === variantId
+
+  const updateQty = useCallback((productId: string, qty: number, variantId?: string) => {
     if (qty <= 0) {
-      setCart((prev) => prev.filter((c) => c.product_id !== productId))
+      setCart((prev) => prev.filter((c) => !isSameLine(c, productId, variantId)))
       return
     }
     setCart((prev) =>
-      prev.map((c) => (c.product_id === productId ? { ...c, qty } : c)),
+      prev.map((c) => (isSameLine(c, productId, variantId) ? { ...c, qty } : c)),
     )
   }, [])
 
   // Switches which unit a cart line is being rung up in (base vs secondary, e.g. Piece vs Box).
   // Purely a display/entry convenience — sale_items.qty is always persisted in the product's
   // base unit (see createSale's item-building below), so this never touches what's stored.
-  const updateSellingUnit = useCallback((productId: string, unitId: string) => {
+  const updateSellingUnit = useCallback((productId: string, unitId: string, variantId?: string) => {
     setCart((prev) =>
       prev.map((c) => {
-        if (c.product_id !== productId) return c
+        if (!isSameLine(c, productId, variantId)) return c
         // Switching units resets the line to "1 of the new unit" rather than carrying over
         // a converted fractional qty (e.g. 1 Piece becoming 0.083 Box) — matches the same
         // "first add always starts at 1" convention used when a product first enters the cart.
@@ -573,23 +796,23 @@ export function POSTab() {
     )
   }, [])
 
-  const updateDiscount = useCallback((productId: string, discountType: DiscountType, value: number) => {
+  const updateDiscount = useCallback((productId: string, discountType: DiscountType, value: number, variantId?: string) => {
     setCart((prev) =>
       prev.map((c) =>
-        c.product_id === productId
+        isSameLine(c, productId, variantId)
           ? {
-              ...c,
-              discount_type: discountType,
-              discount_pct: discountType === 'percent' ? value : 0,
-              discount_amount: discountType === 'flat' ? value : 0,
-            }
+            ...c,
+            discount_type: discountType,
+            discount_pct: discountType === 'percent' ? value : 0,
+            discount_amount: discountType === 'flat' ? value : 0,
+          }
           : c,
       ),
     )
   }, [])
 
-  const removeFromCart = useCallback((productId: string) => {
-    setCart((prev) => prev.filter((c) => c.product_id !== productId))
+  const removeFromCart = useCallback((productId: string, variantId?: string) => {
+    setCart((prev) => prev.filter((c) => !isSameLine(c, productId, variantId)))
   }, [])
 
   const saveHeldBills = (bills: HeldBill[]) => {
@@ -743,7 +966,7 @@ export function POSTab() {
             .from('promotions')
             .update({ usage_count: (appliedCoupon.promotion.usage_count || 0) + 1 })
             .eq('id', appliedCoupon.promotion.id)
-        } catch {}
+        } catch { }
       }
 
       return result.data
@@ -756,10 +979,10 @@ export function POSTab() {
       const paymentDetail =
         saleRow.payment_mode === 'split'
           ? [
-              saleRow.cash_amount ? `Cash ${formatINR(saleRow.cash_amount)}` : '',
-              saleRow.card_amount ? `Card ${formatINR(saleRow.card_amount)}` : '',
-              saleRow.upi_amount ? `UPI ${formatINR(saleRow.upi_amount)}` : '',
-            ].filter(Boolean).join(', ')
+            saleRow.cash_amount ? `Cash ${formatINR(saleRow.cash_amount)}` : '',
+            saleRow.card_amount ? `Card ${formatINR(saleRow.card_amount)}` : '',
+            saleRow.upi_amount ? `UPI ${formatINR(saleRow.upi_amount)}` : '',
+          ].filter(Boolean).join(', ')
           : undefined
       setCompletedSale({
         invoiceNo: d.sale.invoice_no,
@@ -809,7 +1032,7 @@ export function POSTab() {
     ((parseFloat(splitAmounts.cash) || 0) +
       (parseFloat(splitAmounts.card) || 0) +
       (parseFloat(splitAmounts.upi) || 0)) *
-      100,
+    100,
   ) / 100
   const splitRemaining = Math.max(0, Math.round((totals.net_payable - splitTotal) * 100) / 100)
 
@@ -828,26 +1051,56 @@ export function POSTab() {
       <div className="flex flex-col w-full lg:w-[40%] xl:w-[35%] overflow-hidden order-2">
         {/* Search bar */}
         <div className="p-3 border-b border-border">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-            <Input
-              placeholder="Search products... (scan barcode or type)"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              className="pl-9 pr-9"
-            />
-            {productSearch && (
-              <button
-                type="button"
-                onClick={() => setProductSearch('')}
-                aria-label="Clear search"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+              <Input
+                placeholder="Search products... (scan barcode or type)"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  // Manually typing a full barcode and pressing Enter behaves like a scan —
+                  // resolve it (product first, then a variant's own barcode) and add directly,
+                  // same as the USB scanner / camera scan dialog. Live filter-as-you-type is
+                  // untouched; this only fires on an explicit Enter, never mid-typing.
+                  if (e.key === 'Enter' && productSearch.trim()) {
+                    e.preventDefault()
+                    resolveBarcodeAndAddToCart(productSearch.trim())
+                  }
+                }}
+                className="pl-9 pr-9"
+              />
+              {productSearch && (
+                <button
+                  type="button"
+                  onClick={() => setProductSearch('')}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title="Scan with camera"
+              onClick={() => setCameraScanOpen(true)}
+              className="shrink-0"
+            >
+              <Camera className="h-4 w-4" />
+            </Button>
           </div>
         </div>
+        <ScanBarcodeDialog
+          open={cameraScanOpen}
+          onOpenChange={setCameraScanOpen}
+          onScan={(code) => {
+            setCameraScanOpen(false)
+            resolveBarcodeAndAddToCart(code)
+          }}
+        />
 
         {/* Product grid */}
         <div className="flex-1 overflow-y-auto p-3">
@@ -856,21 +1109,36 @@ export function POSTab() {
               ?.filter((product) => {
                 const showOutOfStock = (org as any)?.feature_flags?.show_out_of_stock_in_billing ?? true
                 if (showOutOfStock) return true
+                // has_variants products are never hidden by this parent-inventory check — the
+                // parent's own stock row is stale once variant stock is tracked separately (see
+                // Task 6 design decision); the picker dialog enforces real stock per variant.
+                if ((product as any).has_variants) return true
                 if (!product.track_stock) return true
                 return getStock(product.inventory) > 0
               })
               .map((product) => {
+                const hasVariants = !!(product as any).has_variants
                 const stock = getStock(product.inventory)
                 const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
                 const lowStockThreshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
-                const isOutOfStock = product.track_stock && stock <= 0
-                const isLowStock = product.track_stock && stock > 0 && stock <= lowStockThreshold
+                // For a has_variants product, the parent's own `inventory` row goes stale the
+                // moment variant stock is tracked separately (see variant_inventory / Task 6
+                // design decision) — never gate the tile's clickability or badge off it. The
+                // variant picker dialog does its own real per-variant stock check instead.
+                const isOutOfStock = !hasVariants && product.track_stock && stock <= 0
+                const isLowStock = !hasVariants && product.track_stock && stock > 0 && stock <= lowStockThreshold
                 const isDisabled = !allowNegativeStock && isOutOfStock
 
                 return (
                   <button
                     key={product.id}
-                    onClick={() => (!isDisabled || allowNegativeStock) && addToCart(product)}
+                    onClick={() => {
+                      if (hasVariants) {
+                        setVariantPickerProduct({ id: product.id, name: product.name })
+                        return
+                      }
+                      if (!isDisabled || allowNegativeStock) addToCart(product)
+                    }}
                     disabled={isDisabled}
                     className={cn(
                       'relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all',
@@ -885,8 +1153,13 @@ export function POSTab() {
                     <p className="text-xs font-medium text-zinc-200 leading-tight line-clamp-2">
                       {product.name}
                     </p>
-                    <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>
-                    {product.track_stock && (
+                    {!hasVariants && <p className="text-sm font-bold text-indigo-300">{formatINR(product.price)}</p>}
+                    {hasVariants && <p className="text-sm font-bold text-indigo-300">Multiple prices</p>}
+                    {hasVariants ? (
+                      <div className="mt-auto">
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0">Variants</Badge>
+                      </div>
+                    ) : product.track_stock ? (
                       <div className="mt-auto">
                         {isOutOfStock ? (
                           <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
@@ -894,7 +1167,7 @@ export function POSTab() {
                           <Badge variant="warning" className="text-[9px] px-1.5 py-0">{stock} left</Badge>
                         ) : null}
                       </div>
-                    )}
+                    ) : null}
                   </button>
                 )
               })}
@@ -1027,7 +1300,7 @@ export function POSTab() {
           ) : (
             cart.map((item, i) => (
               <CartItemRow
-                key={item.product_id}
+                key={item.variant_id ? `${item.product_id}:${item.variant_id}` : item.product_id}
                 item={item}
                 lineTotal={lineTotals[i]}
                 onQtyChange={updateQty}
@@ -1587,6 +1860,90 @@ export function POSTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Variant picker dialog — read-only: name + sale price + real per-variant stock only.
+          Never shows purchase price, tax-rate editing, or any cost figure (cashiers must never
+          see cost/profit, CLAUDE.md rule 5). */}
+      <Dialog open={!!variantPickerProduct} onOpenChange={(open) => !open && setVariantPickerProduct(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-4 w-4 text-indigo-400" /> {variantPickerProduct?.name} — Select Variant
+            </DialogTitle>
+          </DialogHeader>
+          {!productVariants ? (
+            <p className="text-center text-sm text-muted-foreground py-6">Loading variants…</p>
+          ) : productVariants.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-6">No variants found for this product.</p>
+          ) : (
+            <div className="space-y-1.5 max-h-96 overflow-y-auto">
+              {productVariants.map((variant) => {
+                const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
+                const stock = variantStockMap?.get(variant.id) ?? 0
+                // The picker dialog closes after every add (setVariantPickerProduct(null)), so a
+                // merchant re-opening it for the same product and picking the same variant again
+                // sees the same DB stock value from the query cache — the dialog itself can't
+                // know how much of that stock is already sitting in the cart from an earlier pick
+                // this same checkout. Same fix as the barcode-scan path's out-of-stock gate.
+                const alreadyInCart = cart.find((c) => c.product_id === variantPickerProduct?.id && c.variant_id === variant.id)?.qty ?? 0
+                const parentForStep = products?.find((p) => p.id === variantPickerProduct?.id)
+                const step = qtyStepForUnit((parentForStep?.unit as { allow_decimal?: boolean } | undefined)?.allow_decimal ?? false)
+                const isOutOfStock = !allowNegativeStock && alreadyInCart + step > stock
+                // variant_name is nullable in the DB — fall back to a placeholder rather than
+                // rendering a blank row or "— null" in the cart/receipt.
+                const displayName = variant.variant_name || 'Variant'
+
+                return (
+                  <button
+                    key={variant.id}
+                    disabled={isOutOfStock}
+                    onClick={() => {
+                      if (isOutOfStock) return
+                      const parentProduct = products?.find((p) => p.id === variantPickerProduct!.id)
+                      addToCart({
+                        id: variantPickerProduct!.id,
+                        name: `${variantPickerProduct!.name} — ${displayName}`,
+                        price: variant.sale_price ?? 0,
+                        // A variant's own tax_rate can be null (not every variant has one set —
+                        // seen in real test data) — fall back to the parent product's tax_rate
+                        // rather than passing null through to computeGST/computeLineTax.
+                        tax_rate: variant.tax_rate ?? parentProduct?.tax_rate ?? 0,
+                        hsn_code: parentProduct?.hsn_code,
+                        inventory: parentProduct?.inventory,
+                        track_stock: parentProduct?.track_stock ?? false,
+                        unit: parentProduct?.unit,
+                        secondary_unit: parentProduct?.secondary_unit,
+                        conversion_factor: parentProduct?.conversion_factor,
+                        variant_id: variant.id,
+                        variant_name: displayName,
+                      })
+                      setVariantPickerProduct(null)
+                    }}
+                    className={cn(
+                      'flex w-full items-center justify-between rounded-lg border p-3 text-left transition-all',
+                      isOutOfStock
+                        ? 'border-zinc-800 bg-zinc-900/30 opacity-50 cursor-not-allowed'
+                        : 'border-zinc-800 bg-card hover:border-indigo-500 hover:bg-indigo-600/5 cursor-pointer',
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-zinc-200 truncate">{displayName}</p>
+                      <p className="text-sm font-bold text-indigo-300">{formatINR(variant.sale_price ?? 0)}</p>
+                    </div>
+                    <div className="shrink-0">
+                      {isOutOfStock ? (
+                        <Badge variant="destructive" className="text-[9px] px-1.5 py-0">Out of stock</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0">{stock} in stock</Badge>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Quick-add customer dialog */}
       <QuickAddCustomerDialog
         open={showAddCustomer}
@@ -1625,8 +1982,8 @@ export function POSTab() {
                   promo.scope === 'order' || promo.scope === 'store'
                     ? 'Entire Bill'
                     : promo.scope === 'product'
-                    ? 'Selected Product'
-                    : 'Selected Category'
+                      ? 'Selected Product'
+                      : 'Selected Category'
 
                 return (
                   <div

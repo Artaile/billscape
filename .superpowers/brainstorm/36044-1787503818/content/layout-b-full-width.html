@@ -1,0 +1,125 @@
+<style>
+  :root {
+    --bs-bg: #09090b; --bs-card: #18181b; --bs-border: #27272a; --bs-border-light: #3f3f46;
+    --bs-text: #f4f4f5; --bs-text-dim: #a1a1aa; --bs-text-faint: #71717a;
+    --bs-indigo: #6366f1; --bs-indigo-dim: rgba(99,102,241,0.12); --bs-emerald: #34d399; --bs-amber: #fbbf24;
+  }
+  .bs-mock { background: var(--bs-bg); color: var(--bs-text); border: 1px solid var(--bs-border); border-radius: 10px; padding: 18px; font-family: -apple-system, "Inter", sans-serif; font-size: 13px; }
+  .bs-card { background: var(--bs-card); border: 1px solid var(--bs-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .bs-label { color: var(--bs-text-dim); font-size: 11px; margin-bottom: 4px; display:block; }
+  .bs-input { background: #0f0f11; border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; color: var(--bs-text); font-size: 12px; width: 100%; box-sizing: border-box; }
+  .bs-row { display: flex; gap: 10px; margin-bottom: 10px; }
+  .bs-row > div { flex: 1; min-width: 0; }
+  .bs-btn { background: var(--bs-indigo); color: white; border: none; border-radius: 6px; padding: 10px 16px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .bs-btn-outline { background: transparent; color: var(--bs-text-dim); border: 1px solid var(--bs-border-light); border-radius: 6px; padding: 8px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .bs-icon-btn { width: 34px; height: 34px; display:flex; align-items:center; justify-content:center; border: 1px solid var(--bs-border-light); border-radius: 6px; color: var(--bs-text-dim); font-size: 14px; cursor: pointer; flex-shrink:0; }
+  .bs-section-title { font-size: 12px; font-weight: 700; color: var(--bs-text); margin-bottom: 10px; display:flex; align-items:center; gap:6px; }
+  .bs-section-title .n { width:18px; height:18px; border-radius:50%; background:var(--bs-indigo); color:white; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .bs-note { font-size: 10px; color: var(--bs-text-faint); margin-top: 4px; }
+  .bs-table { width:100%; border-collapse:collapse; font-size:11px; }
+  .bs-table th { text-align:left; color:var(--bs-text-faint); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--bs-border); }
+  .bs-table td { padding:8px; border-bottom:1px solid var(--bs-border); color:var(--bs-text-dim); }
+  .bs-summary-bar { display:flex; align-items:center; justify-content:space-between; background:var(--bs-card); border:1px solid var(--bs-border); border-radius:10px; padding:14px 18px; margin-top:14px; }
+  .bs-summary-item { text-align:center; }
+  .bs-summary-item .v { font-size:15px; font-weight:700; color:var(--bs-text); }
+  .bs-summary-item.total .v { color: var(--bs-indigo); font-size:18px; }
+  .bs-summary-item .l { font-size:10px; color:var(--bs-text-faint); text-transform:uppercase; }
+  .bs-divider { width:1px; height:32px; background:var(--bs-border); }
+</style>
+
+<h2>Option B, evolved: full-width layout, no sidebar</h2>
+<p class="subtitle">Everything stays visible (nothing hidden behind tabs/collapses) — the change is dropping the fixed right-side Bill Summary and letting item entry use the FULL page width. Summary becomes a horizontal strip that sits naturally at the bottom, right above Save.</p>
+
+<div class="bs-mock">
+  <!-- Header row -->
+  <div class="bs-row" style="margin-bottom:14px;">
+    <div><span class="bs-label">Supplier</span><input class="bs-input" value="YS Trades" readonly></div>
+    <div><span class="bs-label">Invoice No</span><input class="bs-input" value="INV-001" readonly></div>
+    <div><span class="bs-label">Date</span><input class="bs-input" value="23/08/2026" readonly></div>
+    <div style="flex:0.6"><span class="bs-label">Type</span><input class="bs-input" value="Credit" readonly></div>
+  </div>
+
+  <div class="bs-card">
+    <div class="bs-section-title"><span class="n">1</span> Product</div>
+    <div class="bs-row">
+      <div style="flex:2"><span class="bs-label">Product Name *</span><input class="bs-input" value="LED 9W" readonly></div>
+      <div><span class="bs-label">Code</span><input class="bs-input" value="PC0001" readonly></div>
+      <div><span class="bs-label">Barcode *</span>
+        <div style="display:flex; gap:6px;">
+          <input class="bs-input" value="LED9W" readonly>
+          <div class="bs-icon-btn" title="Scan">📷</div>
+          <div class="bs-icon-btn" title="Generate">⌁</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bs-section-title" style="margin-top:16px;"><span class="n">2</span> Pricing &amp; Quantity</div>
+    <div class="bs-row">
+      <div><span class="bs-label">GST %</span><input class="bs-input" value="18%" readonly></div>
+      <div><span class="bs-label">Purchase Rate</span><input class="bs-input" value="100" readonly></div>
+      <div><span class="bs-label">Qty *</span><input class="bs-input" value="10" readonly></div>
+      <div><span class="bs-label">MRP</span><input class="bs-input" value="140" readonly></div>
+      <div><span class="bs-label">Retail Price</span><input class="bs-input" value="120" readonly></div>
+      <div><span class="bs-label">SP (Special)</span><input class="bs-input" value="120" readonly></div>
+    </div>
+
+    <div class="bs-section-title" style="margin-top:16px;"><span class="n">3</span> Classify <span style="font-weight:400;color:var(--bs-text-faint);font-size:10px;">— optional, helps reports &amp; stock</span></div>
+    <div class="bs-row">
+      <div><span class="bs-label">Category</span><input class="bs-input" value="Light" readonly></div>
+      <div><span class="bs-label">Unit *</span><input class="bs-input" value="Piece (pc)" readonly></div>
+      <div><span class="bs-label">HSN Code</span><input class="bs-input" placeholder="e.g. 2501"></div>
+    </div>
+
+    <div class="bs-section-title" style="margin-top:16px;"><span class="n">4</span> Sizes / Colors <span style="font-weight:400;color:var(--bs-text-faint);font-size:10px;">— only if this product has variants</span></div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+      <div class="bs-icon-btn" style="width:auto;padding:0 10px;font-size:11px;">Off</div>
+      <span class="bs-note" style="margin:0;">Turn on to add Size/Color rows, each with its own barcode</span>
+    </div>
+
+    <div class="bs-section-title" style="margin-top:16px;"><span class="n">5</span> Batches / Expiry <span style="font-weight:400;color:var(--bs-text-faint);font-size:10px;">— only if this product expires</span></div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <div class="bs-icon-btn" style="width:auto;padding:0 10px;font-size:11px;">Off</div>
+      <span class="bs-note" style="margin:0;">Turn on to track batch numbers &amp; expiry dates</span>
+    </div>
+
+    <button class="bs-btn" style="margin-top:16px; width:100%;">+ Add to List</button>
+  </div>
+
+  <!-- Items table now full width, no longer squeezed by a sidebar -->
+  <div class="bs-card">
+    <div class="bs-section-title">Items (1)</div>
+    <table class="bs-table">
+      <tr><th>Code</th><th>Product</th><th>Rate</th><th>GST%</th><th>Qty</th><th>Barcode</th><th>MRP</th><th>Retail</th><th>SP</th><th>Total</th><th></th></tr>
+      <tr><td>PC0001</td><td>LED 9W</td><td>₹100</td><td>18%</td><td>10</td><td>LED9W</td><td>₹140</td><td>₹120</td><td>₹120</td><td>₹1,180</td><td>✎ 🗑</td></tr>
+    </table>
+  </div>
+
+  <!-- Bill summary: horizontal strip at the bottom, not a sidebar -->
+  <div class="bs-summary-bar">
+    <div class="bs-summary-item"><div class="v">₹1,000.00</div><div class="l">Taxable</div></div>
+    <div class="bs-divider"></div>
+    <div class="bs-summary-item"><div class="v">₹90.00</div><div class="l">CGST</div></div>
+    <div class="bs-divider"></div>
+    <div class="bs-summary-item"><div class="v">₹90.00</div><div class="l">SGST</div></div>
+    <div class="bs-divider"></div>
+    <div class="bs-summary-item"><div class="v">₹0</div><div class="l">Discount</div></div>
+    <div class="bs-divider"></div>
+    <div class="bs-summary-item total"><div class="v">₹1,180.00</div><div class="l">Total</div></div>
+    <div style="display:flex; gap:8px;">
+      <button class="bs-btn-outline">Cancel</button>
+      <button class="bs-btn">Save Purchase</button>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:20px;">
+  <div class="pros"><h4>Why this works</h4><ul>
+    <li>Item entry gets the FULL page width instead of ~65% — every field gets more breathing room, no cramped 6-column squeeze</li>
+    <li>Nothing is hidden — Category/Unit, Variants, Batches are always visible as clearly numbered, labeled sections (not a collapsed "More details" toggle)</li>
+    <li>Each optional section has a one-line "why would I need this" hint, so it reads as guidance, not clutter</li>
+    <li>Bill Summary becomes a persistent strip pinned to the bottom of the viewport (like a checkout bar) — always visible, always reachable, without stealing side space from data entry</li>
+  </ul></div>
+  <div class="cons"><h4>Trade-off</h4><ul>
+    <li>On a very long items list, you scroll past items to reach Save — mitigated by making the summary bar <em>sticky</em> to the bottom of the screen (not just bottom of the page), so it's always visible while scrolling</li>
+  </ul></div>
+</div>

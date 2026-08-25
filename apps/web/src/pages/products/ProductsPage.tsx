@@ -402,7 +402,12 @@ export function ProductsPage() {
                     </div>
                   )}
                   <div className="flex items-center gap-2 mt-2">
-                    <span className="text-base font-bold text-white">{formatINR(product.price)}</span>
+                    {!(product as any).has_variants && (
+                      <span className="text-base font-bold text-white">{formatINR(product.price)}</span>
+                    )}
+                    {(product as any).has_variants && (
+                      <span className="text-base font-bold text-white">Multiple prices</span>
+                    )}
                     {product.tax_rate > 0 && (
                       <span className="text-[10px] text-zinc-500">GST {product.tax_rate}%</span>
                     )}

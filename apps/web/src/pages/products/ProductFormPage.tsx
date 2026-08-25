@@ -20,11 +20,12 @@ import {
   Image as ImageIcon,
   Eye,
   Ruler,
+  Camera,
 } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { ProductSchema, type ProductInput, formatINR } from '@billscape/core'
+import { ProductSchema, type ProductInput, type GSTRate, formatINR, splitInclusiveGST } from '@billscape/core'
 import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
@@ -35,6 +36,8 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
+import { VariantEditor, emptyVariantRow, type VariantFormRow } from '@/components/products/VariantEditor'
 
 import { usePlanLimits } from '@/hooks/usePlanLimits'
 import { PlanLimitModal } from '@/components/common/PlanLimitModal'
@@ -46,8 +49,9 @@ export function ProductFormPage() {
   const { id } = useParams<{ id: string }>()
   const isEdit = !!id
   const queryClient = useQueryClient()
-  const { org } = useAuth()
+  const { org, user } = useAuth()
   const orgId = org?.id
+  const taxInclusive = org?.branding?.tax_inclusive ?? false
 
   const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota, handleInsertError } = usePlanLimits()
 
@@ -57,12 +61,13 @@ export function ProductFormPage() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
   const barcodeRef = useRef<SVGSVGElement>(null)
+  const [scanOpen, setScanOpen] = useState(false)
 
   const [brand, setBrand] = useState('')
 
   // Variants state
   const [hasVariants, setHasVariants] = useState(false)
-  const [variants, setVariants] = useState<{ size: string; color: string; price_delta: number; stock_qty: number; barcode_value: string }[]>([])
+  const [variants, setVariants] = useState<VariantFormRow[]>([])
 
   // Batch tracking state
   const [hasBatches, setHasBatches] = useState(false)
@@ -249,11 +254,18 @@ export function ProductFormPage() {
   useEffect(() => {
     if (existingVariants && existingVariants.length > 0) {
       setVariants(existingVariants.map((v: any) => ({
-        size: v.size ?? '',
-        color: v.color ?? '',
-        price_delta: v.price_delta ?? 0,
-        stock_qty: v.stock_qty ?? 0,
+        id: v.id,
+        variant_name: v.variant_name ?? [v.size, v.color].filter(Boolean).join(' · '),
         barcode_value: v.barcode_value ?? '',
+        sku: v.sku ?? '',
+        tax_rate: (v.tax_rate ?? watchedTaxRate) as GSTRate,
+        mrp: v.mrp != null ? String(v.mrp) : '',
+        sale_price: v.sale_price != null ? String(v.sale_price) : '',
+        special_price: v.special_price != null ? String(v.special_price) : '',
+        purchase_price: v.purchase_price != null ? String(v.purchase_price) : '',
+        gst_mode: v.sale_gst_mode ?? 'include',
+        qty: v.qty != null ? String(v.qty) : (v.stock_qty != null ? String(v.stock_qty) : ''),
+        expiry_date: v.expiry_date ?? '',
       })))
     }
   }, [existingVariants])
@@ -385,23 +397,114 @@ export function ProductFormPage() {
         }
       }
 
-      // Save variants
-      if (hasVariants && productId && variants.length > 0) {
-        // Delete old variants then re-insert
-        await supabase.from('product_variants').delete().eq('product_id', productId).eq('organization_id', orgId!)
-        const validVariants = variants.filter((v) => v.size || v.color)
-        if (validVariants.length > 0) {
-          await supabase.from('product_variants').insert(
-            validVariants.map((v) => ({
+      // Save variants — diff by id (not delete+reinsert-by-name) so an existing variant's
+      // stock and stock_movements history is never touched by an edit, no matter what the
+      // user renames it to or whether another row shares its name. product_variants ->
+      // variant_inventory / variant_stock_movements are both ON DELETE CASCADE, so a row
+      // must only ever be deleted when the user genuinely removed it in the UI — never as a
+      // byproduct of saving edits to its own fields. Editing a product's variant fields
+      // (name/price/etc.) must never move stock — only Purchases/POS do that.
+      if (hasVariants && productId) {
+        const validVariants = variants.filter((v) => v.variant_name.trim())
+        const keepIds = new Set(validVariants.filter((v) => v.id).map((v) => v.id!))
+
+        const { data: existingVariantRows } = await supabase
+          .from('product_variants')
+          .select('id')
+          .eq('product_id', productId)
+          .eq('organization_id', orgId!)
+        const removedIds = (existingVariantRows ?? [])
+          .map((r: { id: string }) => r.id)
+          .filter((rid: string) => !keepIds.has(rid))
+
+        if (removedIds.length > 0) {
+          await supabase.from('product_variants').delete().in('id', removedIds).eq('organization_id', orgId!)
+        }
+
+        const toUpdate = validVariants.filter((v) => v.id)
+        for (const v of toUpdate) {
+          await supabase
+            .from('product_variants')
+            .update({
+              variant_name: v.variant_name,
+              barcode_value: v.barcode_value || null,
+              sku: v.sku || null,
+              tax_rate: v.tax_rate,
+              mrp: v.mrp ? Number(v.mrp) : null,
+              sale_price: v.sale_price ? Number(v.sale_price) : null,
+              special_price: v.special_price ? Number(v.special_price) : null,
+              sale_gst_mode: v.gst_mode,
+              purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
+              purchase_gst_mode: v.gst_mode,
+              expiry_date: v.expiry_date || null,
+              // qty/stock_qty deliberately NOT written here — the qty field on this page is
+              // last-known-value display only, never a stock-adjustment path; real stock lives
+              // in variant_inventory and is only ever moved by Purchases/POS.
+            })
+            .eq('id', v.id!)
+            .eq('organization_id', orgId!)
+        }
+
+        const toInsert = validVariants.filter((v) => !v.id)
+        if (toInsert.length > 0) {
+          const { data: insertedVariants } = await supabase.from('product_variants').insert(
+            toInsert.map((v) => ({
               product_id: productId!,
               organization_id: orgId!,
-              size: v.size || null,
-              color: v.color || null,
-              price_delta: v.price_delta ?? 0,
-              stock_qty: v.stock_qty ?? 0,
+              variant_name: v.variant_name,
               barcode_value: v.barcode_value || null,
+              sku: v.sku || null,
+              tax_rate: v.tax_rate,
+              mrp: v.mrp ? Number(v.mrp) : null,
+              sale_price: v.sale_price ? Number(v.sale_price) : null,
+              special_price: v.special_price ? Number(v.special_price) : null,
+              sale_gst_mode: v.gst_mode,
+              purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
+              purchase_gst_mode: v.gst_mode,
+              qty: v.qty ? Number(v.qty) : 0,
+              stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
+              expiry_date: v.expiry_date || null,
             }))
-          )
+          ).select('id')
+
+          if (insertedVariants && insertedVariants.length > 0) {
+            // CREATE-only: a brand new product's variants are being seeded for the very first
+            // time, so the Qty the user just typed on this page IS real opening stock — same as
+            // the base (non-variant) product's own "Opening Stock" field only applying at
+            // creation. This must NEVER run during an edit: `toInsert` here also covers a
+            // genuinely NEW variant row added while editing an otherwise-existing product, and
+            // for that case stock still seeds at 0 (real stock only ever enters via a Purchase
+            // once the product exists) — editing must never be a stock-adjustment path, per the
+            // stock-preservation fix this session (d5c6451 / 48fdbbc). `insertedVariants` is
+            // returned in the same order as `toInsert` was inserted, so index-matching is safe.
+            const stockRows = insertedVariants.map((iv: { id: string }, i: number) => ({
+              product_variant_id: iv.id,
+              organization_id: orgId!,
+              stock_qty: !isEdit && toInsert[i]?.qty ? Number(toInsert[i].qty) : 0,
+            }))
+            await supabase.from('variant_inventory').insert(stockRows)
+
+            // Log an opening-stock movement per variant that actually got real stock, mirroring
+            // how the base product's own Opening Stock is logged once at creation (see
+            // InventoryPage.tsx's openingMutation for the same reason/shape). reference_id is
+            // null — an opening balance has no purchase/sale to point at.
+            if (!isEdit && user) {
+              const openingMovements = stockRows
+                .filter((r) => r.stock_qty > 0)
+                .map((r) => ({
+                  organization_id: orgId!,
+                  product_variant_id: r.product_variant_id,
+                  qty_change: r.stock_qty,
+                  reason: 'opening' as const,
+                  reference_id: null,
+                  note: 'Opening stock entry',
+                  created_by: user.id,
+                }))
+              if (openingMovements.length > 0) {
+                await supabase.from('variant_stock_movements').insert(openingMovements)
+              }
+            }
+          }
         }
       }
 
@@ -460,8 +563,17 @@ export function ProductFormPage() {
       if (!allowed) return
     }
     if (hasVariants) {
-      if (variants.some((v) => !v.size.trim() && !v.color.trim() && (v.price_delta || v.stock_qty))) {
-        toast.error('Incomplete variant', 'Each variant row needs a Size or Color — remove empty rows before saving.')
+      if (variants.some((v) => !v.variant_name.trim())) {
+        toast.error('Incomplete variant', 'Each variant needs a name before saving.')
+        return
+      }
+      // Track Variants can be left ON with every variant row deleted (e.g. removing rows one by
+      // one) — the check above only rejects a BLANK-named row, and [].some(...) is vacuously
+      // false for an empty list, so this must be checked separately. Without this, has_variants
+      // saves as true with zero real variants: the product shows "Multiple prices" everywhere
+      // (POS, Products list) but has nothing to actually sell, a dead end for the cashier.
+      if (validVariantCount === 0) {
+        toast.error('No variants added', 'Add at least one variant, or turn off Track Variants before saving.')
         return
       }
     }
@@ -481,7 +593,7 @@ export function ProductFormPage() {
       ? ((watchedPrice - watchedCostPrice) / watchedPrice) * 100
       : null
 
-  const validVariantCount = variants.filter((v) => v.size || v.color).length
+  const validVariantCount = variants.filter((v) => v.variant_name.trim()).length
   const validBatchCount = batches.filter((b) => b.batch_no.trim()).length
 
   return (
@@ -605,83 +717,100 @@ export function ProductFormPage() {
               <IndianRupee className="h-4 w-4 text-indigo-400" />Pricing & Tax
             </h2>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="price">Retail Price (₹) *</Label>
-                <Input
-                  id="price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('price', { valueAsNumber: true })}
-                />
-                {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
+            {!hasVariants && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="price">Retail Price (₹) *</Label>
+                  <Input
+                    id="price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('price', { valueAsNumber: true })}
+                  />
+                  {errors.price && <p className="text-xs text-red-400">{errors.price.message}</p>}
+                  {taxInclusive && watchedPrice > 0 && watchedTaxRate > 0 && (() => {
+                    const { base, tax } = splitInclusiveGST(watchedPrice, watchedTaxRate)
+                    return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                  })()}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cost_price">Cost Price (₹)</Label>
+                  <Input
+                    id="cost_price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('cost_price', { valueAsNumber: true })}
+                  />
+                  {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
+                  {taxInclusive && watchedCostPrice > 0 && watchedTaxRate > 0 && (() => {
+                    const { base, tax } = splitInclusiveGST(watchedCostPrice, watchedTaxRate)
+                    return <p className="text-[11px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                  })()}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mrp">MRP (₹)</Label>
+                  <Input
+                    id="mrp"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('mrp', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                  />
+                  {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="special_price">Special Price (₹)</Label>
+                  <Input
+                    id="special_price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...register('special_price', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
+                  />
+                  {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cost_price">Cost Price (₹)</Label>
-                <Input
-                  id="cost_price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('cost_price', { valueAsNumber: true })}
-                />
-                {errors.cost_price && <p className="text-xs text-red-400">{errors.cost_price.message}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="mrp">MRP (₹)</Label>
-                <Input
-                  id="mrp"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('mrp', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
-                />
-                {errors.mrp && <p className="text-xs text-red-400">{errors.mrp.message}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="special_price">Special Price (₹)</Label>
-                <Input
-                  id="special_price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...register('special_price', { setValueAs: (v) => (v === '' ? undefined : Number(v)) })}
-                />
-                {errors.special_price && <p className="text-xs text-red-400">{errors.special_price.message}</p>}
-              </div>
-            </div>
+            )}
+            {hasVariants && (
+              <p className="text-xs text-zinc-500 -mt-1">
+                Retail/Cost/MRP/Special Price and GST are set per-variant below.
+              </p>
+            )}
 
-            <div className="space-y-1.5">
-              <Label>GST Rate *</Label>
-              <Controller
-                name="tax_rate"
-                control={control}
-                render={({ field }) => (
-                  <div className="flex gap-2 flex-wrap">
-                    {GST_RATES.map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => field.onChange(rate)}
-                        className={cn(
-                          'px-3 py-1.5 rounded-md text-sm font-medium border transition-all',
-                          field.value === rate
-                            ? 'bg-indigo-600 border-indigo-500 text-white'
-                            : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
-                        )}
-                      >
-                        {rate}%
-                      </button>
-                    ))}
-                  </div>
-                )}
-              />
-            </div>
+            {!hasVariants && (
+              <div className="space-y-1.5">
+                <Label>GST Rate *</Label>
+                <Controller
+                  name="tax_rate"
+                  control={control}
+                  render={({ field }) => (
+                    <div className="flex gap-2 flex-wrap">
+                      {GST_RATES.map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => field.onChange(rate)}
+                          className={cn(
+                            'px-3 py-1.5 rounded-md text-sm font-medium border transition-all',
+                            field.value === rate
+                              ? 'bg-indigo-600 border-indigo-500 text-white'
+                              : 'border-zinc-700 text-zinc-400 hover:border-zinc-600',
+                          )}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                />
+              </div>
+            )}
           </div>
 
           {/* Stock */}
@@ -822,8 +951,19 @@ export function ProductFormPage() {
                 <div
                   onClick={() => {
                     setHasVariants((v) => !v)
-                    if (!hasVariants && variants.length === 0) {
-                      setVariants([{ size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])
+                    if (!hasVariants) {
+                      if (variants.length === 0) {
+                        setVariants([emptyVariantRow(watchedTaxRate)])
+                      }
+                      // price is a required field (ProductSchema: z.number().positive()) but the
+                      // field itself is hidden once variants are on — a variant-only product has
+                      // no meaningful top-level retail price, so seed a placeholder non-zero
+                      // value rather than leaving whatever default (often 0) was already in the
+                      // form, which would otherwise fail validation on a field the user can no
+                      // longer see or edit.
+                      if (!watchedPrice || watchedPrice <= 0) {
+                        setValue('price', 1, { shouldValidate: true })
+                      }
                     }
                   }}
                   className={cn(
@@ -837,65 +977,7 @@ export function ProductFormPage() {
             </div>
 
             {hasVariants && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-5 gap-2 text-xs text-zinc-500 px-1">
-                  <span>Size</span>
-                  <span>Color</span>
-                  <span>Price +/-</span>
-                  <span>Stock</span>
-                  <span></span>
-                </div>
-                {variants.map((v, i) => (
-                  <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                    <Input
-                      placeholder="S / M / L"
-                      value={v.size}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, size: e.target.value } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      placeholder="Red / Blue"
-                      value={v.color}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={v.price_delta}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, price_delta: Number(e.target.value) } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={v.stock_qty}
-                      onChange={(e) => setVariants((prev) => prev.map((x, j) => j === i ? { ...x, stock_qty: Number(e.target.value) } : x))}
-                      className="h-8 text-xs"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-red-400 hover:text-red-300"
-                      onClick={() => setVariants((prev) => prev.filter((_, j) => j !== i))}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setVariants((prev) => [...prev, { size: '', color: '', price_delta: 0, stock_qty: 0, barcode_value: '' }])}
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add Variant
-                </Button>
-              </div>
+              <VariantEditor variants={variants} onChange={setVariants} defaultTaxRate={watchedTaxRate} />
             )}
           </div>
 
@@ -983,44 +1065,73 @@ export function ProductFormPage() {
             )}
           </div>
 
-          {/* Barcode */}
-          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-              <QrCode className="h-4 w-4 text-indigo-400" />Barcode
-            </h2>
-            <div className="flex gap-2 max-w-sm">
-              <Input
-                placeholder="e.g. 8901234567890"
-                {...register('barcode_value')}
-                className="font-mono text-sm"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleAutoGenerateBarcode}
-                title="Auto-generate barcode"
-                className="shrink-0"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {barcodeValue && (
-              <div className="inline-flex flex-col items-center gap-2 p-3 rounded-lg bg-secondary border border-border">
-                <svg ref={barcodeRef} className="max-w-[200px]" />
+          {/* Barcode — hidden once variants are on: each variant carries its own barcode below,
+              and the parent's own barcode_value is never scanned/searched against once a
+              product has variants (POS resolves a scanned/typed code against product_variants
+              first for a has_variants product), so leaving this visible/editable here was
+              confusing about which barcode actually matters. */}
+          {!hasVariants && (
+            <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <QrCode className="h-4 w-4 text-indigo-400" />Barcode
+              </h2>
+              <div className="flex gap-2 max-w-sm">
+                <Input
+                  placeholder="e.g. 8901234567890"
+                  {...register('barcode_value')}
+                  className="font-mono text-sm"
+                />
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
-                  onClick={handlePrintLabel}
+                  size="icon"
+                  onClick={() => setScanOpen(true)}
+                  title="Scan barcode"
+                  className="shrink-0"
                 >
-                  <Printer className="h-3.5 w-3.5" />
-                  Print Label (58×40mm)
+                  <Camera className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleAutoGenerateBarcode}
+                  title="Auto-generate barcode"
+                  className="shrink-0"
+                >
+                  <RefreshCw className="h-4 w-4" />
                 </Button>
               </div>
-            )}
-          </div>
+
+              {barcodeValue && (
+                <div className="inline-flex flex-col items-center gap-2 p-3 rounded-lg bg-secondary border border-border">
+                  <svg ref={barcodeRef} className="max-w-[200px]" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrintLabel}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Print Label (58×40mm)
+                  </Button>
+                </div>
+              )}
+
+              <ScanBarcodeDialog
+                open={scanOpen}
+                onOpenChange={setScanOpen}
+                onScan={(code) => setValue('barcode_value', code, { shouldValidate: true })}
+              />
+            </div>
+          )}
+          {hasVariants && (
+            <div className="rounded-lg border border-border bg-card p-5">
+              <p className="text-xs text-zinc-500">
+                Barcode is set per-variant below — the parent product has no barcode of its own once variants are enabled.
+              </p>
+            </div>
+          )}
 
           {/* Image */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-4">
@@ -1078,13 +1189,22 @@ export function ProductFormPage() {
             </div>
 
             <div className="flex items-center justify-center gap-2">
-              <span className="text-lg font-bold text-indigo-300">{formatINR(watchedPrice || 0)}</span>
-              {watchedMrp != null && watchedMrp > 0 && watchedMrp !== watchedPrice && (
-                <span className="text-xs text-zinc-500 line-through">{formatINR(watchedMrp)}</span>
+              {!hasVariants && (
+                <>
+                  <span className="text-lg font-bold text-indigo-300">{formatINR(watchedPrice || 0)}</span>
+                  {watchedMrp != null && watchedMrp > 0 && watchedMrp !== watchedPrice && (
+                    <span className="text-xs text-zinc-500 line-through">{formatINR(watchedMrp)}</span>
+                  )}
+                </>
               )}
+              {hasVariants && <span className="text-sm text-zinc-500">Priced per variant</span>}
             </div>
 
-            {marginPct != null && (
+            {/* price is seeded to a non-zero placeholder (see the variants-enable handler above)
+                purely to satisfy ProductSchema's price > 0 validation once the field is hidden —
+                it is not a real price, so neither it nor a margin computed against it (which can
+                also be stale from before the toggle) should be shown once variants are on. */}
+            {!hasVariants && marginPct != null && (
               <div className="flex justify-between items-center text-xs px-1">
                 <span className="text-zinc-500">Margin</span>
                 <span className={cn('font-semibold', marginPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
