@@ -85,6 +85,20 @@ interface CompletedSale {
   paymentDetail?: string
 }
 
+// Debounces the variant-barcode fallback lookup only — the base name/parent-barcode products
+// query below stays on the live value so the grid still filters instantly as the merchant types.
+// Without this, the extra product_variants round trip fired on every single keystroke (and every
+// sub-75ms character of a USB scanner burst, see useBarcodeScanner.ts) even though only the
+// FINAL, settled search term can ever produce a useful variant match.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
+
 export function POSTab() {
   const { org, user } = useAuth()
   const orgId = org?.id
@@ -245,15 +259,16 @@ export function POSTab() {
     })
   }, [cart, totals.is_interstate, org?.branding?.tax_inclusive])
 
+  const PRODUCTS_SELECT_COLS = 'id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor'
+
   // Fetch products
-  const { data: products } = useQuery({
+  const { data: baseProducts } = useQuery({
     queryKey: ['billing-products', orgId, productSearch],
     enabled: !!orgId,
     queryFn: async () => {
-      const selectCols = 'id, name, price, tax_rate, hsn_code, barcode_value, track_stock, has_variants, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor'
       let query = supabase
         .from('products')
-        .select(selectCols)
+        .select(PRODUCTS_SELECT_COLS)
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -264,37 +279,51 @@ export function POSTab() {
       }
 
       const { data } = await query
-      const results = data ?? []
+      return data ?? []
+    },
+  })
 
-      if (!productSearch) return results
-
-      // A typed/scanned code can match a VARIANT's own barcode rather than the parent product's —
-      // the .or() filter above only ever checks products.barcode_value, so a variant barcode
-      // (e.g. from a printed variant label) matched nothing here and the grid went blank while the
-      // merchant was still typing, even though Enter correctly resolves and adds it (see
-      // resolveBarcodeAndAddToCart below). Union in the parent products of any matching variants so
-      // the grid shows the has_variants product to click into (or so the row is already visible by
-      // the time Enter adds it directly), same UX as a name/parent-barcode match.
+  // A typed/scanned code can match a VARIANT's own barcode rather than the parent product's — the
+  // base query above only ever checks products.barcode_value, so a variant barcode (e.g. from a
+  // printed variant label) matched nothing there and the grid went blank while the merchant was
+  // still typing, even though Enter correctly resolves and adds it (see resolveBarcodeAndAddToCart
+  // below). This fetches the parent products of any matching variants so the grid shows the
+  // has_variants product to click into (or so the row is already visible by the time Enter adds it
+  // directly), same UX as a name/parent-barcode match. Debounced (see useDebouncedValue above) and
+  // kept as its OWN query — not merged into the base query above — so it doesn't add a second
+  // Supabase round trip on every single keystroke (or every sub-75ms character of a USB scanner
+  // burst, see useBarcodeScanner.ts): only the settled search term ever triggers it.
+  const debouncedProductSearch = useDebouncedValue(productSearch, 300)
+  const { data: variantMatchedProducts } = useQuery({
+    queryKey: ['billing-products-variant-match', orgId, debouncedProductSearch],
+    enabled: !!orgId && !!debouncedProductSearch,
+    queryFn: async () => {
       const { data: variantMatches } = await supabase
         .from('product_variants')
         .select('product_id')
         .eq('organization_id', orgId!)
-        .or(`barcode_value.ilike.%${productSearch}%,variant_name.ilike.%${productSearch}%`)
+        .or(`barcode_value.ilike.%${debouncedProductSearch}%,variant_name.ilike.%${debouncedProductSearch}%`)
 
       const matchedParentIds = [...new Set((variantMatches ?? []).map((v) => v.product_id))]
-        .filter((id) => !results.some((p) => p.id === id))
-      if (matchedParentIds.length === 0) return results
+      if (matchedParentIds.length === 0) return []
 
       const { data: extraProducts } = await supabase
         .from('products')
-        .select(selectCols)
+        .select(PRODUCTS_SELECT_COLS)
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .in('id', matchedParentIds)
 
-      return [...results, ...(extraProducts ?? [])]
+      return extraProducts ?? []
     },
   })
+
+  const products = useMemo(() => {
+    if (!baseProducts) return baseProducts
+    if (!variantMatchedProducts || variantMatchedProducts.length === 0) return baseProducts
+    const extras = variantMatchedProducts.filter((p) => !baseProducts.some((bp) => bp.id === p.id))
+    return extras.length === 0 ? baseProducts : [...baseProducts, ...extras]
+  }, [baseProducts, variantMatchedProducts])
 
   // Read-only variant picker: opened when a product with has_variants is clicked. Shows only
   // name/sale price/real per-variant stock — never purchase price or tax-rate editing, per the

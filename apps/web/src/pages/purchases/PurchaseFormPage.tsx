@@ -514,7 +514,14 @@ export function PurchaseFormPage() {
     // just not something the products-table query below can ever catch. Checked synchronously
     // (no debounce needed — it's an in-memory array, not a network round-trip) and takes priority
     // over the DB check so the user sees the more actionable "already used by row X" message.
-    const siblingIndex = rows.findIndex((r, i) => i !== editingIndex && r.is_new_product && r[field] === value)
+    // A has_variants sibling's own barcode_value is excluded from this comparison — its Barcode
+    // field is hidden once Track Variants is on (every real barcode lives on its variants
+    // instead), and the save mutation always sends barcode_value: undefined for it, so whatever
+    // stale/auto-generated value still sits in that row's state on-screen never actually reaches
+    // the database. Comparing against it would falsely block an unrelated row's real barcode.
+    const siblingIndex = rows.findIndex((r, i) =>
+      i !== editingIndex && r.is_new_product && r[field] === value && !(field === 'barcode_value' && r.has_variants),
+    )
     if (siblingIndex !== -1) {
       const label = field === 'sku' ? 'code' : 'barcode'
       setError(`This ${label} is already used by "${rows[siblingIndex].product_name}" in this purchase`)
