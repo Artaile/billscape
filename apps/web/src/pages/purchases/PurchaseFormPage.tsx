@@ -995,12 +995,15 @@ export function PurchaseFormPage() {
                       <Input
                         placeholder="Auto or type"
                         value={entry.extra_sku ?? ''}
+                        disabled={!entry.is_new_product}
                         onChange={(e) => setEntry((p) => ({ ...p, extra_sku: e.target.value }))}
                         className="h-9 text-xs font-mono"
                       />
-                      <button type="button" title="Generate" onClick={() => setEntry((p) => ({ ...p, extra_sku: generateSku() }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                        <RefreshCw className="h-3 w-3" />
-                      </button>
+                      {entry.is_new_product && (
+                        <button type="button" title="Generate" onClick={() => setEntry((p) => ({ ...p, extra_sku: generateSku() }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                          <RefreshCw className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   </div>
                   )}
