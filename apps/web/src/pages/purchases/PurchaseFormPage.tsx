@@ -419,12 +419,26 @@ export function PurchaseFormPage() {
   }, [])
 
   const totals: InvoiceTotals = useMemo(() => {
-    const cartLike = rows
-      .filter((r) => rowBaseQty(r) > 0)
-      .map((r, i) => ({
+    // Variant-carrying rows price/qty live per-variant (r.variants), not on the row's own
+    // parent-level unit_cost/qty fields (those are hidden from the entry form and left at their
+    // stale defaults once Track Variants is on) — flatten into one synthetic cart line per
+    // variant so this on-screen preview total matches the Items table's per-variant rows and the
+    // real totals `buildItemRows`/`computeGST` compute at save time (packages/api/src/purchases.ts).
+    const cartLike = rows.flatMap((r, i) => {
+      if (r.has_variants && r.variants.length > 0) {
+        return r.variants
+          .filter((v) => v.variant_name.trim() && parseNum(v.qty) > 0)
+          .map((v, vi) => ({
+            product_id: `${i}-${vi}`, product_name: `${r.product_name} — ${v.variant_name}`,
+            tax_rate: v.tax_rate, unit_price: parseNum(v.purchase_price), qty: parseNum(v.qty), discount_pct: 0,
+          }))
+      }
+      if (rowBaseQty(r) <= 0) return []
+      return [{
         product_id: String(i), product_name: r.product_name, tax_rate: r.tax_rate,
         unit_price: parseNum(r.unit_cost), qty: rowBaseQty(r), discount_pct: 0,
-      }))
+      }]
+    })
     const base = cartLike.length
       ? computeGST(gstContext, cartLike)
       : emptyTotals(interstate)
@@ -515,7 +529,9 @@ export function PurchaseFormPage() {
   }
 
   function canAddEntry(): boolean {
-    if (!entry.product_name.trim() || parseNum(entry.qty) <= 0) return false
+    if (!entry.product_name.trim()) return false
+    if (!entry.has_variants && parseNum(entry.qty) <= 0) return false
+    if (entry.has_variants && !entry.variants.some((v) => v.variant_name.trim() && parseNum(v.qty) > 0)) return false
     if (entry.is_new_product && (!entry.sku.trim() || !entry.barcode_value.trim())) return false
     if (entry.is_new_product && !entry.unit_id) return false
     if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) return false
@@ -533,6 +549,8 @@ export function PurchaseFormPage() {
       let msg = entry.is_new_product ? 'Product code and barcode are required for a new product' : 'Enter product name and qty'
       if (entry.is_new_product && !entry.unit_id) {
         msg = 'Select a unit for the new product'
+      } else if (entry.has_variants && !entry.variants.some((v) => v.variant_name.trim() && parseNum(v.qty) > 0)) {
+        msg = 'At least one variant needs a name and a quantity greater than 0'
       } else if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) {
         msg = 'Each variant needs a name before it can be added — remove empty rows or fill them in'
       } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) {
@@ -827,7 +845,7 @@ export function PurchaseFormPage() {
                 </div>
 
                 {/* Row 2: Code, Barcode, GST%, Rate, Qty */}
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <div className={cn('grid grid-cols-2 gap-2', entry.has_variants ? 'sm:grid-cols-3' : 'sm:grid-cols-5')}>
                   <div className="space-y-1">
                     <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
                     <div className="flex gap-1">
@@ -886,26 +904,30 @@ export function PurchaseFormPage() {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <Label className="text-xs">Purchase Rate</Label>
-                    <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                    {taxInclusive && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
-                      const { base, tax } = splitInclusiveGST(parseNum(entry.unit_cost), entry.tax_rate)
-                      return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
-                    })()}
-                  </div>
+                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Purchase Rate</Label>
+                      <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
+                      {taxInclusive && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitInclusiveGST(parseNum(entry.unit_cost), entry.tax_rate)
+                        return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                      })()}
+                    </div>
+                  )}
 
-                  <div className="space-y-1">
-                    <Label className="text-xs">Qty *</Label>
-                    <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
-                      disabled={entry.has_batches}
-                      onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))}
-                      className={cn('h-9 text-sm text-center', entry.has_batches && 'opacity-60 cursor-not-allowed')} />
-                    {entry.has_batches && (
-                      <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
-                    )}
-                  </div>
+                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Qty *</Label>
+                      <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
+                        disabled={entry.has_batches}
+                        onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))}
+                        className={cn('h-9 text-sm text-center', entry.has_batches && 'opacity-60 cursor-not-allowed')} />
+                      {entry.has_batches && (
+                        <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {hasSecondaryUnit({ unitId: entry.unit_id, secondaryUnitId: entry.secondary_unit_id, conversionFactor: entry.conversion_factor }) && (
@@ -939,22 +961,28 @@ export function PurchaseFormPage() {
                 <Separator />
 
                 {/* Row 3: MRP, Retail, SP, Add button */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
-                  <div className="space-y-1">
-                    <Label className="text-xs">MRP</Label>
-                    <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Retail Price</Label>
-                    <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">SP (Special)</Label>
-                    <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
-                  </div>
+                <div className={cn('grid grid-cols-2 gap-2 items-end', entry.has_variants ? 'sm:grid-cols-1' : 'sm:grid-cols-4')}>
+                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">MRP</Label>
+                      <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
+                    </div>
+                  )}
+                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Retail Price</Label>
+                      <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
+                    </div>
+                  )}
+                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">SP (Special)</Label>
+                      <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
+                    </div>
+                  )}
                   <Button type="button" size="sm" className="h-9 w-full" onClick={addEntryToGrid}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
                     {editingIndex !== null ? (
@@ -1155,39 +1183,73 @@ export function PurchaseFormPage() {
                   <TableBody>
                     {rows.length === 0 ? (
                       <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
-                    ) : rows.map((r, i) => (
-                      <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
-                        <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.sku}</TableCell>
-                        <TableCell className="text-sm text-zinc-200 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <span>{r.product_name}</span>
-                            <span className={cn('shrink-0 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
-                              {r.is_new_product ? 'New' : 'Existing'}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.unit_cost))}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.tax_rate}%</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">
-                          {parseNum(r.qty)}{unitOf(r.entry_unit_id) ? ` ${unitOf(r.entry_unit_id)?.symbol}` : ''}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.barcode_value}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.price))}</TableCell>
-                        <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
-                        <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(r.unit_cost) * rowBaseQty(r)))}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button type="button" onClick={() => removeRow(i)} className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    ) : rows.flatMap((r, i) => {
+                      const editIcon = (
+                        <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )
+                      const removeIcon = (
+                        <button type="button" onClick={() => removeRow(i)} className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )
+
+                      if (r.has_variants && r.variants.length > 0) {
+                        const validVariants = r.variants.filter((v) => v.variant_name.trim())
+                        return validVariants.map((v, vi) => (
+                          <TableRow key={`${i}-${vi}`} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
+                            <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.sku}{v.sku ? ` / ${v.sku}` : ''}</TableCell>
+                            <TableCell className="text-sm text-zinc-200 whitespace-nowrap">
+                              <div className="flex items-center gap-2">
+                                <span>{r.product_name} — {v.variant_name}</span>
+                                <span className={cn('shrink-0 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
+                                  {r.is_new_product ? 'New' : 'Existing'}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(v.purchase_price))}</TableCell>
+                            <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{v.tax_rate}%</TableCell>
+                            <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{parseNum(v.qty)}</TableCell>
+                            <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{v.barcode_value}</TableCell>
+                            <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{v.mrp ? formatINR(parseNum(v.mrp)) : '—'}</TableCell>
+                            <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{v.sale_price ? formatINR(parseNum(v.sale_price)) : '—'}</TableCell>
+                            <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{v.special_price ? formatINR(parseNum(v.special_price)) : '—'}</TableCell>
+                            <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(v.purchase_price) * parseNum(v.qty)))}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">{editIcon}{removeIcon}</div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      }
+
+                      return [(
+                        <TableRow key={i} className={cn('hover:bg-zinc-800/40 transition-colors', editingIndex === i ? 'bg-indigo-950/30' : i % 2 === 1 && 'bg-zinc-900/30')}>
+                          <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.sku}</TableCell>
+                          <TableCell className="text-sm text-zinc-200 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <span>{r.product_name}</span>
+                              <span className={cn('shrink-0 text-[10px] px-1.5 py-0.5 rounded-full', r.is_new_product ? 'bg-indigo-600/20 text-indigo-300' : 'bg-blue-600/20 text-blue-300')}>
+                                {r.is_new_product ? 'New' : 'Existing'}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.unit_cost))}</TableCell>
+                          <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.tax_rate}%</TableCell>
+                          <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">
+                            {parseNum(r.qty)}{unitOf(r.entry_unit_id) ? ` ${unitOf(r.entry_unit_id)?.symbol}` : ''}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.barcode_value}</TableCell>
+                          <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
+                          <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.price))}</TableCell>
+                          <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
+                          <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(r.unit_cost) * rowBaseQty(r)))}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">{editIcon}{removeIcon}</div>
+                          </TableCell>
+                        </TableRow>
+                      )]
+                    })}
                   </TableBody>
                 </Table>
                 </div>
