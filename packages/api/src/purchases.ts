@@ -13,6 +13,9 @@ export interface PurchaseLineInput {
   is_new_product: boolean
   product_name: string
   sku?: string
+  // A second, genuinely optional identifier distinct from `sku` — maps to products.extra_sku
+  // (migration 032_products_extra_sku.sql). Only meaningful for a non-variant line.
+  extra_sku?: string
   barcode_value?: string
   tax_rate: GSTRate
   qty: number
@@ -92,6 +95,7 @@ async function createProductForLine(
     organization_id: orgId,
     name: line.product_name,
     sku: line.sku || null,
+    extra_sku: line.extra_sku || null,
     tax_rate: line.tax_rate,
     price: line.price,
     cost_price: line.unit_cost,
@@ -542,7 +546,7 @@ export async function getPurchaseWithItems(client: TypedSupabaseClient, orgId: s
 
   const { data: items, error: itemsError } = await client
     .from('purchase_items')
-    .select('*, products(sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor)')
+    .select('*, products(sku, extra_sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor)')
     .eq('purchase_id', purchaseId)
     .eq('organization_id', orgId)
   if (itemsError) return { data: null, error: itemsError }

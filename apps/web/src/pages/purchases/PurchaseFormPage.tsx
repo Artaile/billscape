@@ -6,10 +6,10 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
-  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitInclusiveGST,
+  generateBarcode, generateSku, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitInclusiveGST,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
-import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, type PurchaseLineInput } from '@billscape/api'
+import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, recordPurchasePayment, createCategory, type PurchaseLineInput } from '@billscape/api'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 import { useNavigationGuard, useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
@@ -21,13 +21,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Separator } from '@/components/ui/separator'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
 const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 
 interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
-interface ExistingProduct { id: string; name: string; sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null }
+interface ExistingProduct { id: string; name: string; sku: string | null; extra_sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null }
 interface UnitOption { id: string; name: string; symbol: string; allow_decimal: boolean }
 
 interface BatchRow { batch_no: string; expiry_date: string; qty: string }
@@ -37,6 +38,11 @@ export interface PurchaseRow {
   is_new_product: boolean
   product_name: string
   sku: string
+  // A second, genuinely optional identifier distinct from `sku` (the auto-generated PC0001-style
+  // Product Code) — mirrors product_variants' own separate barcode_value + sku columns. Maps to
+  // products.extra_sku (migration 032_products_extra_sku.sql). Only shown/editable for a
+  // non-variant row — a has_variants row has no single extra_sku of its own.
+  extra_sku: string
   barcode_value: string
   tax_rate: GSTRate
   qty: string
@@ -101,7 +107,7 @@ function hsnCodeError(value: string): string | undefined {
 function emptyRow(): PurchaseRow {
   return {
     product_id: null, is_new_product: false, product_name: '',
-    sku: '', barcode_value: '', tax_rate: 18, qty: '1', unit_cost: '0',
+    sku: '', extra_sku: '', barcode_value: '', tax_rate: 18, qty: '1', unit_cost: '0',
     mrp: '', price: '0', special_price: '',
     update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
     category_id: null, hsn_code: '', has_variants: false, variants: [],
@@ -131,6 +137,8 @@ export function PurchaseFormPage() {
   const [purchaseType, setPurchaseType] = useState<'credit' | 'cash'>('credit')
   const [notes, setNotes] = useState('')
   const [showAddSupplier, setShowAddSupplier] = useState(false)
+  const [showAddCategory, setShowAddCategory] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState('')
 
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
   const [scanOpen, setScanOpen] = useState(false)
@@ -153,8 +161,13 @@ export function PurchaseFormPage() {
   const [billDiscountType, setBillDiscountType] = useState<'flat' | 'percent'>('flat')
   const [billDiscountValue, setBillDiscountValue] = useState('0')
   const [roundOffEnabled, setRoundOffEnabled] = useState(false)
-  const [justSavedNewProducts, setJustSavedNewProducts] = useState<PurchaseRow[]>([])
+  // Paid amount captured at save time — recorded as a real purchase_payments row (same table and
+  // shape as PurchasesPage.tsx's "Record Outward Payment" dialog) right after the purchase itself
+  // is created, since recordPurchasePayment needs a real purchase_id that doesn't exist until then.
+  const [paidNow, setPaidNow] = useState(false)
+  const [paidAmount, setPaidAmount] = useState('')
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [savedPurchase, setSavedPurchase] = useState<{ purchaseNo: string; newProducts: PurchaseRow[] } | null>(null)
 
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const productNameRef = useRef<HTMLInputElement | null>(null)
@@ -203,12 +216,13 @@ export function PurchaseFormPage() {
       setNotes(purchase.notes ?? '')
       setRows(
         items.map((it: any) => {
-          const product = (it as unknown as { products?: { sku?: string; barcode_value?: string; price?: number; mrp?: number; special_price?: number; unit_id?: string; secondary_unit_id?: string | null; conversion_factor?: number | null } }).products
+          const product = (it as unknown as { products?: { sku?: string; extra_sku?: string | null; barcode_value?: string; price?: number; mrp?: number; special_price?: number; unit_id?: string; secondary_unit_id?: string | null; conversion_factor?: number | null } }).products
           return {
             product_id: it.product_id,
             is_new_product: false,
             product_name: it.product_name,
             sku: product?.sku ?? '',
+            extra_sku: product?.extra_sku ?? '',
             barcode_value: product?.barcode_value ?? '',
             tax_rate: (it.tax_rate ?? 0) as GSTRate,
             // purchase_items.qty is always stored in the product's BASE unit — editing always
@@ -251,13 +265,33 @@ export function PurchaseFormPage() {
     },
   })
 
+  const createCategoryMutation = useMutation({
+    mutationFn: async () => {
+      if (!orgId) throw new Error('Not logged in')
+      const { data, error } = await createCategory(supabase, { organization_id: orgId, name: newCategoryName.trim() })
+      if (error) throw error
+      return data
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['categories', orgId] })
+      // Immediately select the newly created category on the row being entered — matches
+      // SupplierFormDialog's own onSaved auto-select pattern, so the merchant doesn't have to
+      // reopen the dropdown and find their just-typed name in the list.
+      setEntry((p) => ({ ...p, category_id: data!.id }))
+      toast.success('Category created')
+      setShowAddCategory(false)
+      setNewCategoryName('')
+    },
+    onError: (err: Error) => toast.error('Failed to create category', err.message),
+  })
+
   const { data: products } = useQuery({
     queryKey: ['products-all', orgId],
     enabled: !!orgId,
     queryFn: async () => {
       const { data } = await supabase
         .from('products')
-        .select('id, name, sku, barcode_value, tax_rate, price, cost_price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor')
+        .select('id, name, sku, extra_sku, barcode_value, tax_rate, price, cost_price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -295,7 +329,7 @@ export function PurchaseFormPage() {
       if (match) {
         return {
           product_id: match.id, is_new_product: false, product_name: match.name,
-          sku: match.sku ?? '', barcode_value: match.barcode_value ?? '',
+          sku: match.sku ?? '', extra_sku: match.extra_sku ?? '', barcode_value: match.barcode_value ?? '',
           tax_rate: match.tax_rate, qty: imp.qty, unit_cost: imp.unit_cost || String(match.cost_price),
           mrp: match.mrp != null ? String(match.mrp) : '', price: String(match.price),
           special_price: match.special_price != null ? String(match.special_price) : '',
@@ -311,7 +345,7 @@ export function PurchaseFormPage() {
       const defaultUnitId = units?.find((u) => u.name === 'Piece')?.id ?? units?.[0]?.id ?? ''
       return {
         product_id: null, is_new_product: true, product_name: imp.product_name.trim(),
-        sku, barcode_value: generateBarcode(),
+        sku, extra_sku: '', barcode_value: generateBarcode(),
         tax_rate: 18, qty: imp.qty, unit_cost: imp.unit_cost,
         mrp: '', price: imp.unit_cost, special_price: '',
         update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
@@ -450,6 +484,9 @@ export function PurchaseFormPage() {
 
   const roundOff = roundOffEnabled ? toMoney(Math.round(totals.net_payable) - totals.net_payable) : 0
   const grandTotal = toMoney(totals.net_payable + roundOff)
+  // Clamped to [0, grandTotal] — an over-typed Paid amount can never show a negative balance due,
+  // matching applyOrderDiscount's own clamping convention elsewhere in this codebase.
+  const balanceDue = toMoney(Math.max(0, grandTotal - (paidNow ? Math.min(parseNum(paidAmount), grandTotal) : 0)))
 
   // ── Entry row: product search / new-product detection ──────────────────
 
@@ -463,7 +500,7 @@ export function PurchaseFormPage() {
   function selectExistingProduct(p: ExistingProduct) {
     setEntry({
       product_id: p.id, is_new_product: false, product_name: p.name,
-      sku: p.sku ?? '', barcode_value: p.barcode_value ?? '',
+      sku: p.sku ?? '', extra_sku: p.extra_sku ?? '', barcode_value: p.barcode_value ?? '',
       tax_rate: p.tax_rate, qty: '1', unit_cost: String(p.cost_price),
       mrp: p.mrp != null ? String(p.mrp) : '', price: String(p.price),
       special_price: p.special_price != null ? String(p.special_price) : '',
@@ -617,6 +654,9 @@ export function PurchaseFormPage() {
           is_new_product: r.is_new_product,
           product_name: r.product_name.trim(),
           sku: r.sku.trim() || undefined,
+          // extra_sku is only ever meaningful for a non-variant new product — hidden from the
+          // entry UI once Track Variants is on, same reasoning as barcode_value below.
+          extra_sku: r.has_variants ? undefined : (r.extra_sku.trim() || undefined),
           // A has_variants row's parent barcode_value field is hidden from the entry UI (see Row 2
           // above) but its state can still hold whatever generateBarcode() auto-filled the instant
           // a new product name was typed, before Track Variants was ever toggled on — the merchant
@@ -696,6 +736,27 @@ export function PurchaseFormPage() {
       })
 
       if (result.error) throw new Error(result.error.message)
+
+      // Record the paid-at-save amount as a real purchase_payments row (same table/shape as
+      // PurchasesPage.tsx's own "Record Outward Payment" dialog) — this can only happen AFTER
+      // the purchase row exists, since recordPurchasePayment needs a real purchase_id. Best-effort:
+      // a payment-recording failure must not roll back or fail the purchase save itself (the bill
+      // is already committed) — surface it as a separate warning toast instead, matching the
+      // non-blocking pattern already used for loyalty bookkeeping in POSTab's createSale flow.
+      const amountToPay = paidNow ? Math.min(parseNum(paidAmount), grandTotal) : 0
+      if (amountToPay > 0) {
+        const { error: payError } = await recordPurchasePayment(supabase, {
+          organization_id: orgId,
+          purchase_id: result.data!.purchase.id,
+          amount: amountToPay,
+          mode: 'cash',
+          created_by: user.id,
+        })
+        if (payError) {
+          toast.error('Purchase saved, but payment was not recorded', payError.message)
+        }
+      }
+
       return result.data!
     },
     onSuccess: (data) => {
@@ -703,21 +764,40 @@ export function PurchaseFormPage() {
       queryClient.invalidateQueries({ queryKey: ['products', orgId] })
       queryClient.invalidateQueries({ queryKey: ['products-all', orgId] })
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
-      toast.success(`Purchase saved — ${data.purchase.purchase_no}`)
-      const newProductRows = rows.filter((r) => r.is_new_product)
-      if (newProductRows.length > 0) {
-        setJustSavedNewProducts(newProductRows)
-      } else {
-        navigate('/purchases')
-      }
+      queryClient.invalidateQueries({ queryKey: ['purchase_payment_summaries', orgId] })
+      setSavedPurchase({ purchaseNo: data.purchase.purchase_no, newProducts: rows.filter((r) => r.is_new_product) })
     },
     onError: (err: Error) => toast.error('Failed to save purchase', err.message),
   })
 
   function handlePrintNewProductLabels() {
-    for (const r of justSavedNewProducts) {
+    if (!savedPurchase) return
+    for (const r of savedPurchase.newProducts) {
       printBarcodeLabel(r.product_name, r.barcode_value, parseNum(r.price))
     }
+  }
+
+  // Clears every field back to a brand-new-purchase state, without leaving the page — used when
+  // the post-save popup's "New Purchase" action is chosen, so the merchant can start the next
+  // bill immediately. Deliberately does NOT touch supplier selection dropdown data (suppliers
+  // query itself), only the form's own entered values.
+  function resetFormForNextPurchase() {
+    setSupplierId('')
+    setInvoiceNo('')
+    setPurchaseDate(new Date().toISOString().slice(0, 10))
+    setPurchaseType('credit')
+    setNotes('')
+    setRows([])
+    setEntry(emptyRow())
+    setEntrySearch('')
+    setEditingIndex(null)
+    setBillDiscountType('flat')
+    setBillDiscountValue('0')
+    setRoundOffEnabled(false)
+    setPaidNow(false)
+    setPaidAmount('')
+    setSavedPurchase(null)
+    queryClient.invalidateQueries({ queryKey: ['purchase-no-preview', orgId] })
   }
 
   const filtered = getFiltered(entrySearch)
@@ -826,43 +906,70 @@ export function PurchaseFormPage() {
                     </button>
                   )}
                 </div>
-                {/* Row 1: Product name (full width) */}
-                <div className="space-y-1 relative" ref={dropdownRef}>
-                  <Label className="text-xs">Product *</Label>
-                  <Input
-                    ref={productNameRef}
-                    placeholder="Search or type new product"
-                    value={entrySearch}
-                    onChange={(e) => handleEntryNameChange(e.target.value)}
-                    onFocus={() => setEntryDropdownOpen(true)}
-                    className="h-9 text-sm"
-                  />
-                  {entry.product_name && (
-                    <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
-                      entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
-                      {entry.is_new_product ? 'New' : 'Existing'}
-                    </span>
-                  )}
-                  {entryDropdownOpen && filtered.length > 0 && (
-                    <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                      {filtered.map((p) => (
-                        <button key={p.id} type="button"
-                          className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                          onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
-                          <span>{p.name}</span>
-                          <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
-                        </button>
-                      ))}
+                {/* Row 1: Product name — shares this row with Product Code once Track Variants is
+                    on (VariantEditor below carries every real barcode/SKU/GST/price per-variant,
+                    so the parent's own Product Code is the only identifying field left up here;
+                    keeping it beside the name avoids an otherwise near-empty Row 2 below it). */}
+                <div className={cn('grid grid-cols-1 gap-2', entry.has_variants && 'sm:grid-cols-[1fr_200px]')}>
+                  <div className="space-y-1 relative" ref={dropdownRef}>
+                    <Label className="text-xs">Product *</Label>
+                    <Input
+                      ref={productNameRef}
+                      placeholder="Search or type new product"
+                      value={entrySearch}
+                      onChange={(e) => handleEntryNameChange(e.target.value)}
+                      onFocus={() => setEntryDropdownOpen(true)}
+                      className="h-9 text-sm"
+                    />
+                    {entry.product_name && (
+                      <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
+                        entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
+                        {entry.is_new_product ? 'New' : 'Existing'}
+                      </span>
+                    )}
+                    {entryDropdownOpen && filtered.length > 0 && (
+                      <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
+                        {filtered.map((p) => (
+                          <button key={p.id} type="button"
+                            className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
+                            onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                            <span>{p.name}</span>
+                            <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
+                      <div className="flex gap-1">
+                        <Input
+                          value={entry.sku}
+                          disabled={!entry.is_new_product}
+                          onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
+                          className="h-9 text-xs font-mono"
+                        />
+                        {entry.is_new_product && (
+                          <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                            <RefreshCw className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Row 2: Code, Barcode, GST%, Rate, Qty — Barcode/GST%/Rate/Qty are all
+                {/* Row 2: Code, SKU, Barcode, GST%, Rate, Qty — Barcode/GST%/Rate/Qty are all
                     per-variant once Track Variants is on (VariantEditor below has its own
                     Barcode field + GST select per row), so showing a parent-level value here
                     would be dead/misleading — the parent product itself has no single barcode
-                    or tax rate anymore, same reasoning already applied to Rate/Qty. */}
-                <div className={cn('grid grid-cols-2 gap-2', entry.has_variants ? 'sm:grid-cols-1' : 'sm:grid-cols-5')}>
+                    or tax rate anymore, same reasoning already applied to Rate/Qty. Product Code
+                    itself moves up to Row 1 (beside the name) once Track Variants is on, so it's
+                    not shown a second time here. */}
+                <div className={cn('grid grid-cols-2 gap-2', entry.has_variants ? 'sm:grid-cols-1' : 'sm:grid-cols-6')}>
+                  {!entry.has_variants && (
                   <div className="space-y-1">
                     <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
                     <div className="flex gap-1">
@@ -879,6 +986,24 @@ export function PurchaseFormPage() {
                       )}
                     </div>
                   </div>
+                  )}
+
+                  {!entry.has_variants && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">SKU <span className="text-zinc-600 normal-case">(optional)</span></Label>
+                    <div className="flex gap-1">
+                      <Input
+                        placeholder="Auto or type"
+                        value={entry.extra_sku ?? ''}
+                        onChange={(e) => setEntry((p) => ({ ...p, extra_sku: e.target.value }))}
+                        className="h-9 text-xs font-mono"
+                      />
+                      <button type="button" title="Generate" onClick={() => setEntry((p) => ({ ...p, extra_sku: generateSku() }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                        <RefreshCw className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  )}
 
                   {!entry.has_variants && (
                   <div className="space-y-1">
@@ -1040,14 +1165,20 @@ export function PurchaseFormPage() {
                         <div className="grid grid-cols-3 gap-2">
                           <div className="space-y-1">
                             <Label className="text-xs">Category</Label>
-                            <select
-                              value={entry.category_id ?? ''}
-                              onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
-                              className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                              <option value="">— No category —</option>
-                              {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
+                            <div className="flex gap-1">
+                              <select
+                                value={entry.category_id ?? ''}
+                                onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
+                                className="h-9 flex-1 min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              >
+                                <option value="">— No category —</option>
+                                {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                              <button type="button" title="Add new category" onClick={() => setShowAddCategory(true)}
+                                className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
                           <div className="space-y-1">
                             <Label className="text-xs">Unit *</Label>
@@ -1276,16 +1407,19 @@ export function PurchaseFormPage() {
                 </div>
               </div>
 
-            {/* Bill Summary: sticky horizontal strip pinned to viewport bottom */}
+            {/* Bill Summary: sticky card pinned to viewport bottom — figures row on top, then a
+                payment + action row below it. Paid/Balance Due is a genuine amount-paid-at-save
+                capture backed by a real purchase_payments row (see saveMutation), not just a
+                display — this is deliberately separate from PurchasesPage.tsx's own "Record
+                Payment" dialog (which handles LATER partial payments against an already-saved
+                bill); this one is for the common case of paying something at the moment of entry. */}
             <div className="sticky bottom-0 -mx-4 lg:-mx-6 px-4 lg:px-6 py-3 bg-zinc-950/95 backdrop-blur border-t border-zinc-800">
-              <div className="flex items-center justify-between rounded-lg border border-border bg-card px-5 py-4 flex-wrap gap-y-3">
-                <div className="flex items-center flex-wrap gap-x-5 gap-y-2">
-                  <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-                    <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
-                  </h2>
+              <div className="rounded-lg border border-border bg-card px-5 py-4 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                  <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
+                </div>
 
-                  <div className="w-px h-8 bg-zinc-800" />
-
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pb-3 border-b border-zinc-800">
                   <div className="text-sm">
                     <span className="text-zinc-500 mr-1.5">Taxable Amount</span>
                     <span className="text-zinc-200 font-medium">{formatINR(totals.taxable_amount)}</span>
@@ -1336,34 +1470,44 @@ export function PurchaseFormPage() {
                     <input type="checkbox" checked={roundOffEnabled} onChange={(e) => setRoundOffEnabled(e.target.checked)} />
                     Round Off
                   </label>
-
-                  <div className="w-px h-8 bg-zinc-800" />
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-zinc-400">Total Bill Amount</span>
-                    <span className="text-xl font-bold text-white">{formatINR(grandTotal)}</span>
-                  </div>
                 </div>
 
-                {justSavedNewProducts.length > 0 ? (
-                  <div className="flex items-center gap-3">
-                    <p className="text-sm text-zinc-200">
-                      Purchase saved. {justSavedNewProducts.length} new product{justSavedNewProducts.length > 1 ? 's' : ''} created —{' '}
-                      print barcode labels now?
-                    </p>
-                    <Button type="button" variant="outline" size="sm" onClick={handlePrintNewProductLabels}>
-                      <Printer className="h-3.5 w-3.5 mr-1" />Print Labels
-                    </Button>
-                    <Button type="button" size="sm" onClick={() => navigate('/purchases')}>Continue</Button>
+                <div className="flex items-center justify-between flex-wrap gap-y-3">
+                  <div className="flex items-center flex-wrap gap-x-5 gap-y-2">
+                    <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer whitespace-nowrap">
+                      <input type="checkbox" checked={paidNow} onChange={(e) => { setPaidNow(e.target.checked); if (e.target.checked && !paidAmount) setPaidAmount(String(grandTotal)) }} disabled={isEdit} />
+                      Paid
+                    </label>
+                    {paidNow && (
+                      <Input type="text" inputMode="decimal" value={paidAmount} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setPaidAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                        placeholder="0" className="h-8 w-28 text-sm" />
+                    )}
+
+                    <div className="w-px h-8 bg-zinc-800" />
+
+                    <div className="text-sm">
+                      <span className="text-zinc-500 mr-1.5">Balance Due</span>
+                      <span className={cn('font-semibold', balanceDue > 0 ? 'text-amber-400' : 'text-emerald-400')}>
+                        {formatINR(balanceDue)}
+                      </span>
+                    </div>
+
+                    <div className="w-px h-8 bg-zinc-800" />
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-zinc-400">Total Bill Amount</span>
+                      <span className="text-xl font-bold text-white">{formatINR(grandTotal)}</span>
+                    </div>
                   </div>
-                ) : (
+
                   <div className="flex gap-3">
                     <Button type="button" variant="outline" onClick={() => requestNavigation(() => navigate('/purchases'))}>Cancel</Button>
                     <Button type="button" disabled={saveMutation.isPending || rows.length === 0} onClick={() => saveMutation.mutate()}>
                       {saveMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Saving...</> : 'Save Purchase'}
                     </Button>
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </div>
@@ -1379,6 +1523,90 @@ export function PurchaseFormPage() {
           setSupplierId(supplier.id)
         }}
       />
+
+      {/* Dialog focus rules per CLAUDE.md: onOpenAutoFocus/onFocusOutside must preventDefault to
+          stop Radix's FocusScope from stealing focus back to the dialog container on every
+          re-render (each keystroke) — see index.css [role="dialog"]:focus override too. */}
+      <Dialog open={showAddCategory} onOpenChange={(open) => { setShowAddCategory(open); if (!open) setNewCategoryName('') }}>
+        <DialogContent
+          className="max-w-sm outline-none ring-0 focus:ring-0"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onFocusOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>Add Category</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Category Name</Label>
+            <Input
+              autoFocus
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && newCategoryName.trim()) { e.preventDefault(); createCategoryMutation.mutate() } }}
+              placeholder="e.g. Electronics"
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowAddCategory(false)}>Cancel</Button>
+            <Button type="button" disabled={!newCategoryName.trim() || createCategoryMutation.isPending} onClick={() => createCategoryMutation.mutate()}>
+              {createCategoryMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" />Creating...</> : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Post-save confirmation — reference number, new-product list, and print/next-purchase
+          actions. Not dismissible by clicking outside/Escape (onInteractOutside/onEscapeKeyDown
+          preventDefault) since the purchase is already committed and this popup is the only place
+          the merchant sees the reference number and gets to print labels; an accidental dismiss
+          would lose that chance. "New Purchase" resets the page in place rather than navigating,
+          so the next bill can start immediately. */}
+      <Dialog open={!!savedPurchase} onOpenChange={() => { /* only closable via the buttons below */ }}>
+        <DialogContent
+          className="max-w-md outline-none ring-0 focus:ring-0"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onFocusOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-400">
+              <Receipt className="h-4 w-4" />Purchase Saved
+            </DialogTitle>
+          </DialogHeader>
+          {savedPurchase && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 px-3 py-2">
+                <p className="text-xs text-zinc-500">Reference Number</p>
+                <p className="text-sm font-mono font-semibold text-emerald-300">{savedPurchase.purchaseNo}</p>
+              </div>
+
+              {savedPurchase.newProducts.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-zinc-500">
+                    {savedPurchase.newProducts.length} new product{savedPurchase.newProducts.length > 1 ? 's' : ''} created
+                  </p>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 divide-y divide-zinc-800">
+                    {savedPurchase.newProducts.map((r, i) => (
+                      <div key={i} className="flex items-center justify-between px-3 py-1.5 text-sm">
+                        <span className="text-zinc-200 truncate">{r.product_name}</span>
+                        <span className="font-mono text-xs text-zinc-500 shrink-0 ml-2">{r.sku}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="w-full" onClick={handlePrintNewProductLabels}>
+                    <Printer className="h-3.5 w-3.5 mr-1" />Print Barcode Labels
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => navigate('/purchases')}>Go to Purchases</Button>
+            <Button type="button" onClick={resetFormForNextPurchase}>New Purchase</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

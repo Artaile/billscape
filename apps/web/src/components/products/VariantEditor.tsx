@@ -1,6 +1,5 @@
-import { useRef, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Plus, RefreshCw, Trash2, Copy, Camera } from 'lucide-react'
-import JsBarcode from 'jsbarcode'
 import { splitInclusiveGST, type GSTRate } from '@billscape/core'
 import { generateBarcode, generateSku } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -42,15 +41,7 @@ function parseNum(s: string): number {
 }
 
 function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; onChange: (v: string) => void; onGenerate: () => void }) {
-  const ref = useRef<SVGSVGElement>(null)
   const [scanOpen, setScanOpen] = useState(false)
-  useEffect(() => {
-    if (value && ref.current) {
-      try {
-        JsBarcode(ref.current, value, { format: 'CODE128', width: 1.2, height: 26, displayValue: true, fontSize: 8, background: 'transparent', lineColor: '#e4e4e7', fontOptions: 'bold' })
-      } catch { /* invalid value, leave blank */ }
-    }
-  }, [value])
   return (
     <div className="space-y-1">
       <div className="flex gap-1">
@@ -62,7 +53,6 @@ function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; o
           <RefreshCw className="h-3 w-3" />
         </button>
       </div>
-      {value && <svg ref={ref} className="max-w-[130px]" />}
       <ScanBarcodeDialog open={scanOpen} onOpenChange={setScanOpen} onScan={onChange} />
     </div>
   )
