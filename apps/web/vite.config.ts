@@ -29,6 +29,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@billscape/api': path.resolve(__dirname, '../../packages/api/src/index.ts'),
+      '@billscape/core': path.resolve(__dirname, '../../packages/core/src/index.ts'),
     },
   },
   build: {
