@@ -454,7 +454,12 @@ export function POSTab() {
   // silently reporting "Product not found" even though the code was valid.
   const resolveBarcodeAndAddToCart = useCallback(
     async (code: string) => {
-      const found = products?.find((p) => p.barcode_value === code)
+      // A has_variants product's own barcode_value can be stale/leftover from before it had
+      // variants (the Product form now hides that field once variants are on, so a merchant can
+      // no longer even see or clear it) — it must never be treated as directly addable, or a scan
+      // silently bills the parent's stale price/tax instead of a real variant's, and skips variant
+      // stock tracking entirely. Fall through to the variant lookup below instead.
+      const found = products?.find((p) => p.barcode_value === code && !(p as any).has_variants)
       if (found) {
         addToCart(found)
         return
@@ -465,12 +470,20 @@ export function POSTab() {
         return
       }
 
-      const { data: variantMatch } = await supabase
+      const { data: variantMatch, error: variantError } = await supabase
         .from('product_variants')
         .select('id, variant_name, sale_price, tax_rate, product_id')
         .eq('organization_id', orgId)
         .eq('barcode_value', code)
         .maybeSingle()
+
+      if (variantError) {
+        // .maybeSingle() errors (rather than silently picking one) if more than one row matches —
+        // don't collapse that into an ordinary "not found", which would hide a real duplicate-
+        // barcode data problem or network failure behind a message that looks like a bad scan.
+        toast.error(`Could not look up barcode: ${code}`, variantError.message)
+        return
+      }
 
       if (!variantMatch) {
         toast.error(`Product not found: ${code}`, '')
@@ -484,7 +497,7 @@ export function POSTab() {
         // rather than silently failing.
         const { data: parent } = await supabase
           .from('products')
-          .select('id, name, hsn_code, track_stock, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
+          .select('id, name, hsn_code, track_stock, tax_rate, inventory(stock_qty), unit:unit_id(id, name, symbol, allow_decimal), secondary_unit:secondary_unit_id(id, name, symbol, allow_decimal), conversion_factor')
           .eq('organization_id', orgId)
           .eq('id', variantMatch.product_id)
           .maybeSingle()
@@ -510,7 +523,7 @@ export function POSTab() {
     async (
       variant: { id: string; variant_name: string | null; sale_price: number | null; tax_rate: number | null; product_id: string },
       parentProduct: {
-        id: string; name: string; hsn_code?: string | null; track_stock: boolean
+        id: string; name: string; hsn_code?: string | null; track_stock: boolean; tax_rate?: number
         inventory?: unknown; unit?: unknown; secondary_unit?: unknown; conversion_factor?: number | null
       },
       code: string,
@@ -518,16 +531,25 @@ export function POSTab() {
       if (!orgId) return
       const { data: stock } = await getVariantStock(supabase, orgId, variant.id)
       const allowNegativeStock = (org as any)?.feature_flags?.allow_negative_stock ?? false
-      if (!allowNegativeStock && stock <= 0) {
-        toast.error(`Out of stock: ${parentProduct.name} — ${variant.variant_name || 'Variant'}`, `Scanned barcode: ${code}`)
+      const displayName = variant.variant_name || 'Variant'
+      // A repeated scan of the same variant must be checked against remaining stock, not the
+      // static DB value on every call — otherwise scanning past available stock (e.g. 3 scans
+      // against a stock of 1) silently succeeds every time, since each call sees the same
+      // unchanged `stock` from the DB and addToCart's own qty-ceiling check is skipped entirely
+      // for variant lines (see addToCart's isVariantLine branch).
+      const alreadyInCart = cart.find((c) => c.product_id === parentProduct.id && c.variant_id === variant.id)?.qty ?? 0
+      if (!allowNegativeStock && alreadyInCart + 1 > stock) {
+        toast.error(`Out of stock: ${parentProduct.name} — ${displayName}`, `Only ${stock} unit(s) available. Scanned barcode: ${code}`)
         return
       }
-      const displayName = variant.variant_name || 'Variant'
       addToCart({
         id: parentProduct.id,
         name: `${parentProduct.name} — ${displayName}`,
         price: variant.sale_price ?? 0,
-        tax_rate: variant.tax_rate ?? 0,
+        // A variant's own tax_rate can be null (not every variant has one set) — fall back to the
+        // parent product's tax_rate rather than passing null through to computeGST/computeLineTax,
+        // matching the same fallback the variant picker dialog already uses.
+        tax_rate: variant.tax_rate ?? parentProduct.tax_rate ?? 0,
         hsn_code: parentProduct.hsn_code,
         inventory: parentProduct.inventory,
         track_stock: parentProduct.track_stock,
@@ -538,7 +560,7 @@ export function POSTab() {
         variant_name: displayName,
       })
     },
-    [addToCart, orgId, org],
+    [addToCart, orgId, org, cart],
   )
 
   const { inputRef: scanInputRef, handleKeyDown: handleScanKeydown, focusInput: focusScanInput } = useBarcodeScanner(resolveBarcodeAndAddToCart)
