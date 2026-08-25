@@ -29,7 +29,9 @@ export interface PurchaseLineInput {
     barcode_value?: string
     sku?: string
     tax_rate: GSTRate
+    mrp?: number
     sale_price?: number
+    special_price?: number
     sale_gst_mode?: 'include' | 'exclude'
     purchase_price?: number
     purchase_gst_mode?: 'include' | 'exclude'
@@ -115,7 +117,9 @@ async function createProductForLine(
           barcode_value: v.barcode_value || null,
           sku: v.sku || null,
           tax_rate: v.tax_rate,
+          mrp: v.mrp ? Number(v.mrp) : null,
           sale_price: v.sale_price ? Number(v.sale_price) : null,
+          special_price: v.special_price ? Number(v.special_price) : null,
           sale_gst_mode: v.sale_gst_mode,
           purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
           purchase_gst_mode: v.purchase_gst_mode,
