@@ -20,6 +20,7 @@ import { BillingPage } from '@/pages/billing/BillingPage'
 import { SaleViewPage } from '@/pages/billing/SaleViewPage'
 import { ProductsPage } from '@/pages/products/ProductsPage'
 import { ProductFormPage } from '@/pages/products/ProductFormPage'
+import { ProductViewPage } from '@/pages/products/ProductViewPage'
 import { CategoriesPage } from '@/pages/products/CategoriesPage'
 import { InventoryPage } from '@/pages/inventory/InventoryPage'
 import { CustomersPage } from '@/pages/customers/CustomersPage'
@@ -135,6 +136,7 @@ export function AppRouter() {
                   <Route path="products/categories" element={<RequireRole roles={['owner', 'manager']}><CategoriesPage /></RequireRole>} />
                   <Route path="products/new" element={<RequireRole roles={['owner', 'manager']}><ProductFormPage /></RequireRole>} />
                   <Route path="products/:id/edit" element={<RequireRole roles={['owner', 'manager']}><ProductFormPage /></RequireRole>} />
+                  <Route path="products/:id" element={<RequireRole roles={['owner', 'manager']}><ProductViewPage /></RequireRole>} />
                   <Route path="inventory" element={<RequireRole roles={['owner', 'manager']}><InventoryPage /></RequireRole>} />
                   <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
                   <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />

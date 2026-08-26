@@ -28,7 +28,7 @@ import { cn } from '@/lib/utils'
 const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 
 interface Supplier { id: string; name: string; phone: string | null; gstin: string | null }
-interface ExistingProduct { id: string; name: string; sku: string | null; extra_sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null }
+interface ExistingProduct { id: string; name: string; sku: string | null; extra_sku: string | null; barcode_value: string | null; tax_rate: GSTRate; price: number; cost_price: number; mrp: number | null; special_price: number | null; unit_id: string; secondary_unit_id: string | null; conversion_factor: number | null; gst_mode: string | null; expiry_date: string | null }
 interface UnitOption { id: string; name: string; symbol: string; allow_decimal: boolean }
 
 interface BatchRow { batch_no: string; expiry_date: string; qty: string }
@@ -45,11 +45,21 @@ export interface PurchaseRow {
   extra_sku: string
   barcode_value: string
   tax_rate: GSTRate
+  // Whether Purchase Rate/MRP/Retail/SP below are typed tax-inclusive or exclusive — mirrors
+  // product_variants' own sale_gst_mode/purchase_gst_mode, and overrides the org-wide
+  // tax_inclusive setting for this one row specifically. Maps to products.gst_mode
+  // (migration 033_products_expiry_gst_mode.sql). Only meaningful for a non-variant row.
+  gst_mode: 'include' | 'exclude'
   qty: string
   unit_cost: string
   mrp: string
   price: string
   special_price: string
+  // Simple product-level expiry, distinct from the per-batch expiry_date already used by the
+  // Track Batches panel below — for the common case of a single-batch/non-batch-tracked product
+  // that still has a shelf life. Maps to products.expiry_date (migration
+  // 033_products_expiry_gst_mode.sql). Only shown for a non-variant row.
+  expiry_date: string
   update_existing_pricing: boolean
   skuManuallyEdited: boolean
   barcodeManuallyEdited: boolean
@@ -107,8 +117,8 @@ function hsnCodeError(value: string): string | undefined {
 function emptyRow(): PurchaseRow {
   return {
     product_id: null, is_new_product: false, product_name: '',
-    sku: '', extra_sku: '', barcode_value: '', tax_rate: 18, qty: '1', unit_cost: '0',
-    mrp: '', price: '0', special_price: '',
+    sku: '', extra_sku: '', barcode_value: '', tax_rate: 18, gst_mode: 'include', qty: '1', unit_cost: '0',
+    mrp: '', price: '0', special_price: '', expiry_date: '',
     update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
     category_id: null, hsn_code: '', has_variants: false, variants: [],
     has_batches: false, batches: [], showMoreDetails: false,
@@ -216,7 +226,7 @@ export function PurchaseFormPage() {
       setNotes(purchase.notes ?? '')
       setRows(
         items.map((it: any) => {
-          const product = (it as unknown as { products?: { sku?: string; extra_sku?: string | null; barcode_value?: string; price?: number; mrp?: number; special_price?: number; unit_id?: string; secondary_unit_id?: string | null; conversion_factor?: number | null } }).products
+          const product = (it as unknown as { products?: { sku?: string; extra_sku?: string | null; barcode_value?: string; price?: number; mrp?: number; special_price?: number; unit_id?: string; secondary_unit_id?: string | null; conversion_factor?: number | null; gst_mode?: string | null; expiry_date?: string | null } }).products
           return {
             product_id: it.product_id,
             is_new_product: false,
@@ -225,6 +235,7 @@ export function PurchaseFormPage() {
             extra_sku: product?.extra_sku ?? '',
             barcode_value: product?.barcode_value ?? '',
             tax_rate: (it.tax_rate ?? 0) as GSTRate,
+            gst_mode: (product?.gst_mode as 'include' | 'exclude') ?? 'include',
             // purchase_items.qty is always stored in the product's BASE unit — editing always
             // shows/edits in base units too (the entry unit used at original save time isn't
             // persisted), so entry_unit_id defaults to the base unit here.
@@ -233,6 +244,7 @@ export function PurchaseFormPage() {
             mrp: product?.mrp != null ? String(product.mrp) : '',
             price: product?.price != null ? String(product.price) : '0',
             special_price: product?.special_price != null ? String(product.special_price) : '',
+            expiry_date: product?.expiry_date ?? '',
             update_existing_pricing: true,
             skuManuallyEdited: true, barcodeManuallyEdited: true,
             category_id: null, hsn_code: '', has_variants: false, variants: [],
@@ -291,7 +303,7 @@ export function PurchaseFormPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('products')
-        .select('id, name, sku, extra_sku, barcode_value, tax_rate, price, cost_price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor')
+        .select('id, name, sku, extra_sku, barcode_value, tax_rate, price, cost_price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor, gst_mode, expiry_date')
         .eq('organization_id', orgId!)
         .eq('is_active', true)
         .order('name')
@@ -330,9 +342,10 @@ export function PurchaseFormPage() {
         return {
           product_id: match.id, is_new_product: false, product_name: match.name,
           sku: match.sku ?? '', extra_sku: match.extra_sku ?? '', barcode_value: match.barcode_value ?? '',
-          tax_rate: match.tax_rate, qty: imp.qty, unit_cost: imp.unit_cost || String(match.cost_price),
+          tax_rate: match.tax_rate, gst_mode: (match.gst_mode as 'include' | 'exclude') ?? 'include', qty: imp.qty, unit_cost: imp.unit_cost || String(match.cost_price),
           mrp: match.mrp != null ? String(match.mrp) : '', price: String(match.price),
           special_price: match.special_price != null ? String(match.special_price) : '',
+          expiry_date: match.expiry_date ?? '',
           update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
           category_id: null, hsn_code: '', has_variants: false, variants: [],
           has_batches: false, batches: [], showMoreDetails: false,
@@ -346,8 +359,8 @@ export function PurchaseFormPage() {
       return {
         product_id: null, is_new_product: true, product_name: imp.product_name.trim(),
         sku, extra_sku: '', barcode_value: generateBarcode(),
-        tax_rate: 18, qty: imp.qty, unit_cost: imp.unit_cost,
-        mrp: '', price: imp.unit_cost, special_price: '',
+        tax_rate: 18, gst_mode: 'include', qty: imp.qty, unit_cost: imp.unit_cost,
+        mrp: '', price: imp.unit_cost, special_price: '', expiry_date: '',
         update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
         category_id: null, hsn_code: '', has_variants: false, variants: [],
         has_batches: false, batches: [], showMoreDetails: false,
@@ -501,9 +514,10 @@ export function PurchaseFormPage() {
     setEntry({
       product_id: p.id, is_new_product: false, product_name: p.name,
       sku: p.sku ?? '', extra_sku: p.extra_sku ?? '', barcode_value: p.barcode_value ?? '',
-      tax_rate: p.tax_rate, qty: '1', unit_cost: String(p.cost_price),
+      tax_rate: p.tax_rate, gst_mode: (p.gst_mode as 'include' | 'exclude') ?? 'include', qty: '1', unit_cost: String(p.cost_price),
       mrp: p.mrp != null ? String(p.mrp) : '', price: String(p.price),
       special_price: p.special_price != null ? String(p.special_price) : '',
+      expiry_date: p.expiry_date ?? '',
       update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
       category_id: null, hsn_code: '', has_variants: false, variants: [],
       has_batches: false, batches: [], showMoreDetails: false,
@@ -665,11 +679,17 @@ export function PurchaseFormPage() {
           // even though every real barcode now lives on the variants (r.variants[].barcode_value).
           barcode_value: r.has_variants ? undefined : (r.barcode_value.trim() || undefined),
           tax_rate: r.tax_rate,
+          // gst_mode is a display flag only (same convention as product_variants' own
+          // sale_gst_mode/purchase_gst_mode) — the typed price values below are saved as-is
+          // regardless of mode; it just records what the merchant intended when typing them, for
+          // the Base+GST breakdown hint to render consistently the next time this row is edited.
+          gst_mode: r.has_variants ? undefined : r.gst_mode,
           qty: baseQty,
           unit_cost: parseNum(r.unit_cost),
           mrp: r.mrp ? parseNum(r.mrp) : undefined,
           price: parseNum(r.price),
           special_price: r.special_price ? parseNum(r.special_price) : undefined,
+          expiry_date: r.has_variants ? undefined : (r.expiry_date || undefined),
           update_existing_pricing: r.update_existing_pricing,
           category_id: r.is_new_product ? r.category_id : undefined,
           hsn_code: r.is_new_product ? (r.hsn_code.trim() || undefined) : undefined,
@@ -906,42 +926,41 @@ export function PurchaseFormPage() {
                     </button>
                   )}
                 </div>
-                {/* Row 1: Product name — shares this row with Product Code once Track Variants is
-                    on (VariantEditor below carries every real barcode/SKU/GST/price per-variant,
-                    so the parent's own Product Code is the only identifying field left up here;
-                    keeping it beside the name avoids an otherwise near-empty Row 2 below it). */}
-                <div className={cn('grid grid-cols-1 gap-2', entry.has_variants && 'sm:grid-cols-[1fr_200px]')}>
-                  <div className="space-y-1 relative" ref={dropdownRef}>
-                    <Label className="text-xs">Product *</Label>
-                    <Input
-                      ref={productNameRef}
-                      placeholder="Search or type new product"
-                      value={entrySearch}
-                      onChange={(e) => handleEntryNameChange(e.target.value)}
-                      onFocus={() => setEntryDropdownOpen(true)}
-                      className="h-9 text-sm"
-                    />
-                    {entry.product_name && (
-                      <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
-                        entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
-                        {entry.is_new_product ? 'New' : 'Existing'}
-                      </span>
-                    )}
-                    {entryDropdownOpen && filtered.length > 0 && (
-                      <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                        {filtered.map((p) => (
-                          <button key={p.id} type="button"
-                            className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                            onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
-                            <span>{p.name}</span>
-                            <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                {/* Row 1 (has_variants only): Product name shares this row with Product Code —
+                    VariantEditor below carries every real barcode/SKU/GST/price per-variant, so
+                    the parent's own Product Code is the only identifying field left up here. */}
+                {entry.has_variants && (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px]">
+                    <div className="space-y-1 relative" ref={dropdownRef}>
+                      <Label className="text-xs">Product *</Label>
+                      <Input
+                        ref={productNameRef}
+                        placeholder="Search or type new product"
+                        value={entrySearch}
+                        onChange={(e) => handleEntryNameChange(e.target.value)}
+                        onFocus={() => setEntryDropdownOpen(true)}
+                        className="h-9 text-sm"
+                      />
+                      {entry.product_name && (
+                        <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
+                          entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
+                          {entry.is_new_product ? 'New' : 'Existing'}
+                        </span>
+                      )}
+                      {entryDropdownOpen && filtered.length > 0 && (
+                        <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
+                          {filtered.map((p) => (
+                            <button key={p.id} type="button"
+                              className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
+                              onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                              <span>{p.name}</span>
+                              <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
-                  {entry.has_variants && (
                     <div className="space-y-1">
                       <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
                       <div className="flex gap-1">
@@ -958,114 +977,164 @@ export function PurchaseFormPage() {
                         )}
                       </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
-                {/* Row 2: Code, SKU, Barcode, GST%, Rate, Qty — Barcode/GST%/Rate/Qty are all
-                    per-variant once Track Variants is on (VariantEditor below has its own
-                    Barcode field + GST select per row), so showing a parent-level value here
-                    would be dead/misleading — the parent product itself has no single barcode
-                    or tax rate anymore, same reasoning already applied to Rate/Qty. Product Code
-                    itself moves up to Row 1 (beside the name) once Track Variants is on, so it's
-                    not shown a second time here. */}
-                <div className={cn('grid grid-cols-2 gap-2', entry.has_variants ? 'sm:grid-cols-1' : 'sm:grid-cols-6')}>
-                  {!entry.has_variants && (
-                  <div className="space-y-1">
-                    <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
-                    <div className="flex gap-1">
+                {/* Row 1 (non-variant): Product name, Barcode, SKU, Tax %, GST mode — mirrors
+                    VariantEditor's own Row 1 shape (Name/Barcode/SKU/Tax/GST), just without the
+                    per-variant repetition. Rendered only when !has_variants; the has_variants
+                    Row 1 above already covers Product Name + Code in that case. */}
+                {!entry.has_variants && (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-[1.7fr_1.6fr_1.3fr_0.6fr_0.6fr]">
+                    <div className="space-y-1 relative col-span-2 sm:col-span-1" ref={dropdownRef}>
+                      <Label className="text-xs">Product *</Label>
                       <Input
-                        value={entry.sku}
-                        disabled={!entry.is_new_product}
-                        onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                        className="h-9 text-xs font-mono"
+                        ref={productNameRef}
+                        placeholder="Search or type new product"
+                        value={entrySearch}
+                        onChange={(e) => handleEntryNameChange(e.target.value)}
+                        onFocus={() => setEntryDropdownOpen(true)}
+                        className="h-9 text-sm"
                       />
-                      {entry.is_new_product && (
-                        <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                          <RefreshCw className="h-3 w-3" />
-                        </button>
+                      {entry.product_name && (
+                        <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
+                          entry.is_new_product ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700' : 'bg-blue-600/20 text-blue-300 border border-blue-700')}>
+                          {entry.is_new_product ? 'New' : 'Existing'}
+                        </span>
+                      )}
+                      {entryDropdownOpen && filtered.length > 0 && (
+                        <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
+                          {filtered.map((p) => (
+                            <button key={p.id} type="button"
+                              className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
+                              onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                              <span>{p.name}</span>
+                              <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                            </button>
+                          ))}
+                        </div>
                       )}
                     </div>
-                  </div>
-                  )}
 
-                  {!entry.has_variants && (
-                  <div className="space-y-1">
-                    <Label className="text-xs">SKU <span className="text-zinc-600 normal-case">(optional)</span></Label>
-                    <div className="flex gap-1">
-                      <Input
-                        placeholder="Auto or type"
-                        value={entry.extra_sku ?? ''}
-                        disabled={!entry.is_new_product}
-                        onChange={(e) => setEntry((p) => ({ ...p, extra_sku: e.target.value }))}
-                        className="h-9 text-xs font-mono"
+                    <div className="space-y-1">
+                      <Label className="text-xs">Barcode{entry.is_new_product && ' *'}</Label>
+                      <div className="flex gap-1">
+                        <Input
+                          value={entry.barcode_value}
+                          disabled={!entry.is_new_product}
+                          onChange={(e) => { setEntry((p) => ({ ...p, barcode_value: e.target.value, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
+                          className="h-9 text-xs font-mono"
+                        />
+                        {entry.is_new_product && (
+                          <>
+                            <button type="button" title="Scan" onClick={() => setScanOpen(true)} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                              <Camera className="h-3 w-3" />
+                            </button>
+                            <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                              <RefreshCw className="h-3 w-3" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      <ScanBarcodeDialog
+                        open={scanOpen}
+                        onOpenChange={setScanOpen}
+                        onScan={(code) => {
+                          setEntry((p) => ({ ...p, barcode_value: code, barcodeManuallyEdited: true }))
+                          checkCodeUnique('barcode_value', code, (msg) => setEntry((p) => ({ ...p, codeError: msg })))
+                        }}
                       />
-                      {entry.is_new_product && (
-                        <button type="button" title="Generate" onClick={() => setEntry((p) => ({ ...p, extra_sku: generateSku() }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                          <RefreshCw className="h-3 w-3" />
-                        </button>
-                      )}
                     </div>
-                  </div>
-                  )}
 
-                  {!entry.has_variants && (
-                  <div className="space-y-1">
-                    <Label className="text-xs">Barcode{entry.is_new_product && ' *'}</Label>
-                    <div className="flex gap-1">
-                      <Input
-                        value={entry.barcode_value}
-                        disabled={!entry.is_new_product}
-                        onChange={(e) => { setEntry((p) => ({ ...p, barcode_value: e.target.value, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                        className="h-9 text-xs font-mono"
-                      />
-                      {entry.is_new_product && (
-                        <>
-                          <button type="button" title="Scan" onClick={() => setScanOpen(true)} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                            <Camera className="h-3 w-3" />
-                          </button>
-                          <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, barcode_value: generateBarcode(), barcodeManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                    <div className="space-y-1">
+                      <Label className="text-xs">SKU <span className="text-zinc-600 normal-case">(optional)</span></Label>
+                      <div className="flex gap-1">
+                        <Input
+                          placeholder="Auto or type"
+                          value={entry.extra_sku ?? ''}
+                          disabled={!entry.is_new_product}
+                          onChange={(e) => setEntry((p) => ({ ...p, extra_sku: e.target.value }))}
+                          className="h-9 text-xs font-mono"
+                        />
+                        {entry.is_new_product && (
+                          <button type="button" title="Generate" onClick={() => setEntry((p) => ({ ...p, extra_sku: generateSku() }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
                             <RefreshCw className="h-3 w-3" />
                           </button>
-                        </>
-                      )}
+                        )}
+                      </div>
                     </div>
-                    <ScanBarcodeDialog
-                      open={scanOpen}
-                      onOpenChange={setScanOpen}
-                      onScan={(code) => {
-                        setEntry((p) => ({ ...p, barcode_value: code, barcodeManuallyEdited: true }))
-                        checkCodeUnique('barcode_value', code, (msg) => setEntry((p) => ({ ...p, codeError: msg })))
-                      }}
-                    />
-                  </div>
-                  )}
 
-                  {!entry.has_variants && (
-                  <div className="space-y-1">
-                    <Label className="text-xs">GST %</Label>
-                    <select
-                      value={entry.tax_rate}
-                      onChange={(e) => setEntry((p) => ({ ...p, tax_rate: Number(e.target.value) as GSTRate }))}
-                      className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
-                    >
-                      {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
-                    </select>
-                  </div>
-                  )}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Tax %</Label>
+                      <select
+                        value={entry.tax_rate}
+                        onChange={(e) => setEntry((p) => ({ ...p, tax_rate: Number(e.target.value) as GSTRate }))}
+                        className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
+                      >
+                        {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                      </select>
+                    </div>
 
-                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">GST</Label>
+                      <select
+                        value={entry.gst_mode}
+                        onChange={(e) => setEntry((p) => ({ ...p, gst_mode: e.target.value as 'include' | 'exclude' }))}
+                        className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
+                      >
+                        <option value="include">Incl</option>
+                        <option value="exclude">Excl</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {/* Row 2 (non-variant): Purchase Price, MRP, Retail Price, SP, Qty, Expiry —
+                    mirrors VariantEditor's own Row 2 shape (4 price fields + Qty + Expiry). Each
+                    price field shows its own Base+GST breakdown driven by this row's own GST mode
+                    toggle above, not the org-wide tax_inclusive setting. */}
+                {!entry.has_variants && (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
                     <div className="space-y-1">
                       <Label className="text-xs">Purchase Rate</Label>
                       <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
                         onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                      {taxInclusive && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
+                      {entry.gst_mode === 'include' && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
                         const { base, tax } = splitInclusiveGST(parseNum(entry.unit_cost), entry.tax_rate)
                         return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                       })()}
                     </div>
-                  )}
 
-                  {!entry.has_variants && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">MRP</Label>
+                      <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
+                      {entry.gst_mode === 'include' && parseNum(entry.mrp) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitInclusiveGST(parseNum(entry.mrp), entry.tax_rate)
+                        return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                      })()}
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Retail Price</Label>
+                      <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
+                      {entry.gst_mode === 'include' && parseNum(entry.price) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitInclusiveGST(parseNum(entry.price), entry.tax_rate)
+                        return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                      })()}
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">SP (Special)</Label>
+                      <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
+                      {entry.gst_mode === 'include' && parseNum(entry.special_price) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitInclusiveGST(parseNum(entry.special_price), entry.tax_rate)
+                        return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
+                      })()}
+                    </div>
+
                     <div className="space-y-1">
                       <Label className="text-xs">Qty *</Label>
                       <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
@@ -1076,8 +1145,14 @@ export function PurchaseFormPage() {
                         <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
                       )}
                     </div>
-                  )}
-                </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Expiry</Label>
+                      <Input type="date" value={entry.expiry_date}
+                        onChange={(e) => setEntry((p) => ({ ...p, expiry_date: e.target.value }))} className="h-9 text-sm" />
+                    </div>
+                  </div>
+                )}
 
                 {hasSecondaryUnit({ unitId: entry.unit_id, secondaryUnitId: entry.secondary_unit_id, conversionFactor: entry.conversion_factor }) && (
                   <div className="flex items-center gap-2">
@@ -1109,30 +1184,11 @@ export function PurchaseFormPage() {
 
                 <Separator />
 
-                {/* Row 3: MRP, Retail, SP, Add button */}
-                <div className={cn('grid grid-cols-2 gap-2 items-end', entry.has_variants ? 'sm:grid-cols-1' : 'sm:grid-cols-4')}>
-                  {!entry.has_variants && (
-                    <div className="space-y-1">
-                      <Label className="text-xs">MRP</Label>
-                      <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
-                    </div>
-                  )}
-                  {!entry.has_variants && (
-                    <div className="space-y-1">
-                      <Label className="text-xs">Retail Price</Label>
-                      <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                    </div>
-                  )}
-                  {!entry.has_variants && (
-                    <div className="space-y-1">
-                      <Label className="text-xs">SP (Special)</Label>
-                      <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
-                    </div>
-                  )}
-                  <Button type="button" size="sm" className="h-9 w-full" onClick={addEntryToGrid}
+                {/* Add button — MRP/Retail/SP now live in Row 2 above for the non-variant case
+                    (moved there to mirror VariantEditor's own row shape), so this row is just
+                    the action button for both has_variants and non-variant entries. */}
+                <div className="grid grid-cols-1 gap-2">
+                  <Button type="button" size="sm" className="h-9 w-full sm:w-auto sm:ml-auto sm:px-8" onClick={addEntryToGrid}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
                     {editingIndex !== null ? (
                       <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
