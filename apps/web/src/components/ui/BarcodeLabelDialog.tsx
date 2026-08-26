@@ -29,6 +29,7 @@ interface Props {
 export function BarcodeLabelDialog({ open, onOpenChange, product, orgName }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [copies, setCopies] = useState(1)
+  const [showName, setShowName] = useState(true)
   const [showPrice, setShowPrice] = useState(true)
 
   useEffect(() => {
@@ -55,7 +56,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, product, orgName }: Pro
   }, [open, product.barcode_value])
 
   const handlePrint = () => {
-    const labelHtml = buildLabelHtml(product, orgName, showPrice, copies)
+    const labelHtml = buildLabelHtml(product, orgName, showName, showPrice, copies)
     const win = window.open('', '_blank', 'width=600,height=400')
     if (!win) return
     win.document.write(labelHtml)
@@ -66,58 +67,90 @@ export function BarcodeLabelDialog({ open, onOpenChange, product, orgName }: Pro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-w-md"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onFocusOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
-          <DialogTitle>Print Barcode Label</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Printer className="h-4.5 w-4.5 text-indigo-400" />
+            Print Barcode Labels
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Preview */}
-          <div className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black">
-            {orgName && (
-              <p className="text-[10px] font-semibold text-center mb-1">{orgName}</p>
-            )}
-            <p className="text-xs font-bold text-center leading-tight mb-1">{product.name}</p>
-            {product.barcode_value ? (
-              <svg ref={svgRef} />
-            ) : (
-              <p className="text-[10px] text-gray-400 py-4">No barcode set</p>
-            )}
-            {showPrice && (
-              <p className="text-sm font-bold mt-1">₹{product.price.toFixed(2)}</p>
-            )}
+          <div className="text-sm text-zinc-400">
+            Product: <span className="font-semibold text-zinc-200">{product.name}</span>
+          </div>
+          <div className="text-xs text-zinc-500">
+            Print Mode: <span className="font-medium text-zinc-300">Thermal (58mm)</span>{' '}
+            <span className="text-zinc-600">(Change in Settings → Barcode)</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Copies</Label>
-              <Input
-                type="number"
-                min={1}
-                max={100}
-                value={copies}
-                onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
-              />
-            </div>
-            <div className="flex items-end gap-2 pb-0.5">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showPrice}
-                  onChange={(e) => setShowPrice(e.target.checked)}
-                  className="rounded"
-                />
-                Show price
-              </label>
+          <div className="space-y-1.5">
+            <Label>Number of Labels</Label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={copies}
+              onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Label className="cursor-pointer" htmlFor="bc-show-name">Show Product Name</Label>
+            <button
+              id="bc-show-name"
+              type="button"
+              role="switch"
+              aria-checked={showName}
+              onClick={() => setShowName((v) => !v)}
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${showName ? 'bg-indigo-600' : 'bg-zinc-700'}`}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${showName ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Label className="cursor-pointer" htmlFor="bc-show-price">Show Price</Label>
+            <button
+              id="bc-show-price"
+              type="button"
+              role="switch"
+              aria-checked={showPrice}
+              onClick={() => setShowPrice((v) => !v)}
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${showPrice ? 'bg-indigo-600' : 'bg-zinc-700'}`}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${showPrice ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          {/* Preview */}
+          <div className="space-y-1.5">
+            <Label className="text-zinc-500">Preview</Label>
+            <div className="rounded-lg border border-border bg-white p-4 flex flex-col items-center text-black">
+              {showName && (
+                <p className="text-xs font-bold text-center leading-tight mb-1">{product.name}</p>
+              )}
+              {product.barcode_value ? (
+                <svg ref={svgRef} />
+              ) : (
+                <p className="text-[10px] text-gray-400 py-4">No barcode set</p>
+              )}
+              {showPrice && (
+                <p className="text-sm font-bold mt-1">₹{product.price.toFixed(2)}</p>
+              )}
             </div>
           </div>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Back</Button>
           <Button onClick={handlePrint} disabled={!product.barcode_value}>
             <Printer className="h-4 w-4" />
-            Print {copies > 1 ? `${copies} Labels` : 'Label'}
+            Print {copies > 1 ? `${copies} Labels` : '1 Label'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -125,11 +158,11 @@ export function BarcodeLabelDialog({ open, onOpenChange, product, orgName }: Pro
   )
 }
 
-function buildLabelHtml(product: Product, orgName: string | undefined, showPrice: boolean, copies: number): string {
+function buildLabelHtml(product: Product, orgName: string | undefined, showName: boolean, showPrice: boolean, copies: number): string {
   const rows = Array.from({ length: copies }, () => `
     <div class="label">
       ${orgName ? `<div class="shop">${orgName}</div>` : ''}
-      <div class="name">${product.name}</div>
+      ${showName ? `<div class="name">${product.name}</div>` : ''}
       ${product.barcode_value
         ? `<svg id="bc_${Math.random().toString(36).slice(2)}"></svg>`
         : ''

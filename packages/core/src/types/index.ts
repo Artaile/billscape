@@ -258,6 +258,8 @@ export interface Product {
   track_stock: boolean
   is_active: boolean
   created_at: string
+  expiry_date?: string
+  gst_mode?: 'include' | 'exclude'
   // Base (stocking) unit — always set. Secondary unit + conversion_factor are the
   // optional "sell in Box" pair; when set, 1 secondary_unit = conversion_factor unit.
   unit_id: string

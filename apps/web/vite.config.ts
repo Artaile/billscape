@@ -26,6 +26,9 @@ export default defineConfig({
       },
     }),
   ],
+  optimizeDeps: {
+    exclude: ['@billscape/api', '@billscape/core'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

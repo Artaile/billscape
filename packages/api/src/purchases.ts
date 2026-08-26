@@ -13,13 +13,24 @@ export interface PurchaseLineInput {
   is_new_product: boolean
   product_name: string
   sku?: string
+  // A second, genuinely optional identifier distinct from `sku` — maps to products.extra_sku
+  // (migration 032_products_extra_sku.sql). Only meaningful for a non-variant line.
+  extra_sku?: string
   barcode_value?: string
   tax_rate: GSTRate
+  // Display flag only (mirrors variants' own sale_gst_mode/purchase_gst_mode) — maps to
+  // products.gst_mode (migration 033_products_expiry_gst_mode.sql). Only meaningful for a
+  // non-variant line.
+  gst_mode?: 'include' | 'exclude'
   qty: number
   unit_cost: number
   mrp?: number
   price: number
   special_price?: number
+  // Simple product-level expiry, distinct from the batches[] expiry_date below — maps to
+  // products.expiry_date (migration 033_products_expiry_gst_mode.sql). Only meaningful for a
+  // non-variant line.
+  expiry_date?: string
   update_existing_pricing?: boolean
   // New-product-only metadata — ignored when is_new_product is false.
   category_id?: string | null
@@ -92,11 +103,14 @@ async function createProductForLine(
     organization_id: orgId,
     name: line.product_name,
     sku: line.sku || null,
+    extra_sku: line.extra_sku || null,
     tax_rate: line.tax_rate,
+    gst_mode: line.gst_mode ?? 'include',
     price: line.price,
     cost_price: line.unit_cost,
     mrp: line.mrp ?? null,
     special_price: line.special_price ?? null,
+    expiry_date: line.expiry_date || null,
     barcode_value: line.barcode_value || null,
     track_stock: true,
     is_active: true,
@@ -542,7 +556,7 @@ export async function getPurchaseWithItems(client: TypedSupabaseClient, orgId: s
 
   const { data: items, error: itemsError } = await client
     .from('purchase_items')
-    .select('*, products(sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor)')
+    .select('*, products(sku, extra_sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor, gst_mode, expiry_date)')
     .eq('purchase_id', purchaseId)
     .eq('organization_id', orgId)
   if (itemsError) return { data: null, error: itemsError }

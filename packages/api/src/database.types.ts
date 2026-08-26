@@ -897,6 +897,9 @@ export type Database = {
           conversion_factor: number | null
           cost_price: number
           created_at: string
+          expiry_date: string | null
+          extra_sku: string | null
+          gst_mode: string
           has_batches: boolean
           has_variants: boolean
           hsn_code: string | null
@@ -921,6 +924,9 @@ export type Database = {
           conversion_factor?: number | null
           cost_price?: number
           created_at?: string
+          expiry_date?: string | null
+          extra_sku?: string | null
+          gst_mode?: string
           has_batches?: boolean
           has_variants?: boolean
           hsn_code?: string | null
@@ -945,6 +951,9 @@ export type Database = {
           conversion_factor?: number | null
           cost_price?: number
           created_at?: string
+          expiry_date?: string | null
+          extra_sku?: string | null
+          gst_mode?: string
           has_batches?: boolean
           has_variants?: boolean
           hsn_code?: string | null
