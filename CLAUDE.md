@@ -132,6 +132,8 @@ footer/signature/bank/UPI toggles. As of 2026-08-21, every one of these that has
 source on a completed `Sale` is read and respected by `InvoicePrint.tsx` (the actual printed
 bill) — previously only ~10 of them were wired and the rest were silently ignored.
 **Custom Fields**: custom_fields array
+**Purchase Entry**: purchase_entry_fields `{ hsn?, batches?, expiry? }` (added 2026-09-04) — gear-icon
+field visibility toggles on the `/purchases/new` Add Item form, see Purchases page section below.
 
 ## Critical DB fixes applied
 - purchases.invoice_ref renamed to invoice_no
@@ -164,6 +166,11 @@ bill) — previously only ~10 of them were wired and the rest were silently igno
   added — see Suppliers form section
 - migration 017_supplier_upi_id.sql (2026-08-06): suppliers.upi_id added (optional) — see
   Suppliers form section
+- migration 033_products_expiry_gst_mode.sql (2026-08-xx): products.expiry_date, products.gst_mode
+  added — see Purchases page section (Row 2 Expiry Date field, Row 1 GST Include/Exclude toggle)
+- migration 034_variant_hsn_code.sql (2026-09-04): product_variants.hsn_code added (nullable
+  text, no format constraint at the DB layer — mirrors products.hsn_code) — see Purchases page
+  section's "Per-variant HSN Code" note
 
 ## Known column name mappings (DB vs app)
 - expenses.expense_date (was "date" — renamed)
@@ -228,7 +235,7 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
   `max-w-lg` dialog — the original one-field-per-row layout in a `max-w-sm` dialog made the
   form tall enough that the Save/Cancel footer scrolled out of the viewport on a standard screen.
 
-## Purchases page features (as of 2026-07-29)
+## Purchases page features (as of 2026-09-04)
 - **New Purchase / Edit Purchase are FULL PAGES** (`/purchases/new`, `/purchases/:id/edit`), not
   dialogs — `PurchasesPage.tsx` keeps only the list table + View/Delete/Import CSV dialogs.
   `PurchaseFormBody` (the old dialog-based item-entry component) was deleted entirely.
@@ -237,47 +244,75 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - Purchase No auto-generated on save: PUR-YYYYMMDD-XXXX (sequential per org per day)
 - `PurchaseFormPage.tsx` (`apps/web/src/pages/purchases/`): a single-row "Purchase Details" card
   (Supplier `lg:w-[280px]` + "Add new supplier" → shared `SupplierFormDialog`, see Suppliers
-  section; Invoice No `lg:w-[160px]`; Date `lg:w-[150px]`; Purchase Type Credit/Cash toggle
-  `lg:w-[170px]`; Notes `flex-1`, stretches to fill remaining width — `flex flex-col
-  lg:flex-row`, stacks on narrower screens) → an "Add Item" entry strip
-  (Product search-or-create, Code, Barcode, GST%, Purchase Rate, Qty, MRP, Retail Price, SP)
-  → items table → footer totals (CGST/SGST or IGST, Bill Discount, Round Off, Total).
-- **"More details" collapsible (as of 2026-08-06)**: for `is_new_product` rows only (existing
-  products already carry this on their own record — the toggle doesn't render at all when an
-  existing product is selected, so purchase entry can never silently overwrite a real product's
-  category/HSN/variants/batches) — a `▾ More details (Category, HSN, Variants, Batches)` link
-  under Row 3 of the entry strip expands to: Category `<select>` (own `categories` query, same
-  styling as the Supplier select) + HSN Code (`Input`, validated inline with the same 4/6/8-digit
-  regex as `ProductSchema.hsn_code` in `packages/core/src/validation/index.ts` — this page has no
-  RHF, so the check is a plain `hsnCodeError()` helper, not schema-driven), then two "Enable"
-  sliding toggles (same visual pattern as `ProductFormPage.tsx`'s own Variants/Batches toggles)
-  each revealing a compact repeatable-row editor identical in shape to the Add Product page's
-  (Size/Color/Price±/Stock for variants; Batch No/Expiry/Qty for batches). Collapsed by default
-  and per-row (`PurchaseRow.showMoreDetails`) — expanding it for one row doesn't affect others.
-  Before this, a product created via purchase entry had `category_id`/`hsn_code` always null and
-  `has_variants`/`has_batches` always false regardless of what the merchant actually had, forcing
-  a second trip to `/products/:id/edit` to fill them in — the two entry points now produce
-  identical, complete product records. `PurchaseLineInput` (`packages/api/src/purchases.ts`)
-  carries these as optional fields; `createProductForLine` inserts the extra `products` columns
-  and, on success, inserts into `product_variants`/`inventory_batches` (same empty-row filtering
-  rules as `ProductFormPage.tsx`'s own save mutation — best-effort, a failure here does not fail
-  the purchase since the product row was already committed).
+  section; Invoice No `lg:w-[160px]`; Date `lg:w-[150px]`; Purchase Type toggle `lg:w-[170px]`
+  — **Cash listed first and selected by default on a new purchase** (was Credit-first/default);
+  Notes `flex-1`, stretches to fill remaining width — `flex flex-col lg:flex-row`, stacks on
+  narrower screens) → an "Add Item" entry card → items table → footer totals (CGST/SGST or
+  IGST, Bill Discount, Round Off, Total).
+- **Add Item card (redesigned 2026-09-03/04 per merchant UX feedback)** — the "More details"
+  collapsible described in older docs is GONE; every field always lives at a fixed position so
+  the card's layout is identical in the empty state and while typing (no field appears/
+  disappears from typing alone — only from the gear settings below):
+  - Header row: title, a **Track Variants** toggle (always visible/clickable — pre-arms
+    `has_variants` even before a product name is typed; the moment a NEW name is then typed the
+    variant editor is already active, see `handleEntryNameChange`'s `base` computation, which
+    preserves a pre-armed `has_variants`/`variants` across its otherwise-full `emptyRow()` reset.
+    **Disabled** — not clickable — whenever an EXISTING product is currently selected
+    (`entry.product_id` set): an existing product's variant status is fixed in the DB, and a
+    bare toggle here previously flipped the Row 1 layout to the variant shape with no matching
+    `VariantEditor` ever rendering, a dead end caught in QC), then a **gear/settings icon**.
+  - Gear dropdown ("Show fields"): 3 toggles — **HSN Code**, **Batches**, **Expiry Date** —
+    persisted per-org to `org_settings.branding.purchase_entry_fields: { hsn?, batches?,
+    expiry? }` (new `OrgBranding` field in `packages/core/src/types/index.ts`; default `true`
+    when unset). Turning one OFF **fully removes that field from the DOM** everywhere it
+    appears (main Row 2, and the per-variant HSN field below) — not just disables it. Batches
+    has no separate "Track Batches" toggle any more: the gear's Batches switch is the sole
+    on/off control, and a `useEffect` auto-syncs `entry.has_batches` to match it (auto-seeding
+    one empty batch row, resetting `entry_unit_id` to the base unit) whenever the row is
+    eligible (`is_new_product && !has_variants`).
+  - Row 1 (non-variant): **Product Name, Product Code (auto-generated, was mislabeled "SKU"),
+    Barcode, Tax %, GST (dropdown reads "Include"/"Exclude" spelled out)**. The old separate
+    free-text "SKU" field (`extra_sku`) was removed from this form entirely — the column and
+    other read paths (edit-mode load, CSV import) are untouched, it's just not collected here.
+  - Row 2 (non-variant): **Qty, Unit, Purchase Price, MRP, Retail Price, Category**, then
+    optionally **Expiry Date** and **HSN Code** (gear-gated, see above). Category/Unit always
+    render — a disabled "Existing product" / unit-name placeholder when `!is_new_product` —
+    since those two are per-row concerns unrelated to the gear settings. The old "SP (Special)"
+    field was removed from this row entirely (`special_price` stays on `PurchaseRow` for
+    edit-mode loading and the variant editor's own SP field, just not collected here). The
+    grid's column count at the `lg` breakpoint (`row2LgColsClass` in `PurchaseFormPage.tsx`) is
+    computed from how many of these fields are actually visible (6–8) rather than a fixed
+    8-column grid, so Row 2 always spans full width with no dead trailing space regardless of
+    which gear toggles are on.
+  - Batches editor: no toggle of its own (see gear dropdown above) — shown inline whenever
+    eligible, directly below the Add to List button.
+  - Items table: the "SP" column was removed (both the non-variant and per-variant cell
+    renders) alongside the SP field removal from entry.
+- **Per-variant HSN Code (added 2026-09-04)**: `VariantEditor.tsx` (shared by
+  `PurchaseFormPage.tsx` and `ProductFormPage.tsx`) gained an HSN Code field per variant row —
+  maps to the new `product_variants.hsn_code` column (migration `034_variant_hsn_code.sql`).
+  Gated by the same `showHsnField` gear toggle as the main form's Row 2 (passed in as a prop,
+  default `true` for any caller — e.g. `ProductFormPage.tsx` — that doesn't pass it explicitly,
+  so it's unaffected by the purchase-entry-only gear setting). Wired through
+  `packages/api/src/purchases.ts`'s `PurchaseLineInput.variants[].hsn_code` and the
+  `product_variants` insert, and through `ProductFormPage.tsx`'s own create/update/load paths
+  so a value typed there isn't silently dropped.
 - **Unified purchase entry + product creation** (fixes the old "double entry" problem): typing
-  a product name that doesn't match an existing product auto-generates SKU (`generateSku()`)
-  and barcode (`generateBarcode()`, both in `packages/core/src/codes.ts`), badges the row "New",
-  and creates the product row on Save via `packages/api/src/purchases.ts`'s `createPurchase`
-  (which calls `createProduct` internally) — no separate trip to `/products/new` needed.
-  Selecting an existing product locks Code/Barcode read-only and prefills GST/rates, with an
-  "Update this product's cost/price/GST" checkbox (default ON) to sync changed rates back.
+  a product name that doesn't match an existing product auto-generates a Product Code
+  (`generateProductCode()`, sequential `PC0001`-style) and barcode (`generateBarcode()`, in
+  `packages/core/src/codes.ts`), badges the row "New", and creates the product row on Save via
+  `packages/api/src/purchases.ts`'s `createPurchase` (which calls `createProductForLine`
+  internally) — no separate trip to `/products/new` needed. Selecting an existing product locks
+  Code/Barcode read-only and prefills GST/rates, with an "Update this product's cost/price/GST"
+  checkbox (default ON) to sync changed rates back.
 - Debounced live uniqueness check on Code/Barcode fields (queries `products` directly) — blocks
   duplicates before Save is even attempted, not just on DB constraint violation.
-- GST is computed per-line via `packages/core`'s `computeGST`/`computeLineTax` (previously
-  purchases had NO tax computation at all — this is new). Interstate vs intrastate is derived
-  from `org.state_code` (2-letter alpha, e.g. "TN") vs the supplier's GSTIN — **GSTIN's first 2
-  digits are numeric** (e.g. "33"), so a `stateCodeFromGSTIN()` lookup table in
-  `packages/core/src/gstinStates.ts` maps GSTIN numeric prefixes to alpha state codes before
-  comparing; comparing raw GSTIN digits against `org.state_code` directly (as first attempted)
-  is WRONG and makes every supplier-with-GSTIN look interstate.
+- GST is computed per-line via `packages/core`'s `computeGST`/`computeLineTax`. Interstate vs
+  intrastate is derived from `org.state_code` (2-letter alpha, e.g. "TN") vs the supplier's
+  GSTIN — **GSTIN's first 2 digits are numeric** (e.g. "33"), so a `stateCodeFromGSTIN()` lookup
+  table in `packages/core/src/gstinStates.ts` maps GSTIN numeric prefixes to alpha state codes
+  before comparing; comparing raw GSTIN digits against `org.state_code` directly (as first
+  attempted) is WRONG and makes every supplier-with-GSTIN look interstate.
 - **Stock double-count bug (fixed 2026-07-29)**: the app used to manually upsert `inventory`
   in `savePurchaseItems` AFTER inserting `purchase_items`, on top of the DB trigger
   `increment_stock_on_purchase` (which already does its own upsert + `stock_movements` insert
