@@ -5,6 +5,7 @@ import { generateBarcode, generateSku } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
+import { cn } from '@/lib/utils'
 
 const GST_RATES: GSTRate[] = [0, 5, 12, 18, 28]
 
@@ -25,19 +26,30 @@ export interface VariantFormRow {
   gst_mode: 'include' | 'exclude'
   qty: string
   expiry_date: string
+  // Maps to product_variants.hsn_code (migration 034_variant_hsn_code.sql) — per merchant
+  // request, HSN is entered per-variant here rather than only once at the parent product
+  // level, since variants can legitimately carry different HSN codes.
+  hsn_code: string
 }
 
 export function emptyVariantRow(defaultTaxRate: GSTRate): VariantFormRow {
   return {
     variant_name: '', barcode_value: '', sku: '', tax_rate: defaultTaxRate,
     mrp: '', sale_price: '', special_price: '', purchase_price: '', gst_mode: 'include',
-    qty: '', expiry_date: '',
+    qty: '', expiry_date: '', hsn_code: '',
   }
 }
 
 function parseNum(s: string): number {
   const n = parseFloat(s)
   return isNaN(n) ? 0 : n
+}
+
+// Mirrors ProductSchema.hsn_code in packages/core/src/validation/index.ts and the equivalent
+// check in PurchaseFormPage.tsx — 4, 6, or 8 digits.
+function hsnCodeError(value: string): string | undefined {
+  if (!value) return undefined
+  return /^\d{4}(\d{2}(\d{2})?)?$/.test(value) ? undefined : 'Must be 4, 6, or 8 digits'
 }
 
 function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; onChange: (v: string) => void; onGenerate: () => void }) {
@@ -80,10 +92,15 @@ function PriceField({ label, required, amount, gstMode, taxRate, onAmountChange 
   )
 }
 
-export function VariantEditor({ variants, onChange, defaultTaxRate }: {
+export function VariantEditor({ variants, onChange, defaultTaxRate, showHsnField = true }: {
   variants: VariantFormRow[]
   onChange: (variants: VariantFormRow[]) => void
   defaultTaxRate: GSTRate
+  // Same gear toggle ("HSN Code" in PurchaseFormPage's Add Item settings) that controls the
+  // main non-variant Row 2's HSN field also controls this one — one switch, both places.
+  // Defaults true so any other caller of VariantEditor (e.g. ProductFormPage) that doesn't
+  // pass this prop keeps showing HSN, unaffected by the purchase-entry gear setting.
+  showHsnField?: boolean
 }) {
   function updateRow(i: number, patch: Partial<VariantFormRow>) {
     onChange(variants.map((v, j) => (j === i ? { ...v, ...patch } : v)))
@@ -160,8 +177,11 @@ export function VariantEditor({ variants, onChange, defaultTaxRate }: {
           </div>
 
           {/* Row 2: MRP, Retail Price, SP, Purchase Price (all equal width, each with its own
-              Base+GST breakdown line) | Qty | Expiry — one grid so everything aligns. */}
-          <div className="grid grid-cols-[1fr_1fr_1fr_1fr_0.6fr_0.75fr] gap-1.5">
+              Base+GST breakdown line) | Qty | Expiry | HSN Code — one grid so everything
+              aligns. HSN Code is gear-controlled (same "HSN Code" switch as the main
+              non-variant Row 2 in PurchaseFormPage) — only rendered when showHsnField is on,
+              which shrinks the grid to 6 columns rather than leaving a dead trailing cell. */}
+          <div className={cn('grid gap-1.5', showHsnField ? 'grid-cols-[1fr_1fr_1fr_1fr_0.6fr_0.75fr_0.75fr]' : 'grid-cols-[1fr_1fr_1fr_1fr_0.6fr_0.75fr]')}>
             <PriceField label="MRP" amount={v.mrp} gstMode={v.gst_mode} taxRate={v.tax_rate}
               onAmountChange={(val) => updateRow(i, { mrp: val })} />
             <PriceField label="Retail Price" required amount={v.sale_price} gstMode={v.gst_mode} taxRate={v.tax_rate}
@@ -179,6 +199,15 @@ export function VariantEditor({ variants, onChange, defaultTaxRate }: {
               <label className="text-[9px] uppercase text-zinc-500">Expiry</label>
               <Input type="date" value={v.expiry_date} onChange={(e) => updateRow(i, { expiry_date: e.target.value })} className="h-8 text-xs" />
             </div>
+            {showHsnField && (
+              <div>
+                <label className="text-[9px] uppercase text-zinc-500">HSN Code</label>
+                <Input placeholder="e.g. 2501" value={v.hsn_code} onChange={(e) => updateRow(i, { hsn_code: e.target.value })} className="h-8 text-xs" />
+                {hsnCodeError(v.hsn_code) && (
+                  <p className="text-[9px] text-amber-400 mt-0.5">{hsnCodeError(v.hsn_code)}</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ))}

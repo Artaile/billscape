@@ -130,6 +130,14 @@ export interface OrgBranding {
   print_thank_you_note?: string
   // Custom Fields Definition
   custom_fields?: CustomFieldDefinition[]
+  // Purchase entry form field visibility (Add Item card, /purchases/new) — per-org, gear-icon
+  // toggled. Undefined/missing keys default to true (existing orgs see no change until they
+  // opt a field out). Show Batches doubles as the Track Batches on/off switch itself.
+  purchase_entry_fields?: {
+    hsn?: boolean
+    batches?: boolean
+    expiry?: boolean
+  }
 }
 
 export interface CustomFieldDefinition {

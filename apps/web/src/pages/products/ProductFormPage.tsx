@@ -266,6 +266,7 @@ export function ProductFormPage() {
         gst_mode: v.sale_gst_mode ?? 'include',
         qty: v.qty != null ? String(v.qty) : (v.stock_qty != null ? String(v.stock_qty) : ''),
         expiry_date: v.expiry_date ?? '',
+        hsn_code: v.hsn_code ?? '',
       })))
     }
   }, [existingVariants])
@@ -437,6 +438,7 @@ export function ProductFormPage() {
               purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
               purchase_gst_mode: v.gst_mode,
               expiry_date: v.expiry_date || null,
+              hsn_code: v.hsn_code || null,
               // qty/stock_qty deliberately NOT written here — the qty field on this page is
               // last-known-value display only, never a stock-adjustment path; real stock lives
               // in variant_inventory and is only ever moved by Purchases/POS.
@@ -464,6 +466,7 @@ export function ProductFormPage() {
               qty: v.qty ? Number(v.qty) : 0,
               stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
               expiry_date: v.expiry_date || null,
+              hsn_code: v.hsn_code || null,
             }))
           ).select('id')
 

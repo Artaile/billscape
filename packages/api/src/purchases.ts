@@ -48,6 +48,8 @@ export interface PurchaseLineInput {
     purchase_gst_mode?: 'include' | 'exclude'
     qty?: number
     expiry_date?: string
+    // Maps to product_variants.hsn_code (migration 034_variant_hsn_code.sql).
+    hsn_code?: string
   }[]
   batches?: { batch_no: string; expiry_date: string; qty: number }[]
   // Required for new-product lines (DB requires products.unit_id); unused for existing products.
@@ -148,6 +150,7 @@ async function createProductForLine(
           qty: v.qty ? Number(v.qty) : 0,
           stock_qty: v.qty ? Number(v.qty) : 0, // keep legacy stock_qty in sync — still read by any older code path
           expiry_date: v.expiry_date || null,
+          hsn_code: v.hsn_code || null,
         })),
       ).select('id')
       if (!variantsError && insertedVariants) {

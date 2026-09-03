@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, ChevronDown, ChevronUp, Trash2, Camera } from 'lucide-react'
+import { ArrowLeft, Plus, X, Pencil, Loader2, Printer, RefreshCw, Truck, Package, ListChecks, Receipt, Trash2, Camera, Settings2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
-  generateBarcode, generateSku, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitInclusiveGST,
+  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitInclusiveGST,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, recordPurchasePayment, createCategory, type PurchaseLineInput } from '@billscape/api'
@@ -71,7 +71,6 @@ export interface PurchaseRow {
   variants: VariantFormRow[]
   has_batches: boolean
   batches: BatchRow[]
-  showMoreDetails: boolean
   // Unit of measure. unit_id is the product's base (stocking) unit — required for new products,
   // read-only/inherited for existing products. entry_unit_id is which unit THIS purchase line was
   // entered in (base or secondary) — qty is converted to base-unit qty via toBaseQty() on save.
@@ -121,7 +120,7 @@ function emptyRow(): PurchaseRow {
     mrp: '', price: '0', special_price: '', expiry_date: '',
     update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
     category_id: null, hsn_code: '', has_variants: false, variants: [],
-    has_batches: false, batches: [], showMoreDetails: false,
+    has_batches: false, batches: [],
     unit_id: '', secondary_unit_id: null, conversion_factor: null, entry_unit_id: '',
   }
 }
@@ -135,7 +134,7 @@ export function PurchaseFormPage() {
   const importedRows = (location.state as { importedRows?: ImportedPurchaseRow[]; importSupplierId?: string } | null)?.importedRows
   const importSupplierIdFromState = (location.state as { importSupplierId?: string } | null)?.importSupplierId
   const draftId = (location.state as { draftId?: string } | null)?.draftId
-  const { org, user } = useAuth()
+  const { org, user, refreshOrg } = useAuth()
   const orgId = org?.id
   const taxInclusive = org?.branding?.tax_inclusive ?? false
   const queryClient = useQueryClient()
@@ -144,7 +143,7 @@ export function PurchaseFormPage() {
   const [supplierId, setSupplierId] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [purchaseType, setPurchaseType] = useState<'credit' | 'cash'>('credit')
+  const [purchaseType, setPurchaseType] = useState<'credit' | 'cash'>('cash')
   const [notes, setNotes] = useState('')
   const [showAddSupplier, setShowAddSupplier] = useState(false)
   const [showAddCategory, setShowAddCategory] = useState(false)
@@ -152,6 +151,45 @@ export function PurchaseFormPage() {
 
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
   const [scanOpen, setScanOpen] = useState(false)
+
+  // Add Item form field visibility (gear icon) — persisted per-org on org_settings.branding
+  // (see purchase_entry_fields in packages/core's OrgBranding). Undefined key = on by default
+  // so existing orgs see no change until a merchant opts a field out.
+  const fieldPrefs = org?.branding?.purchase_entry_fields
+  const showHsnField = fieldPrefs?.hsn ?? true
+  const showBatchesField = fieldPrefs?.batches ?? true
+  const showExpiryField = fieldPrefs?.expiry ?? true
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsRef = useRef<HTMLDivElement | null>(null)
+
+  const updateFieldPrefsMutation = useMutation({
+    mutationFn: async (next: { hsn: boolean; batches: boolean; expiry: boolean }) => {
+      if (!orgId) throw new Error('Not logged in')
+      const { error } = await supabase.from('org_settings').upsert({
+        organization_id: orgId,
+        branding: { ...(org?.branding ?? {}), purchase_entry_fields: next },
+      }, { onConflict: 'organization_id' })
+      if (error) throw error
+    },
+    onSuccess: () => { refreshOrg() },
+    onError: (err: Error) => toast.error('Failed to save field settings', err.message),
+  })
+
+  function toggleFieldPref(key: 'hsn' | 'batches' | 'expiry') {
+    const next = { hsn: showHsnField, batches: showBatchesField, expiry: showExpiryField, [key]: !{ hsn: showHsnField, batches: showBatchesField, expiry: showExpiryField }[key] }
+    updateFieldPrefsMutation.mutate(next)
+    // Batches has no separate in-form toggle any more — the gear's "Batches" switch is the
+    // sole on/off control; the has_batches-sync effect below (keyed on showBatchesField)
+    // turns entry.has_batches on/off to match automatically once org.branding updates.
+  }
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) setSettingsOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   // When batch tracking is enabled for the entry row, Qty becomes a read-only rollup of
   // the batch quantities below it (matches IppoBill's "Allocated from batches below" pattern) —
@@ -163,6 +201,28 @@ export function PurchaseFormPage() {
       setEntry((p) => (p.has_batches ? { ...p, qty: String(total) } : p))
     }
   }, [entry.has_batches, entry.batches])
+
+  // Batches has no separate "Track Batches" toggle any more — the gear's "Show Batches"
+  // switch is the sole on/off control (per merchant feedback: a second toggle duplicating a
+  // gear switch was confusing). Whenever it's on for a new, non-variant product, batch
+  // tracking is simply always active on the row being entered; whenever it's off, or the row
+  // isn't eligible (existing product, or has_variants), has_batches is forced back off.
+  useEffect(() => {
+    const eligible = entry.is_new_product && !entry.has_variants && showBatchesField
+    if (eligible && !entry.has_batches) {
+      setEntry((p) => ({
+        ...p, has_batches: true,
+        // Force batch quantities to be entered in the base unit (unit_id), never the
+        // secondary unit — batchQtyTotal() has no unit-conversion awareness, so mixing units
+        // here would silently mis-scale the synced Qty (see rowBaseQty's own base-unit-only
+        // assumption for money math). Mirrors the old manual toggle's own on-click behavior.
+        entry_unit_id: p.unit_id,
+        batches: p.batches.length === 0 ? [{ batch_no: '', expiry_date: '', qty: p.qty !== '0' ? p.qty : '' }] : p.batches,
+      }))
+    } else if (!eligible && entry.has_batches) {
+      setEntry((p) => ({ ...p, has_batches: false }))
+    }
+  }, [entry.is_new_product, entry.has_variants, entry.has_batches, showBatchesField])
 
   const [entrySearch, setEntrySearch] = useState('')
   const [entryDropdownOpen, setEntryDropdownOpen] = useState(false)
@@ -248,7 +308,7 @@ export function PurchaseFormPage() {
             update_existing_pricing: true,
             skuManuallyEdited: true, barcodeManuallyEdited: true,
             category_id: null, hsn_code: '', has_variants: false, variants: [],
-            has_batches: false, batches: [], showMoreDetails: false,
+            has_batches: false, batches: [],
             unit_id: product?.unit_id ?? '',
             secondary_unit_id: product?.secondary_unit_id ?? null,
             conversion_factor: product?.conversion_factor ?? null,
@@ -348,7 +408,7 @@ export function PurchaseFormPage() {
           expiry_date: match.expiry_date ?? '',
           update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
           category_id: null, hsn_code: '', has_variants: false, variants: [],
-          has_batches: false, batches: [], showMoreDetails: false,
+          has_batches: false, batches: [],
           unit_id: match.unit_id, secondary_unit_id: match.secondary_unit_id,
           conversion_factor: match.conversion_factor, entry_unit_id: match.unit_id,
         }
@@ -363,7 +423,7 @@ export function PurchaseFormPage() {
         mrp: '', price: imp.unit_cost, special_price: '', expiry_date: '',
         update_existing_pricing: true, skuManuallyEdited: false, barcodeManuallyEdited: false,
         category_id: null, hsn_code: '', has_variants: false, variants: [],
-        has_batches: false, batches: [], showMoreDetails: false,
+        has_batches: false, batches: [],
         unit_id: defaultUnitId, secondary_unit_id: null, conversion_factor: null, entry_unit_id: defaultUnitId,
       }
     })
@@ -520,7 +580,7 @@ export function PurchaseFormPage() {
       expiry_date: p.expiry_date ?? '',
       update_existing_pricing: true, skuManuallyEdited: true, barcodeManuallyEdited: true,
       category_id: null, hsn_code: '', has_variants: false, variants: [],
-      has_batches: false, batches: [], showMoreDetails: false,
+      has_batches: false, batches: [],
       unit_id: p.unit_id, secondary_unit_id: p.secondary_unit_id,
       conversion_factor: p.conversion_factor, entry_unit_id: p.unit_id,
     })
@@ -542,7 +602,14 @@ export function PurchaseFormPage() {
       // (tax_rate, unit_cost, mrp, price, special_price, update_existing_pricing, and the
       // manually-edited flags that suppress SKU/barcode regeneration) linger and a "New" row
       // can end up reusing an existing product's SKU/barcode on save.
-      const base = prev.is_new_product ? prev : emptyRow()
+      //
+      // has_variants/variants are the one exception — Track Variants is now clickable before
+      // any product name is typed (pre-arming variant mode), and that pre-armed choice must
+      // survive this reset instead of being silently discarded by emptyRow(). Carried forward
+      // from prev regardless of prev.is_new_product, since the toggle is meant to persist
+      // across the "was an existing product selected, now typing something else" transition
+      // too — the merchant explicitly turned it on and expects it to stick.
+      const base = prev.is_new_product ? prev : { ...emptyRow(), has_variants: prev.has_variants, variants: prev.variants }
       const defaultUnitId = base.unit_id || units?.find((u) => u.name === 'Piece')?.id || units?.[0]?.id || ''
       return {
         ...base, product_id: null, is_new_product: true, product_name: val,
@@ -710,6 +777,7 @@ export function PurchaseFormPage() {
                 purchase_gst_mode: v.gst_mode,
                 qty: v.qty ? parseNum(v.qty) : undefined,
                 expiry_date: v.expiry_date || undefined,
+                hsn_code: v.hsn_code || undefined,
               }))
             : undefined,
           batches: r.is_new_product && r.has_batches
@@ -822,6 +890,19 @@ export function PurchaseFormPage() {
 
   const filtered = getFiltered(entrySearch)
 
+  // Row 2's field count varies with the gear settings (Qty/Purchase Price/MRP/Retail
+  // Price/Category/Unit always render, Expiry Date and HSN Code are conditional) — the lg
+  // breakpoint's column count must match exactly how many are visible right now, or the
+  // remaining fields leave dead space instead of stretching to fill the row. Tailwind's JIT
+  // scanner needs full class names present in source (not built via string interpolation),
+  // so this is a literal lookup rather than a template string.
+  const row2VisibleCount = 6 + (showExpiryField ? 1 : 0) + (showHsnField ? 1 : 0)
+  const row2LgColsClass = {
+    6: 'lg:grid-cols-6',
+    7: 'lg:grid-cols-7',
+    8: 'lg:grid-cols-8',
+  }[row2VisibleCount] ?? 'lg:grid-cols-8'
+
   return (
     <div className="p-4 lg:p-6 max-w-[1800px] mx-auto">
       <div className="flex items-center justify-between gap-3 mb-6">
@@ -895,7 +976,7 @@ export function PurchaseFormPage() {
               <div className="lg:w-[170px] shrink-0 space-y-1.5">
                 <Label>Purchase Type</Label>
                 <div className="flex gap-2">
-                  {(['credit', 'cash'] as const).map((t) => (
+                  {(['cash', 'credit'] as const).map((t) => (
                     <button key={t} type="button" onClick={() => setPurchaseType(t)}
                       className={cn('px-3 py-1.5 rounded-md text-sm font-medium border transition-all capitalize',
                         purchaseType === t ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600')}>
@@ -916,15 +997,85 @@ export function PurchaseFormPage() {
           <div className="space-y-5">
               {/* Entry strip */}
               <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-300 shrink-0">
                     <Package className="h-4 w-4 text-indigo-400" />{editingIndex !== null ? 'Edit Item' : 'Add Item'}
                   </h2>
-                  {editingIndex !== null && (
-                    <button type="button" onClick={cancelEdit} className="text-xs text-zinc-500 hover:text-zinc-300">
-                      Cancel edit
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {editingIndex !== null && (
+                      <button type="button" onClick={cancelEdit} className="text-xs text-zinc-500 hover:text-zinc-300">
+                        Cancel edit
+                      </button>
+                    )}
+                    {/* Track Variants is always rendered here (previously gated behind
+                        entry.is_new_product, which meant the header's button set visibly
+                        changed the instant a product name was typed — the same class of
+                        layout-shift bug already fixed for Row 2's fields). It's fully
+                        clickable before a product name is typed, pre-arming has_variants so
+                        the moment a NEW product name is typed, the variant editor is already
+                        active — see handleEntryNameChange's `base` computation, which now
+                        preserves a pre-armed has_variants instead of discarding it via
+                        emptyRow(). It is DISABLED (not clickable) whenever an EXISTING product
+                        is currently selected (entry.product_id set, !is_new_product) — an
+                        existing product's variant status is fixed at the DB level and isn't
+                        something this purchase-entry form can toggle; a bare unconditional
+                        toggle here previously flipped entry.has_variants (which alone drives
+                        Row 1's layout) to true with no matching VariantEditor ever rendering
+                        (that requires is_new_product too), leaving "Add to List" permanently
+                        blocked with no visible recovery — a real dead end caught in QC, not
+                        merely a cosmetic no-op as an earlier version of this comment claimed. */}
+                    <label className={cn('flex items-center gap-2', entry.product_id ? 'cursor-not-allowed opacity-50' : 'cursor-pointer')}>
+                      <span className="text-xs text-zinc-400 whitespace-nowrap">Track Variants</span>
+                      <div
+                        onClick={() => {
+                          if (entry.product_id) return
+                          setEntry((p) => ({
+                            ...p, has_variants: !p.has_variants,
+                            variants: !p.has_variants && p.variants.length === 0 ? [emptyVariantRow(p.tax_rate)] : p.variants,
+                            has_batches: !p.has_variants ? false : p.has_batches,
+                            batches: !p.has_variants ? [] : p.batches,
+                          }))
+                        }}
+                        className={cn(
+                          'relative h-5 w-9 rounded-full transition-colors shrink-0',
+                          entry.product_id ? 'cursor-not-allowed' : 'cursor-pointer',
+                          entry.has_variants ? 'bg-indigo-600' : 'bg-zinc-700',
+                        )}
+                      >
+                        <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_variants ? 'translate-x-4' : 'translate-x-0')} />
+                      </div>
+                    </label>
+                    <div className="relative" ref={settingsRef}>
+                      <button
+                        type="button"
+                        title="Field settings"
+                        onClick={() => setSettingsOpen((o) => !o)}
+                        className={cn('p-1.5 rounded-md border transition-colors', settingsOpen ? 'border-indigo-500 text-indigo-400 bg-indigo-950/30' : 'border-zinc-700 text-zinc-400 hover:text-white hover:border-zinc-600')}
+                      >
+                        <Settings2 className="h-3.5 w-3.5" />
+                      </button>
+                      {settingsOpen && (
+                        <div className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-md border border-zinc-700 bg-zinc-900 shadow-xl p-3 space-y-2.5">
+                          <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Show fields</p>
+                          {([
+                            { key: 'hsn' as const, label: 'HSN Code', value: showHsnField },
+                            { key: 'batches' as const, label: 'Batches', value: showBatchesField },
+                            { key: 'expiry' as const, label: 'Expiry Date', value: showExpiryField },
+                          ]).map((opt) => (
+                            <label key={opt.key} className="flex items-center justify-between gap-2 cursor-pointer">
+                              <span className="text-xs text-zinc-300">{opt.label}</span>
+                              <div
+                                onClick={() => toggleFieldPref(opt.key)}
+                                className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer shrink-0', opt.value ? 'bg-indigo-600' : 'bg-zinc-700')}
+                              >
+                                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', opt.value ? 'translate-x-4' : 'translate-x-0')} />
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 {/* Row 1 (has_variants only): Product name shares this row with Product Code —
                     VariantEditor below carries every real barcode/SKU/GST/price per-variant, so
@@ -980,14 +1131,18 @@ export function PurchaseFormPage() {
                   </div>
                 )}
 
-                {/* Row 1 (non-variant): Product name, Barcode, SKU, Tax %, GST mode — mirrors
-                    VariantEditor's own Row 1 shape (Name/Barcode/SKU/Tax/GST), just without the
-                    per-variant repetition. Rendered only when !has_variants; the has_variants
-                    Row 1 above already covers Product Name + Code in that case. */}
+                {/* Row 1 (non-variant): Product Name, Product Code, Barcode, Tax %, GST mode —
+                    reordered per merchant UX request so the auto-generated Product Code sits
+                    right next to the name (its primary identifier), followed by Barcode and tax
+                    fields. The separate free-text "SKU" field (extra_sku) was removed from this
+                    entry form entirely — extra_sku stays on PurchaseRow/products for edit-mode
+                    loading and other call sites, it's just no longer collected here. Rendered
+                    only when !has_variants; the has_variants Row 1 above already covers Product
+                    Name + Code in that case. */}
                 {!entry.has_variants && (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-[1.7fr_1.6fr_1.3fr_0.6fr_0.6fr]">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-[2fr_0.9fr_1.4fr_0.7fr_0.9fr]">
                     <div className="space-y-1 relative col-span-2 sm:col-span-1" ref={dropdownRef}>
-                      <Label className="text-xs">Product *</Label>
+                      <Label className="text-xs">Product Name *</Label>
                       <Input
                         ref={productNameRef}
                         placeholder="Search or type new product"
@@ -1014,6 +1169,23 @@ export function PurchaseFormPage() {
                           ))}
                         </div>
                       )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Product Code{entry.is_new_product && ' *'}</Label>
+                      <div className="flex gap-1">
+                        <Input
+                          value={entry.sku}
+                          disabled={!entry.is_new_product}
+                          onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
+                          className="h-9 text-xs font-mono"
+                        />
+                        {entry.is_new_product && (
+                          <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                            <RefreshCw className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="space-y-1">
@@ -1047,24 +1219,6 @@ export function PurchaseFormPage() {
                     </div>
 
                     <div className="space-y-1">
-                      <Label className="text-xs">SKU <span className="text-zinc-600 normal-case">(optional)</span></Label>
-                      <div className="flex gap-1">
-                        <Input
-                          placeholder="Auto or type"
-                          value={entry.extra_sku ?? ''}
-                          disabled={!entry.is_new_product}
-                          onChange={(e) => setEntry((p) => ({ ...p, extra_sku: e.target.value }))}
-                          className="h-9 text-xs font-mono"
-                        />
-                        {entry.is_new_product && (
-                          <button type="button" title="Generate" onClick={() => setEntry((p) => ({ ...p, extra_sku: generateSku() }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                            <RefreshCw className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
                       <Label className="text-xs">Tax %</Label>
                       <select
                         value={entry.tax_rate}
@@ -1082,21 +1236,74 @@ export function PurchaseFormPage() {
                         onChange={(e) => setEntry((p) => ({ ...p, gst_mode: e.target.value as 'include' | 'exclude' }))}
                         className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100"
                       >
-                        <option value="include">Incl</option>
-                        <option value="exclude">Excl</option>
+                        <option value="include">Include</option>
+                        <option value="exclude">Exclude</option>
                       </select>
                     </div>
                   </div>
                 )}
 
-                {/* Row 2 (non-variant): Purchase Price, MRP, Retail Price, SP, Qty, Expiry —
-                    mirrors VariantEditor's own Row 2 shape (4 price fields + Qty + Expiry). Each
-                    price field shows its own Base+GST breakdown driven by this row's own GST mode
-                    toggle above, not the org-wide tax_inclusive setting. */}
+                {/* Row 2 (non-variant): Qty, Unit, Purchase Price, MRP, Retail Price, Category,
+                    Expiry Date, HSN Code — one row, reordered per merchant UX request (Unit
+                    moved to sit right after Qty). SP
+                    (Special Price) was removed from this entry form entirely (special_price
+                    stays on PurchaseRow for edit-mode loading and the variant editor's own SP
+                    field, just no longer collected here). Expiry Date and HSN Code were
+                    originally their own standalone rows below (each gear-gated) but merchant
+                    feedback asked for them folded back into this row instead of a 3rd row.
+                    Each price field shows its own Base+GST breakdown driven by this row's own
+                    GST mode toggle above, not the org-wide tax_inclusive setting.
+
+                    Category/Unit ALWAYS render (a disabled placeholder when not applicable —
+                    existing product selected) so the row's shape doesn't change as you type a
+                    product name; that's a per-row, per-keystroke concern, gear settings don't
+                    control these two. Expiry Date / HSN Code are the opposite: they are gear-
+                    controlled fields, and per merchant feedback a gear toggle turned OFF must
+                    make the field disappear from the form, not just gray it out — so these two
+                    are conditionally rendered on showExpiryField / showHsnField, changing the
+                    row's column count only when a gear setting is toggled, never when typing.
+
+                    The grid's column count at the lg breakpoint is computed from how many of
+                    these fields are actually visible right now (row2LgColsClass, 6-8 columns)
+                    instead of a fixed lg:grid-cols-8 — with a fixed 8 and only 6 rendered, the
+                    row left two empty trailing cells instead of the remaining fields stretching
+                    to fill the width. Narrower screens keep the static 2/4-col wrap. */}
                 {!entry.has_variants && (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+                  <div className={cn('grid grid-cols-2 gap-2 sm:grid-cols-4', row2LgColsClass)}>
                     <div className="space-y-1">
-                      <Label className="text-xs">Purchase Rate</Label>
+                      <Label className="text-xs">Qty *</Label>
+                      {/* Qty is only locked to the batch-editor rollup while that editor is
+                          actually visible (showBatchesField on) — otherwise a row edited after
+                          the org turned "Show Batches" off would show a permanently disabled Qty
+                          with no visible batch editor to fix it (has_batches can still be true on
+                          an already-saved row even when the org-wide setting is currently off). */}
+                      <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
+                        disabled={entry.has_batches && showBatchesField}
+                        onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))}
+                        className={cn('h-9 text-sm text-center', entry.has_batches && showBatchesField && 'opacity-60 cursor-not-allowed')} />
+                      {entry.has_batches && showBatchesField && (
+                        <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Unit{entry.is_new_product && ' *'}</Label>
+                      {entry.is_new_product ? (
+                        <select
+                          value={entry.unit_id}
+                          onChange={(e) => setEntry((p) => ({ ...p, unit_id: e.target.value, entry_unit_id: e.target.value }))}
+                          className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          {!entry.unit_id && <option value="">— Select unit —</option>}
+                          {units?.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>)}
+                        </select>
+                      ) : (
+                        <Input value={unitOf(entry.unit_id)?.name ?? '—'} disabled className="h-9 text-xs text-zinc-500" />
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs">Purchase Price</Label>
                       <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
                         onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
                       {entry.gst_mode === 'include' && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
@@ -1126,31 +1333,59 @@ export function PurchaseFormPage() {
                     </div>
 
                     <div className="space-y-1">
-                      <Label className="text-xs">SP (Special)</Label>
-                      <Input type="text" inputMode="decimal" value={entry.special_price} onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEntry((p) => ({ ...p, special_price: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
-                      {entry.gst_mode === 'include' && parseNum(entry.special_price) > 0 && entry.tax_rate > 0 && (() => {
-                        const { base, tax } = splitInclusiveGST(parseNum(entry.special_price), entry.tax_rate)
-                        return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
-                      })()}
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs">Qty *</Label>
-                      <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
-                        disabled={entry.has_batches}
-                        onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))}
-                        className={cn('h-9 text-sm text-center', entry.has_batches && 'opacity-60 cursor-not-allowed')} />
-                      {entry.has_batches && (
-                        <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
+                      <Label className="text-xs">Category</Label>
+                      {entry.is_new_product ? (
+                        <div className="flex gap-1">
+                          <select
+                            value={entry.category_id ?? ''}
+                            onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
+                            className="h-9 flex-1 min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="">— No category —</option>
+                            {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <button type="button" title="Add new category" onClick={() => setShowAddCategory(true)}
+                            className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <Input value="Existing product" disabled className="h-9 text-xs text-zinc-500" />
                       )}
                     </div>
 
-                    <div className="space-y-1">
-                      <Label className="text-xs">Expiry</Label>
-                      <Input type="date" value={entry.expiry_date}
-                        onChange={(e) => setEntry((p) => ({ ...p, expiry_date: e.target.value }))} className="h-9 text-sm" />
-                    </div>
+                    {/* Expiry Date — only rendered at all when the gear's "Show Expiry Date"
+                        is on; turning that off removes the field from the form entirely rather
+                        than merely disabling it. */}
+                    {showExpiryField && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">Expiry Date</Label>
+                        <Input type="date" value={entry.expiry_date}
+                          onChange={(e) => setEntry((p) => ({ ...p, expiry_date: e.target.value }))}
+                          className="h-9 text-sm" />
+                      </div>
+                    )}
+
+                    {/* HSN Code — only rendered when the gear's "Show HSN Code" is on. New-
+                        product-only within that (existing products already carry their own
+                        HSN), so it still shows a disabled placeholder for an existing-product
+                        row — same convention as Category/Unit — rather than disappearing
+                        depending on what's typed in Product Name. */}
+                    {showHsnField && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">HSN Code</Label>
+                        <Input
+                          placeholder="e.g. 2501"
+                          value={entry.hsn_code}
+                          disabled={!entry.is_new_product}
+                          onChange={(e) => setEntry((p) => ({ ...p, hsn_code: e.target.value }))}
+                          className={cn('h-9 text-xs', !entry.is_new_product && 'opacity-60 cursor-not-allowed')}
+                        />
+                        {hsnCodeError(entry.hsn_code) && (
+                          <p className="text-[11px] text-amber-400">{hsnCodeError(entry.hsn_code)}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1205,164 +1440,61 @@ export function PurchaseFormPage() {
                   </label>
                 )}
 
-                {/* More details — new-product-only metadata (category, HSN, variants, batches).
-                    Existing products already carry this on their own record, nothing to add. */}
-                {entry.is_new_product && (
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setEntry((p) => ({ ...p, showMoreDetails: !p.showMoreDetails }))}
-                      className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
-                    >
-                      {entry.showMoreDetails ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                      More details
-                      <span className="text-zinc-600">(Category, HSN, Unit, Variants, Batches)</span>
-                    </button>
+                {/* Variants editor — Track Variants toggle itself now lives in the card header
+                    (left of the gear icon), this just renders the per-variant rows once it's on. */}
+                {entry.is_new_product && entry.has_variants && (
+                  <VariantEditor
+                    variants={entry.variants}
+                    onChange={(variants) => setEntry((p) => ({ ...p, variants }))}
+                    defaultTaxRate={entry.tax_rate}
+                    showHsnField={showHsnField}
+                  />
+                )}
 
-                    {entry.showMoreDetails && (
-                      <div className="mt-3 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Category</Label>
-                            <div className="flex gap-1">
-                              <select
-                                value={entry.category_id ?? ''}
-                                onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
-                                className="h-9 flex-1 min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              >
-                                <option value="">— No category —</option>
-                                {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                              </select>
-                              <button type="button" title="Add new category" onClick={() => setShowAddCategory(true)}
-                                className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Unit *</Label>
-                            <select
-                              value={entry.unit_id}
-                              onChange={(e) => setEntry((p) => ({ ...p, unit_id: e.target.value, entry_unit_id: e.target.value }))}
-                              className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                              {!entry.unit_id && <option value="">— Select unit —</option>}
-                              {units?.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>)}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">HSN Code</Label>
-                            <Input
-                              placeholder="e.g. 2501"
-                              value={entry.hsn_code}
-                              onChange={(e) => setEntry((p) => ({ ...p, hsn_code: e.target.value }))}
-                              className="h-9 text-xs"
-                            />
-                            {hsnCodeError(entry.hsn_code) && (
-                              <p className="text-[11px] text-amber-400">{hsnCodeError(entry.hsn_code)}</p>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Variants */}
-                        <div className="space-y-2">
-                          <label className="flex items-center gap-2 cursor-pointer w-fit">
-                            <div
-                              onClick={() => setEntry((p) => ({
-                                ...p, has_variants: !p.has_variants,
-                                variants: !p.has_variants && p.variants.length === 0 ? [emptyVariantRow(p.tax_rate)] : p.variants,
-                                has_batches: !p.has_variants ? false : p.has_batches,
-                                batches: !p.has_variants ? [] : p.batches,
-                              }))}
-                              className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_variants ? 'bg-indigo-600' : 'bg-zinc-700')}
-                            >
-                              <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_variants ? 'translate-x-4' : 'translate-x-0')} />
-                            </div>
-                            <span className="text-xs text-zinc-400">Track Variants</span>
-                          </label>
-
-                          {entry.has_variants && (
-                            <VariantEditor
-                              variants={entry.variants}
-                              onChange={(variants) => setEntry((p) => ({ ...p, variants }))}
-                              defaultTaxRate={entry.tax_rate}
-                            />
-                          )}
-                        </div>
-
-                        {/* Batches — hidden when variants are on, since each variant now carries
-                            its own expiry_date directly; showing both would be two disconnected
-                            expiry mechanisms for the same product. */}
-                        {!entry.has_variants && (
-                          <div className="space-y-2">
-                            <label className="flex items-center gap-2 cursor-pointer w-fit">
-                              <div
-                                onClick={() => setEntry((p) => {
-                                  const turningOn = !p.has_batches
-                                  return {
-                                    ...p,
-                                    has_batches: turningOn,
-                                    // Force batch quantities to be entered in the base unit (unit_id), never the
-                                    // secondary unit — batchQtyTotal() has no unit-conversion awareness, so mixing
-                                    // units here would silently mis-scale the synced Qty (see rowBaseQty's own
-                                    // base-unit-only assumption for money math).
-                                    entry_unit_id: turningOn ? p.unit_id : p.entry_unit_id,
-                                    // Seed the first batch row with whatever Qty was already typed, instead of
-                                    // starting at '' (which syncs Qty to 0 and silently discards the typed value).
-                                    batches: turningOn && p.batches.length === 0
-                                      ? [{ batch_no: '', expiry_date: '', qty: p.qty !== '0' ? p.qty : '' }]
-                                      : p.batches,
-                                  }
-                                })}
-                                className={cn('relative h-5 w-9 rounded-full transition-colors cursor-pointer', entry.has_batches ? 'bg-indigo-600' : 'bg-zinc-700')}
-                              >
-                                <div className={cn('absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', entry.has_batches ? 'translate-x-4' : 'translate-x-0')} />
-                              </div>
-                              <span className="text-xs text-zinc-400">Track Batches</span>
-                            </label>
-
-                            {entry.has_batches && (
-                              <div className="space-y-1.5 pl-1">
-                                <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
-                                  <span className="col-span-2">Batch No *</span><span>Expiry Date *</span><span>Qty</span><span></span>
-                                </div>
-                                {entry.batches.map((b, i) => {
-                                  const bTouched = b.batch_no.trim() || b.expiry_date || b.qty
-                                  const bMissingBatchNo = bTouched && !b.batch_no.trim()
-                                  const bMissingExpiry = bTouched && !b.expiry_date
-                                  return (
-                                  <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                                    <Input placeholder="BATCH-001" value={b.batch_no}
-                                      onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
-                                      className={cn('h-8 text-xs col-span-2', bMissingBatchNo && 'border-red-500')} />
-                                    <Input type="date" value={b.expiry_date}
-                                      onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
-                                      className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
-                                    <Input type="text" inputMode="decimal" placeholder="0" value={b.qty}
-                                      onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
-                                      className="h-8 text-xs" />
-                                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
-                                      onClick={() => setEntry((p) => ({ ...p, batches: p.batches.filter((_, j) => j !== i) }))}>
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </div>
-                                  )
-                                })}
-                                {entry.batches.length > 0 && (
-                                  <p className="text-[11px] text-zinc-500 pl-1">
-                                    Total batch qty: {batchQtyTotal(entry.batches)} {unitOf(entry.unit_id)?.symbol ?? 'units'}
-                                  </p>
-                                )}
-                                <Button type="button" variant="outline" size="sm" className="text-xs"
-                                  onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
-                                  <Plus className="h-3.5 w-3.5" /> Add Batch
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        )}
+                {/* Batches — no toggle at all any more: the gear's "Show Batches" switch is the
+                    sole on/off control (see the has_batches-sync effect near the top of this
+                    component), so once it's on for a new, non-variant product the editor just
+                    appears directly. Hidden when variants are on, since each variant carries its
+                    own expiry_date directly. */}
+                {entry.is_new_product && !entry.has_variants && showBatchesField && entry.has_batches && (
+                  <div className="space-y-2">
+                    <Label className="text-xs text-zinc-400">Batches</Label>
+                    <div className="space-y-1.5">
+                      <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
+                        <span className="col-span-2">Batch No *</span><span>Expiry Date *</span><span>Qty</span><span></span>
                       </div>
-                    )}
+                      {entry.batches.map((b, i) => {
+                        const bTouched = b.batch_no.trim() || b.expiry_date || b.qty
+                        const bMissingBatchNo = bTouched && !b.batch_no.trim()
+                        const bMissingExpiry = bTouched && !b.expiry_date
+                        return (
+                        <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                          <Input placeholder="BATCH-001" value={b.batch_no}
+                            onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
+                            className={cn('h-8 text-xs col-span-2', bMissingBatchNo && 'border-red-500')} />
+                          <Input type="date" value={b.expiry_date}
+                            onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
+                            className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
+                          <Input type="text" inputMode="decimal" placeholder="0" value={b.qty}
+                            onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
+                            className="h-8 text-xs" />
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300"
+                            onClick={() => setEntry((p) => ({ ...p, batches: p.batches.filter((_, j) => j !== i) }))}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        )
+                      })}
+                      {entry.batches.length > 0 && (
+                        <p className="text-[11px] text-zinc-500 pl-1">
+                          Total batch qty: {batchQtyTotal(entry.batches)} {unitOf(entry.unit_id)?.symbol ?? 'units'}
+                        </p>
+                      )}
+                      <Button type="button" variant="outline" size="sm" className="text-xs"
+                        onClick={() => setEntry((p) => ({ ...p, batches: [...p.batches, { batch_no: '', expiry_date: '', qty: '' }] }))}>
+                        <Plus className="h-3.5 w-3.5" /> Add Batch
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1386,14 +1518,13 @@ export function PurchaseFormPage() {
                       <TableHead className="whitespace-nowrap">Barcode</TableHead>
                       <TableHead className="text-right whitespace-nowrap">MRP</TableHead>
                       <TableHead className="text-right whitespace-nowrap">Retail</TableHead>
-                      <TableHead className="text-right whitespace-nowrap">SP</TableHead>
                       <TableHead className="text-right whitespace-nowrap">Total</TableHead>
                       <TableHead className="w-[5%]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {rows.length === 0 ? (
-                      <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={10} className="text-center text-zinc-500 py-8">No items added yet</TableCell></TableRow>
                     ) : rows.flatMap((r, i) => {
                       const editIcon = (
                         <button type="button" onClick={() => editRow(i)} className="p-1 rounded text-zinc-600 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors">
@@ -1425,7 +1556,6 @@ export function PurchaseFormPage() {
                             <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{v.barcode_value}</TableCell>
                             <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{v.mrp ? formatINR(parseNum(v.mrp)) : '—'}</TableCell>
                             <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{v.sale_price ? formatINR(parseNum(v.sale_price)) : '—'}</TableCell>
-                            <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{v.special_price ? formatINR(parseNum(v.special_price)) : '—'}</TableCell>
                             <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(v.purchase_price) * parseNum(v.qty)))}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-1">{editIcon}{removeIcon}</div>
@@ -1453,7 +1583,6 @@ export function PurchaseFormPage() {
                           <TableCell className="font-mono text-xs text-zinc-400 whitespace-nowrap">{r.barcode_value}</TableCell>
                           <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.mrp ? formatINR(parseNum(r.mrp)) : '—'}</TableCell>
                           <TableCell className="text-right text-sm text-zinc-300 whitespace-nowrap">{formatINR(parseNum(r.price))}</TableCell>
-                          <TableCell className="text-right text-sm text-zinc-400 whitespace-nowrap">{r.special_price ? formatINR(parseNum(r.special_price)) : '—'}</TableCell>
                           <TableCell className="text-right text-sm font-medium text-white whitespace-nowrap">{formatINR(toMoney(parseNum(r.unit_cost) * rowBaseQty(r)))}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">{editIcon}{removeIcon}</div>
