@@ -1081,7 +1081,7 @@ export function PurchaseFormPage() {
                     VariantEditor below carries every real barcode/SKU/GST/price per-variant, so
                     the parent's own Product Code is the only identifying field left up here. */}
                 {entry.has_variants && (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px]">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px_200px]">
                     <div className="space-y-1 relative" ref={dropdownRef}>
                       <Label className="text-xs">Product *</Label>
                       <Input
@@ -1127,6 +1127,33 @@ export function PurchaseFormPage() {
                           </button>
                         )}
                       </div>
+                    </div>
+
+                    {/* Category — parent-product-level, same as the non-variant Row 2's own
+                        Category field (see below), never duplicated per-variant. Missing here
+                        entirely was a real gap caught in QC: a variant-tracked product created
+                        via Purchase entry had no way to set its category at all, silently
+                        leaving category_id null until a follow-up edit on /products/:id/edit. */}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Category</Label>
+                      {entry.is_new_product ? (
+                        <div className="flex gap-1">
+                          <select
+                            value={entry.category_id ?? ''}
+                            onChange={(e) => setEntry((p) => ({ ...p, category_id: e.target.value || null }))}
+                            className="h-9 flex-1 min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="">— No category —</option>
+                            {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <button type="button" title="Add new category" onClick={() => setShowAddCategory(true)}
+                            className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <Input value="Existing product" disabled className="h-9 text-xs text-zinc-500" />
+                      )}
                     </div>
                   </div>
                 )}
