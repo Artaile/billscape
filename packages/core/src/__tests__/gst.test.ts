@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { applyOrderDiscount, computeGST, isInterState } from '../tax/gst'
+import { splitByGstMode } from '../tax/splitInclusiveGST'
 import type { CartItem, DiscountType } from '../types'
 
 const makeItem = (
@@ -170,5 +171,36 @@ describe('computeGST — qty multiplication', () => {
     expect(result.cgst_total).toBe(45)
     expect(result.sgst_total).toBe(45)
     expect(result.grand_total).toBe(590)
+  })
+})
+
+describe('splitByGstMode', () => {
+  it('include mode: divides tax back out of the typed amount', () => {
+    // matches splitInclusiveGST's own behavior — 118 inclusive of 18% is 100 base + 18 tax
+    const result = splitByGstMode(118, 18, 'include')
+    expect(result.base).toBe(100)
+    expect(result.tax).toBe(18)
+  })
+
+  it('exclude mode: the typed amount already IS the base, tax is added on top', () => {
+    // this is the bug this test locks in — a purchase entry form previously only showed the
+    // Base+GST breakdown hint when gst_mode was 'include', silently omitting it in 'exclude'
+    // mode; naively reusing splitInclusiveGST's division here would have wrongly divided a
+    // value that was never tax-inclusive to begin with
+    const result = splitByGstMode(100, 18, 'exclude')
+    expect(result.base).toBe(100)
+    expect(result.tax).toBe(18)
+  })
+
+  it('exclude mode with a zero tax rate: base equals amount, no tax', () => {
+    const result = splitByGstMode(250, 0, 'exclude')
+    expect(result.base).toBe(250)
+    expect(result.tax).toBe(0)
+  })
+
+  it('exclude mode with a zero amount: both base and tax are zero', () => {
+    const result = splitByGstMode(0, 18, 'exclude')
+    expect(result.base).toBe(0)
+    expect(result.tax).toBe(0)
   })
 })

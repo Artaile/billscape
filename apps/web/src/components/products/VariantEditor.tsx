@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Plus, RefreshCw, Trash2, Copy, Camera } from 'lucide-react'
-import { splitInclusiveGST, type GSTRate } from '@billscape/core'
+import { splitByGstMode, type GSTRate } from '@billscape/core'
 import { generateBarcode } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -57,7 +57,7 @@ function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; o
   return (
     <div className="space-y-1">
       <div className="flex gap-1">
-        <Input placeholder="Scan or enter barcode" value={value} onChange={(e) => onChange(e.target.value)} className="h-8 text-xs font-mono" />
+        <Input placeholder="Scan or enter barcode" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} className="h-8 text-xs font-mono uppercase placeholder:normal-case" />
         <button type="button" title="Scan" onClick={() => setScanOpen(true)} className="shrink-0 w-7 h-8 flex items-center justify-center rounded border border-zinc-700 text-zinc-400 hover:text-white">
           <Camera className="h-3 w-3" />
         </button>
@@ -65,7 +65,7 @@ function VariantBarcodeField({ value, onChange, onGenerate }: { value: string; o
           <RefreshCw className="h-3 w-3" />
         </button>
       </div>
-      <ScanBarcodeDialog open={scanOpen} onOpenChange={setScanOpen} onScan={onChange} />
+      <ScanBarcodeDialog open={scanOpen} onOpenChange={setScanOpen} onScan={(code) => onChange(code.toUpperCase())} />
     </div>
   )
 }
@@ -79,14 +79,14 @@ function PriceField({ label, required, amount, gstMode, taxRate, onAmountChange 
   onAmountChange: (v: string) => void
 }) {
   const amt = parseNum(amount)
-  const { base, tax } = splitInclusiveGST(amt, taxRate)
+  const { base, tax } = splitByGstMode(amt, taxRate, gstMode)
   return (
     <div>
       <label className="text-[9px] uppercase text-zinc-500">{label}{required && ' *'}</label>
       <Input type="text" inputMode="decimal" value={amount} onFocus={(e) => e.target.select()}
         onChange={(e) => onAmountChange(e.target.value.replace(/[^0-9.]/g, ''))} className="h-8 text-xs" />
       <p className="text-[9px] text-zinc-500 mt-0.5 min-h-[11px]">
-        {gstMode === 'include' && amt > 0 && taxRate > 0 ? `Base: ₹${base.toFixed(2)} + GST: ₹${tax.toFixed(2)}` : ''}
+        {amt > 0 && taxRate > 0 ? `Base: ₹${base.toFixed(2)} + GST: ₹${tax.toFixed(2)}` : ''}
       </p>
     </div>
   )

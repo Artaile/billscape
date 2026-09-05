@@ -51,7 +51,7 @@ export interface PurchaseLineInput {
     // Maps to product_variants.hsn_code (migration 034_variant_hsn_code.sql).
     hsn_code?: string
   }[]
-  batches?: { batch_no: string; expiry_date: string; qty: number }[]
+  batches?: { batch_no: string; expiry_date?: string; qty: number }[]
   // Required for new-product lines (DB requires products.unit_id); unused for existing products.
   unit_id?: string
   secondary_unit_id?: string

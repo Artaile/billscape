@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   formatINR, toMoney, isInterState, applyOrderDiscount, computeGST,
-  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitInclusiveGST,
+  generateBarcode, stateCodeFromGSTIN, toBaseQty, hasSecondaryUnit, splitByGstMode,
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, recordPurchasePayment, createCategory, type PurchaseLineInput } from '@billscape/api'
@@ -152,6 +152,15 @@ export function PurchaseFormPage() {
   const [entry, setEntry] = useState<PurchaseRow>(emptyRow())
   const [scanOpen, setScanOpen] = useState(false)
 
+  // Which entry fields are currently failing validation — populated only when "Add to List" is
+  // clicked while canAddEntry() is false, so a merchant gets a red border on the SPECIFIC
+  // field(s) at fault instead of just a generic toast with no visual anchor on the form itself.
+  // Cleared on every entry change (typing/selecting fixes the field, or a fresh row is started)
+  // rather than field-by-field, since re-validating on every keystroke to selectively clear one
+  // field at a time would be a lot of surface area for a cosmetic highlight; the coarser "any
+  // change clears all" still matches user expectation (edit something, the red goes away).
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(new Set())
+
   // Add Item form field visibility (gear icon) — persisted per-org on org_settings.branding
   // (see purchase_entry_fields in packages/core's OrgBranding). Undefined key = on by default
   // so existing orgs see no change until a merchant opts a field out.
@@ -190,6 +199,14 @@ export function PurchaseFormPage() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+  // Clears any red-bordered field-error highlights the instant the entry changes at all —
+  // editing the offending field (or any field) is treated as "trying again", so the highlight
+  // doesn't linger stale once the merchant has acted on it.
+  useEffect(() => {
+    if (fieldErrors.size > 0) setFieldErrors(new Set())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry])
 
   // When batch tracking is enabled for the entry row, Qty becomes a read-only rollup of
   // the batch quantities below it (matches IppoBill's "Allocated from batches below" pattern) —
@@ -660,7 +677,7 @@ export function PurchaseFormPage() {
     if (entry.is_new_product && (!entry.sku.trim() || !entry.barcode_value.trim())) return false
     if (entry.is_new_product && !entry.unit_id) return false
     if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) return false
-    if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) return false
+    if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || (showExpiryField && !b.expiry_date))) return false
     // A known duplicate code/barcode (sibling row or a real saved product) must block adding —
     // otherwise this exact row sails past validation here only to fail with an opaque DB
     // constraint error later at Save Purchase, once it's too late to tell which row was the
@@ -669,8 +686,26 @@ export function PurchaseFormPage() {
     return true
   }
 
+  // Field-name keys used to red-border the specific input(s) at fault, set alongside the
+  // existing toast when "Add to List"/"Update Item" is clicked while canAddEntry() is false.
+  // Kept in lockstep with canAddEntry's own checks (same conditions, just labeled instead of
+  // short-circuited) rather than merged into one function, since canAddEntry needs to bail on
+  // the FIRST failure (matching its pre-existing behavior/callers) while this wants to collect
+  // every failing field in one pass so multiple bad fields all highlight at once.
+  function computeFieldErrors(): Set<string> {
+    const errs = new Set<string>()
+    if (!entry.product_name.trim()) errs.add('product_name')
+    if (!entry.has_variants && parseNum(entry.qty) <= 0) errs.add('qty')
+    if (entry.is_new_product && !entry.sku.trim()) errs.add('sku')
+    if (entry.is_new_product && !entry.barcode_value.trim()) errs.add('barcode_value')
+    if (entry.is_new_product && !entry.unit_id) errs.add('unit_id')
+    if (entry.is_new_product && entry.codeError) { errs.add('sku'); errs.add('barcode_value') }
+    return errs
+  }
+
   function addEntryToGrid() {
     if (!canAddEntry()) {
+      setFieldErrors(computeFieldErrors())
       let msg = entry.is_new_product ? 'Product code and barcode are required for a new product' : 'Enter product name and qty'
       if (entry.is_new_product && !entry.unit_id) {
         msg = 'Select a unit for the new product'
@@ -678,8 +713,10 @@ export function PurchaseFormPage() {
         msg = 'At least one variant needs a name and a quantity greater than 0'
       } else if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) {
         msg = 'Each variant needs a name before it can be added — remove empty rows or fill them in'
-      } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || !b.expiry_date)) {
-        msg = 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in'
+      } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || (showExpiryField && !b.expiry_date))) {
+        msg = showExpiryField
+          ? 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in'
+          : 'Each batch row needs a Batch No — remove empty rows or fill them in'
       } else if (entry.is_new_product && entry.codeError) {
         msg = entry.codeError
       }
@@ -781,7 +818,7 @@ export function PurchaseFormPage() {
               }))
             : undefined,
           batches: r.is_new_product && r.has_batches
-            ? r.batches.filter((b) => b.batch_no.trim() && b.expiry_date).map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date, qty: parseNum(b.qty) }))
+            ? r.batches.filter((b) => b.batch_no.trim()).map((b) => ({ batch_no: b.batch_no, expiry_date: b.expiry_date || undefined, qty: parseNum(b.qty) }))
             : undefined,
         }
       })
@@ -1090,7 +1127,7 @@ export function PurchaseFormPage() {
                         value={entrySearch}
                         onChange={(e) => handleEntryNameChange(e.target.value)}
                         onFocus={() => setEntryDropdownOpen(true)}
-                        className="h-9 text-sm"
+                        className={cn('h-9 text-sm', fieldErrors.has('product_name') && 'border-red-500 focus-visible:ring-red-500')}
                       />
                       {entry.product_name && (
                         <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
@@ -1119,7 +1156,7 @@ export function PurchaseFormPage() {
                           value={entry.sku}
                           disabled={!entry.is_new_product}
                           onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                          className="h-9 text-xs font-mono"
+                          className={cn('h-9 text-xs font-mono', fieldErrors.has('sku') && 'border-red-500 focus-visible:ring-red-500')}
                         />
                         {entry.is_new_product && (
                           <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
@@ -1176,7 +1213,7 @@ export function PurchaseFormPage() {
                         value={entrySearch}
                         onChange={(e) => handleEntryNameChange(e.target.value)}
                         onFocus={() => setEntryDropdownOpen(true)}
-                        className="h-9 text-sm"
+                        className={cn('h-9 text-sm', fieldErrors.has('product_name') && 'border-red-500 focus-visible:ring-red-500')}
                       />
                       {entry.product_name && (
                         <span className={cn('absolute right-2 top-[26px] text-[10px] px-1.5 py-0.5 rounded-full',
@@ -1205,7 +1242,7 @@ export function PurchaseFormPage() {
                           value={entry.sku}
                           disabled={!entry.is_new_product}
                           onChange={(e) => { setEntry((p) => ({ ...p, sku: e.target.value, skuManuallyEdited: true })); checkCodeUnique('sku', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                          className="h-9 text-xs font-mono"
+                          className={cn('h-9 text-xs font-mono', fieldErrors.has('sku') && 'border-red-500 focus-visible:ring-red-500')}
                         />
                         {entry.is_new_product && (
                           <button type="button" title="Regenerate" onClick={() => setEntry((p) => ({ ...p, sku: nextProductCode(), skuManuallyEdited: false }))} className="shrink-0 p-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-white">
@@ -1221,8 +1258,8 @@ export function PurchaseFormPage() {
                         <Input
                           value={entry.barcode_value}
                           disabled={!entry.is_new_product}
-                          onChange={(e) => { setEntry((p) => ({ ...p, barcode_value: e.target.value, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', e.target.value, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
-                          className="h-9 text-xs font-mono"
+                          onChange={(e) => { const val = e.target.value.toUpperCase(); setEntry((p) => ({ ...p, barcode_value: val, barcodeManuallyEdited: true })); checkCodeUnique('barcode_value', val, (msg) => setEntry((p) => ({ ...p, codeError: msg }))) }}
+                          className={cn('h-9 text-xs font-mono uppercase placeholder:normal-case', fieldErrors.has('barcode_value') && 'border-red-500 focus-visible:ring-red-500')}
                         />
                         {entry.is_new_product && (
                           <>
@@ -1239,8 +1276,9 @@ export function PurchaseFormPage() {
                         open={scanOpen}
                         onOpenChange={setScanOpen}
                         onScan={(code) => {
-                          setEntry((p) => ({ ...p, barcode_value: code, barcodeManuallyEdited: true }))
-                          checkCodeUnique('barcode_value', code, (msg) => setEntry((p) => ({ ...p, codeError: msg })))
+                          const val = code.toUpperCase()
+                          setEntry((p) => ({ ...p, barcode_value: val, barcodeManuallyEdited: true }))
+                          checkCodeUnique('barcode_value', val, (msg) => setEntry((p) => ({ ...p, codeError: msg })))
                         }}
                       />
                     </div>
@@ -1307,7 +1345,7 @@ export function PurchaseFormPage() {
                       <Input type="text" inputMode="decimal" value={entry.qty} onFocus={(e) => e.target.select()}
                         disabled={entry.has_batches && showBatchesField}
                         onChange={(e) => setEntry((p) => ({ ...p, qty: e.target.value.replace(/[^0-9.]/g, '') || '0' }))}
-                        className={cn('h-9 text-sm text-center', entry.has_batches && showBatchesField && 'opacity-60 cursor-not-allowed')} />
+                        className={cn('h-9 text-sm text-center', entry.has_batches && showBatchesField && 'opacity-60 cursor-not-allowed', fieldErrors.has('qty') && 'border-red-500 focus-visible:ring-red-500')} />
                       {entry.has_batches && showBatchesField && (
                         <p className="text-[10px] text-zinc-500">Allocated from batches below</p>
                       )}
@@ -1319,7 +1357,7 @@ export function PurchaseFormPage() {
                         <select
                           value={entry.unit_id}
                           onChange={(e) => setEntry((p) => ({ ...p, unit_id: e.target.value, entry_unit_id: e.target.value }))}
-                          className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className={cn('h-9 w-full rounded-md border bg-zinc-900 px-2 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500', fieldErrors.has('unit_id') ? 'border-red-500 focus:ring-red-500' : 'border-zinc-700')}
                         >
                           {!entry.unit_id && <option value="">— Select unit —</option>}
                           {units?.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>)}
@@ -1333,8 +1371,8 @@ export function PurchaseFormPage() {
                       <Label className="text-xs">Purchase Price</Label>
                       <Input type="text" inputMode="decimal" value={entry.unit_cost} onFocus={(e) => e.target.select()}
                         onChange={(e) => setEntry((p) => ({ ...p, unit_cost: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                      {entry.gst_mode === 'include' && parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
-                        const { base, tax } = splitInclusiveGST(parseNum(entry.unit_cost), entry.tax_rate)
+                      {parseNum(entry.unit_cost) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitByGstMode(parseNum(entry.unit_cost), entry.tax_rate, entry.gst_mode)
                         return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                       })()}
                     </div>
@@ -1343,8 +1381,8 @@ export function PurchaseFormPage() {
                       <Label className="text-xs">MRP</Label>
                       <Input type="text" inputMode="decimal" value={entry.mrp} onFocus={(e) => e.target.select()}
                         onChange={(e) => setEntry((p) => ({ ...p, mrp: e.target.value.replace(/[^0-9.]/g, '') }))} className="h-9 text-sm" />
-                      {entry.gst_mode === 'include' && parseNum(entry.mrp) > 0 && entry.tax_rate > 0 && (() => {
-                        const { base, tax } = splitInclusiveGST(parseNum(entry.mrp), entry.tax_rate)
+                      {parseNum(entry.mrp) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitByGstMode(parseNum(entry.mrp), entry.tax_rate, entry.gst_mode)
                         return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                       })()}
                     </div>
@@ -1353,8 +1391,8 @@ export function PurchaseFormPage() {
                       <Label className="text-xs">Retail Price</Label>
                       <Input type="text" inputMode="decimal" value={entry.price} onFocus={(e) => e.target.select()}
                         onChange={(e) => setEntry((p) => ({ ...p, price: e.target.value.replace(/[^0-9.]/g, '') || '0' }))} className="h-9 text-sm" />
-                      {entry.gst_mode === 'include' && parseNum(entry.price) > 0 && entry.tax_rate > 0 && (() => {
-                        const { base, tax } = splitInclusiveGST(parseNum(entry.price), entry.tax_rate)
+                      {parseNum(entry.price) > 0 && entry.tax_rate > 0 && (() => {
+                        const { base, tax } = splitByGstMode(parseNum(entry.price), entry.tax_rate, entry.gst_mode)
                         return <p className="text-[10px] text-zinc-500">Base: {formatINR(base)} + GST: {formatINR(tax)}</p>
                       })()}
                     </div>
@@ -1444,29 +1482,6 @@ export function PurchaseFormPage() {
                   </div>
                 )}
 
-                <Separator />
-
-                {/* Add button — MRP/Retail/SP now live in Row 2 above for the non-variant case
-                    (moved there to mirror VariantEditor's own row shape), so this row is just
-                    the action button for both has_variants and non-variant entries. */}
-                <div className="grid grid-cols-1 gap-2">
-                  <Button type="button" size="sm" className="h-9 w-full sm:w-auto sm:ml-auto sm:px-8" onClick={addEntryToGrid}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
-                    {editingIndex !== null ? (
-                      <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
-                    ) : (
-                      <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
-                    )}
-                  </Button>
-                </div>
-                {entry.codeError && <p className="text-xs text-red-400">{entry.codeError}</p>}
-                {!entry.is_new_product && entry.product_id && (
-                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
-                    <input type="checkbox" checked={entry.update_existing_pricing} onChange={(e) => setEntry((p) => ({ ...p, update_existing_pricing: e.target.checked }))} />
-                    Update this product's cost/price/GST to the values above
-                  </label>
-                )}
-
                 {/* Variants editor — Track Variants toggle itself now lives in the card header
                     (left of the gear icon), this just renders the per-variant rows once it's on. */}
                 {entry.is_new_product && entry.has_variants && (
@@ -1482,26 +1497,36 @@ export function PurchaseFormPage() {
                     sole on/off control (see the has_batches-sync effect near the top of this
                     component), so once it's on for a new, non-variant product the editor just
                     appears directly. Hidden when variants are on, since each variant carries its
-                    own expiry_date directly. */}
+                    own expiry_date directly. Moved ABOVE the Add to List button (was previously
+                    rendered after it) per merchant feedback — batch rows are part of filling in
+                    the item being entered, so they belong above the action that commits it, not
+                    below. The Expiry Date column is itself gated on showExpiryField — when the
+                    gear's "Show Expiry Date" is off, batches are still tracked (qty/batch no
+                    only) but without a per-batch expiry column, matching the same field visibly
+                    disappearing everywhere else in this form when its gear toggle is off. */}
                 {entry.is_new_product && !entry.has_variants && showBatchesField && entry.has_batches && (
                   <div className="space-y-2">
                     <Label className="text-xs text-zinc-400">Batches</Label>
                     <div className="space-y-1.5">
-                      <div className="grid grid-cols-5 gap-2 text-[11px] text-zinc-500">
-                        <span className="col-span-2">Batch No *</span><span>Expiry Date *</span><span>Qty</span><span></span>
+                      <div className={cn('grid gap-2 text-[11px] text-zinc-500', showExpiryField ? 'grid-cols-5' : 'grid-cols-4')}>
+                        <span className="col-span-2">Batch No *</span>
+                        {showExpiryField && <span>Expiry Date *</span>}
+                        <span>Qty</span><span></span>
                       </div>
                       {entry.batches.map((b, i) => {
                         const bTouched = b.batch_no.trim() || b.expiry_date || b.qty
                         const bMissingBatchNo = bTouched && !b.batch_no.trim()
                         const bMissingExpiry = bTouched && !b.expiry_date
                         return (
-                        <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                        <div key={i} className={cn('grid gap-2 items-center', showExpiryField ? 'grid-cols-5' : 'grid-cols-4')}>
                           <Input placeholder="BATCH-001" value={b.batch_no}
                             onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, batch_no: e.target.value } : x) }))}
                             className={cn('h-8 text-xs col-span-2', bMissingBatchNo && 'border-red-500')} />
-                          <Input type="date" value={b.expiry_date}
-                            onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
-                            className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
+                          {showExpiryField && (
+                            <Input type="date" value={b.expiry_date}
+                              onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, expiry_date: e.target.value } : x) }))}
+                              className={cn('h-8 text-xs', bMissingExpiry && 'border-red-500')} />
+                          )}
                           <Input type="text" inputMode="decimal" placeholder="0" value={b.qty}
                             onChange={(e) => setEntry((p) => ({ ...p, batches: p.batches.map((x, j) => j === i ? { ...x, qty: e.target.value.replace(/[^0-9.]/g, '') } : x) }))}
                             className="h-8 text-xs" />
@@ -1523,6 +1548,29 @@ export function PurchaseFormPage() {
                       </Button>
                     </div>
                   </div>
+                )}
+
+                <Separator />
+
+                {/* Add button — MRP/Retail/SP now live in Row 2 above for the non-variant case
+                    (moved there to mirror VariantEditor's own row shape), so this row is just
+                    the action button for both has_variants and non-variant entries. */}
+                <div className="grid grid-cols-1 gap-2">
+                  <Button type="button" size="sm" className="h-9 w-full sm:w-auto sm:ml-auto sm:px-8" onClick={addEntryToGrid}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEntryToGrid() } }}>
+                    {editingIndex !== null ? (
+                      <><Pencil className="h-3.5 w-3.5 mr-1" />Update Item</>
+                    ) : (
+                      <><Plus className="h-3.5 w-3.5 mr-1" />Add to List</>
+                    )}
+                  </Button>
+                </div>
+                {entry.codeError && <p className="text-xs text-red-400">{entry.codeError}</p>}
+                {!entry.is_new_product && entry.product_id && (
+                  <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+                    <input type="checkbox" checked={entry.update_existing_pricing} onChange={(e) => setEntry((p) => ({ ...p, update_existing_pricing: e.target.checked }))} />
+                    Update this product's cost/price/GST to the values above
+                  </label>
                 )}
               </div>
 
@@ -1627,8 +1675,12 @@ export function PurchaseFormPage() {
                 capture backed by a real purchase_payments row (see saveMutation), not just a
                 display — this is deliberately separate from PurchasesPage.tsx's own "Record
                 Payment" dialog (which handles LATER partial payments against an already-saved
-                bill); this one is for the common case of paying something at the moment of entry. */}
-            <div className="sticky bottom-0 -mx-4 lg:-mx-6 px-4 lg:px-6 py-3 bg-zinc-950/95 backdrop-blur border-t border-zinc-800">
+                bill); this one is for the common case of paying something at the moment of entry.
+                z-20 (higher than the Items table's own internal sticky header at z-10 above) —
+                without it, the table's column header row could render on top of this bar instead
+                of behind it once both are sticky-pinned near the same viewport region during
+                scroll, a real layout bug caught in QC. */}
+            <div className="sticky bottom-0 z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 py-3 bg-zinc-950/95 backdrop-blur border-t border-zinc-800">
               <div className="rounded-lg border border-border bg-card px-5 py-4 space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
                   <Receipt className="h-4 w-4 text-indigo-400" />Bill Summary
