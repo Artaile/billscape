@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Truck, Phone, Mail, Search, X, Download, Upload, FileSpreadsheet, ArrowUpDown, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -30,12 +31,14 @@ import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/
 
 interface Supplier extends SupplierOption {
   organization_id: string
+  branch_id?: string | null
   created_at: string
   state_code?: string | null
 }
 
 export function SuppliersPage() {
   const { org } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
 
@@ -51,14 +54,20 @@ export function SuppliersPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: suppliers, isLoading } = useQuery({
-    queryKey: ['suppliers', orgId],
-    enabled: !!orgId,
+    queryKey: ['suppliers', orgId, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('suppliers')
         .select('*')
         .eq('organization_id', orgId!)
         .order('name')
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data, error } = await query
       if (error) throw error
       return (data ?? []) as Supplier[]
     },

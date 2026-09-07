@@ -43,6 +43,10 @@ import { ShiftsPage } from '@/pages/shifts/ShiftsPage'
 import { LedgerPage } from '@/pages/ledger/LedgerPage'
 import { EmployeesPage } from '@/pages/employees/EmployeesPage'
 import { RolesPage } from '@/pages/roles/RolesPage'
+import { BranchesPage } from '@/pages/settings/BranchesPage'
+import { HeadOfficeBranchesPage } from '@/pages/platform/HeadOfficeBranchesPage'
+import { StockTransfersPage } from '@/pages/inventory/StockTransfersPage'
+
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -138,6 +142,8 @@ export function AppRouter() {
                   <Route path="products/:id/edit" element={<RequireRole roles={['owner', 'manager']}><ProductFormPage /></RequireRole>} />
                   <Route path="products/:id" element={<RequireRole roles={['owner', 'manager']}><ProductViewPage /></RequireRole>} />
                   <Route path="inventory" element={<RequireRole roles={['owner', 'manager']}><InventoryPage /></RequireRole>} />
+                  <Route path="inventory/transfers" element={<RequireRole roles={['owner', 'manager']}><StockTransfersPage /></RequireRole>} />
+                  <Route path="branches" element={<RequireRole roles={['owner']}><HeadOfficeBranchesPage /></RequireRole>} />
                   <Route path="purchases" element={<RequireRole roles={['owner', 'manager']}><PurchasesPage /></RequireRole>} />
                   <Route path="purchases/new" element={<RequireRole roles={['owner', 'manager']}><PurchaseFormPage /></RequireRole>} />
                   <Route path="purchases/:id" element={<RequireRole roles={['owner', 'manager']}><PurchaseViewPage /></RequireRole>} />
@@ -157,8 +163,10 @@ export function AppRouter() {
                   <Route path="reports" element={<RequireRole roles={['owner', 'manager']}><ReportsPage /></RequireRole>} />
                   <Route path="shifts" element={<RequireRole roles={['owner', 'manager']}><ShiftsPage /></RequireRole>} />
                   <Route path="ledger" element={<RequireRole roles={['owner', 'manager']}><LedgerPage /></RequireRole>} />
-                  <Route path="settings" element={<RequireRole roles={['owner']}><SettingsPage /></RequireRole>} />
+                  <Route path="settings" element={<RequireRole roles={['owner', 'manager']}><SettingsPage /></RequireRole>} />
+                  <Route path="settings/branches" element={<RequireRole roles={['owner']}><BranchesPage /></RequireRole>} />
                   <Route path="profile" element={<ProfilePage />} />
+
                 </Routes>
               </AppShell>
             </RequireOrg>

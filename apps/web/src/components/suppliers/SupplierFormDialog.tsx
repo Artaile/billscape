@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Building2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useBranch } from '@/contexts/BranchContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -67,7 +68,6 @@ interface SupplierFormDialogProps {
 
 // Shared full supplier form — used both from /suppliers (add + edit) and as the
 // "add new supplier" popup inside New/Edit Purchase, so both places create/edit the
-// exact same fields (including bank details) rather than two divergent forms.
 export function SupplierFormDialog({
   open,
   onOpenChange,
@@ -76,6 +76,7 @@ export function SupplierFormDialog({
   initialName,
   onSaved,
 }: SupplierFormDialogProps) {
+  const { activeBranch } = useBranch()
   const [form, setForm] = useState<SupplierFormState>(emptyForm(initialName))
   const [nameError, setNameError] = useState('')
   const [addressError, setAddressError] = useState('')
@@ -86,7 +87,7 @@ export function SupplierFormDialog({
     if (editTarget) {
       setForm({
         name: editTarget.name,
-        phone: editTarget.phone ?? '',
+        phone: editTarget.phone ? formatPhone(editTarget.phone) : '',
         email: editTarget.email ?? '',
         gstin: editTarget.gstin ?? '',
         address: editTarget.address ?? '',
@@ -111,7 +112,7 @@ export function SupplierFormDialog({
   }
 
   const rawPhoneDigits = form.phone.replace(/\D/g, '')
-  const phoneInvalid = rawPhoneDigits.length > 0 && rawPhoneDigits.length < 10
+  const phoneInvalid = form.phone.length > 0 && rawPhoneDigits.length !== 10
 
   async function handleSave() {
     let hasError = false
@@ -129,8 +130,9 @@ export function SupplierFormDialog({
       return
     }
 
-    const payload = {
+    const payload: Record<string, any> = {
       organization_id: orgId,
+      branch_id: activeBranch?.id || null,
       name: form.name.trim(),
       phone: rawPhoneDigits || null,
       email: form.email.trim() || null,

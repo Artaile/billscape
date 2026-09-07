@@ -38,9 +38,12 @@ import {
   ChevronRight,
   Plus,
   Tags,
+  Building2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
+
 import { useNotifications } from '@/hooks/useNotifications'
 import { GlobalSearchDialog } from '@/components/search/GlobalSearchDialog'
 import { Button } from '@/components/ui/button'
@@ -127,11 +130,14 @@ const NAV_ENTRIES: NavEntry[] = [
       items: [
         { label: 'Products', href: '/products', icon: Package, permissionKey: 'products', excludeSubpaths: ['/products/categories'] },
         { label: 'Categories', href: '/products/categories', icon: Tags, permissionKey: 'products' },
-        { label: 'Stock & Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory' },
+        { label: 'Stock & Inventory', href: '/inventory', icon: Boxes, permissionKey: 'inventory', excludeSubpaths: ['/inventory/transfers'] },
+        { label: 'Stock Transfers', href: '/inventory/transfers', icon: Truck, permissionKey: 'inventory' },
       ],
     },
   },
+  { kind: 'item', item: { label: 'Branches', href: '/branches', icon: Building2, permissionKey: 'settings' } },
   { kind: 'item', item: { label: 'Suppliers', href: '/suppliers', icon: Truck, permissionKey: 'suppliers' } },
+
   { kind: 'item', item: { label: 'Customers', href: '/customers', icon: Users, permissionKey: 'customers' } },
   { kind: 'item', item: { label: 'Loyalty', href: '/loyalty', icon: Star, permissionKey: 'loyalty' } },
   { kind: 'item', item: { label: 'Employees', href: '/employees', icon: UserCog, permissionKey: 'employees' } },
@@ -259,7 +265,9 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
   const navigate = useNavigate()
   const { requestNavigation } = useNavigationGuard()
   const { user, org, role, permissions, signOut } = useAuth()
+  const { branches, activeBranch, setActiveBranchId, isEnterprise, isHeadOffice, canSwitchBranch } = useBranch()
   const orgId = org?.id
+
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isSidebarHovered, setIsSidebarHovered] = useState(false)
@@ -801,8 +809,38 @@ export function AppShell({ children }: { children?: React.ReactNode }) {
             </button>
           </div>
 
+          {/* Header Branch Badge & Switcher for Enterprise accounts */}
+          {isEnterprise && activeBranch && (
+            <div className="hidden sm:flex items-center gap-2">
+              {activeBranch.type === 'head_office' || activeBranch.is_main ? (
+                <Badge className="bg-emerald-600/15 text-emerald-600 border border-emerald-600/30 gap-1 text-xs py-1 px-2.5 font-semibold">
+                  <Building2 className="w-3.5 h-3.5" /> 👑 Head Office
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-500/15 text-amber-600 border border-amber-500/30 gap-1 text-xs py-1 px-2.5 font-semibold">
+                  <Store className="w-3.5 h-3.5" /> 📍 {activeBranch.name} ({activeBranch.code})
+                </Badge>
+              )}
+
+              {canSwitchBranch && branches.length > 1 && (
+                <select
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs font-medium focus:ring-1 focus:ring-primary shadow-sm"
+                  value={activeBranch.id}
+                  onChange={(e) => setActiveBranchId(e.target.value)}
+                >
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.code})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
           {/* Quick action shortcuts */}
           <div className="hidden md:flex items-center gap-2 ml-auto">
+
             {(!permissions || permissions['purchases'] !== false) && (
               <Button
                 variant="outline"

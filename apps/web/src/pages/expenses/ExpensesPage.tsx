@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Loader2, Receipt, Eye, Pencil, Search, X, Download, Upload, FileSpreadsheet, ArrowUpDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { formatINR } from '@billscape/core'
 import { formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -26,6 +27,7 @@ import type { Expense, ExpenseCategory } from '@/components/expenses/types'
 
 export function ExpensesPage() {
   const { org, user, role } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -45,15 +47,21 @@ export function ExpensesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: expenses = [], isLoading } = useQuery({
-    queryKey: ['expenses', orgId],
-    enabled: !!orgId,
+    queryKey: ['expenses', orgId, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('expenses')
         .select('*, suppliers(name)')
         .eq('organization_id', orgId!)
         .order('expense_date', { ascending: false })
         .order('created_at', { ascending: false })
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data, error } = await query
       if (error) throw error
       return (data ?? []) as (Expense & { suppliers: { name: string } | null })[]
     },
@@ -204,6 +212,7 @@ export function ExpensesPage() {
 
         await supabase.from('expenses').insert({
           organization_id: orgId,
+          branch_id: activeBranch?.id || null,
           created_by: user?.id,
           category,
           amount,

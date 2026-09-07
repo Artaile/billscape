@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Loader2, Pencil, Printer, Package, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { formatINR } from '@billscape/core'
 import { formatDate } from '@/lib/utils'
 import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
@@ -28,13 +29,14 @@ export function ProductViewPage() {
   const location = useLocation()
   const backTo = (location.state as { from?: string } | null)?.from ?? '/products'
   const { org } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
   const [deleteOpen, setDeleteOpen] = useState(false)
 
   const { data: product, isLoading } = useQuery({
-    queryKey: ['product-detail', orgId, id],
-    enabled: !!orgId && !!id,
+    queryKey: ['product-detail', orgId, id, activeBranch?.id],
+    enabled: !!orgId && !!id && !!activeBranch && !branchLoading,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
@@ -43,6 +45,24 @@ export function ProductViewPage() {
         .eq('organization_id', orgId!)
         .single()
       if (error) throw error
+
+      if (activeBranch && !isHeadOffice && data) {
+        const { data: bInv } = await supabase
+          .from('branch_inventory')
+          .select('stock_qty, reorder_level')
+          .eq('branch_id', activeBranch.id)
+          .eq('product_id', id!)
+          .maybeSingle()
+
+        return {
+          ...data,
+          inventory: {
+            stock_qty: bInv ? Number(bInv.stock_qty) : 0,
+            reorder_level: bInv ? Number(bInv.reorder_level) : (data.inventory?.reorder_level ?? 10),
+          },
+        }
+      }
+
       return data
     },
   })
@@ -62,16 +82,22 @@ export function ProductViewPage() {
   })
 
   const { data: movements } = useQuery({
-    queryKey: ['stock_movements', orgId, id],
-    enabled: !!orgId && !!id,
+    queryKey: ['stock_movements', orgId, id, activeBranch?.id],
+    enabled: !!orgId && !!id && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from('stock_movements')
         .select('*')
         .eq('organization_id', orgId!)
         .eq('product_id', id!)
         .order('created_at', { ascending: false })
         .limit(100)
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data } = await query
       return data ?? []
     },
   })

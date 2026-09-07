@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -46,6 +47,7 @@ interface InventoryRow {
   products: {
     id: string
     name: string
+    branch_id?: string | null
     category_id: string | null
     categories: { name: string; color: string | null } | null
     unit: { symbol: string } | null
@@ -57,6 +59,7 @@ const INVENTORY_TAB_VALUES = ['stock-list', 'movements', 'adjustments', 'opening
 export function InventoryPage() {
   const { org, user } = useAuth()
   const orgId = org?.id
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const queryClient = useQueryClient()
 
   const [searchParams, setSearchParams] = useSearchParams()
@@ -81,45 +84,84 @@ export function InventoryPage() {
 
   // Expiring within 30 days
   const { data: expiringBatches } = useQuery({
-    queryKey: ['expiring_batches', orgId],
-    enabled: !!orgId,
+    queryKey: ['expiring_batches', orgId, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
       const in30 = new Date()
       in30.setDate(in30.getDate() + 30)
-      const { data } = await supabase
+      let query = supabase
         .from('inventory_batches')
         .select('batch_no, expiry_date, qty, product_id, products(name)')
         .eq('organization_id', orgId!)
         .not('expiry_date', 'is', null)
         .lte('expiry_date', in30.toISOString().split('T')[0])
         .gt('qty', 0)
-        .order('expiry_date')
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data } = await query.order('expiry_date')
       return data ?? []
     },
   })
 
   const { data: inventory, isLoading } = useQuery({
-    queryKey: ['inventory', orgId],
-    enabled: !!orgId,
+    queryKey: ['inventory', orgId, activeBranch?.id, isHeadOffice],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data: rawInv } = await supabase
         .from('inventory')
-        .select('product_id, stock_qty, reorder_level, products(id, name, category_id, categories(name, color), unit:unit_id(symbol))')
+        .select('product_id, stock_qty, reorder_level, products(id, name, branch_id, category_id, categories(name, color), unit:unit_id(symbol))')
         .eq('organization_id', orgId!)
         .order('stock_qty', { ascending: true })
-      return (data ?? []) as unknown as InventoryRow[]
+
+      let items = (rawInv ?? []) as unknown as InventoryRow[]
+
+      if (activeBranch && !isHeadOffice) {
+        const { data: bInvList } = await supabase
+          .from('branch_inventory')
+          .select('product_id, stock_qty, min_stock_alert')
+          .eq('branch_id', activeBranch.id)
+
+        const bInvMap = new Map<string, { stock_qty: number; min_stock_alert: number | null }>()
+        bInvList?.forEach((b) => bInvMap.set(b.product_id, { stock_qty: b.stock_qty, min_stock_alert: b.min_stock_alert }))
+
+        items = items.filter((item) => {
+          if (!item.products) return false
+          const belongsToBranch = item.products.branch_id === activeBranch.id
+          const hasBranchInv = bInvMap.has(item.product_id)
+          return belongsToBranch || hasBranchInv
+        })
+
+        items = items.map((item) => {
+          const bData = bInvMap.get(item.product_id)
+          return {
+            ...item,
+            stock_qty: bData ? bData.stock_qty : 0,
+            reorder_level: bData?.min_stock_alert ?? item.reorder_level,
+          }
+        })
+      }
+
+      return items
     },
   })
 
   const { data: categories } = useQuery({
-    queryKey: ['categories', orgId],
+    queryKey: ['categories', orgId, activeBranch?.id],
     enabled: !!orgId,
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from('categories')
         .select('id, name, color')
         .eq('organization_id', orgId!)
-        .order('name')
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.or(`branch_id.eq.${activeBranch.id},branch_id.is.null`)
+      }
+
+      const { data } = await query.order('name')
       return data ?? []
     },
   })
@@ -130,25 +172,63 @@ export function InventoryPage() {
       const delta = adjustType === '+' ? adjustQty : -adjustQty
       const newQty = Math.max(0, (adjustTarget.stock_qty ?? 0) + delta)
 
-      const { error: updateError } = await supabase
-        .from('inventory')
-        .update({ stock_qty: newQty, updated_at: new Date().toISOString() })
-        .eq('product_id', adjustTarget.product_id)
-        .eq('organization_id', orgId)
+      if (activeBranch && !isHeadOffice) {
+        const { data: existing } = await supabase
+          .from('branch_inventory')
+          .select('id')
+          .eq('branch_id', activeBranch.id)
+          .eq('product_id', adjustTarget.product_id)
+          .maybeSingle()
 
-      if (updateError) throw updateError
+        if (existing) {
+          const { error: updateError } = await supabase
+            .from('branch_inventory')
+            .update({ stock_qty: newQty, updated_at: new Date().toISOString() })
+            .eq('id', existing.id)
+          if (updateError) throw updateError
+        } else {
+          const { error: insertError } = await supabase
+            .from('branch_inventory')
+            .insert({
+              organization_id: orgId,
+              branch_id: activeBranch.id,
+              product_id: adjustTarget.product_id,
+              stock_qty: newQty,
+            })
+          if (insertError) throw insertError
+        }
 
-      await supabase.from('stock_movements').insert({
-        organization_id: orgId,
-        product_id: adjustTarget.product_id,
-        qty_change: delta,
-        reason: adjustReason,
-        note: adjustNote || null,
-        created_by: user.id,
-      })
+        await supabase.from('stock_movements').insert({
+          organization_id: orgId,
+          branch_id: activeBranch.id,
+          product_id: adjustTarget.product_id,
+          qty_change: delta,
+          reason: adjustReason,
+          note: adjustNote || null,
+          created_by: user.id,
+        })
+      } else {
+        const { error: updateError } = await supabase
+          .from('inventory')
+          .update({ stock_qty: newQty, updated_at: new Date().toISOString() })
+          .eq('product_id', adjustTarget.product_id)
+          .eq('organization_id', orgId)
+
+        if (updateError) throw updateError
+
+        await supabase.from('stock_movements').insert({
+          organization_id: orgId,
+          product_id: adjustTarget.product_id,
+          qty_change: delta,
+          reason: adjustReason,
+          note: adjustNote || null,
+          created_by: user.id,
+        })
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['stock_movements', orgId] })
       toast.success('Stock adjusted')
       setAdjustTarget(null)
       setAdjustQty(0)
@@ -182,13 +262,19 @@ export function InventoryPage() {
 
   // Stock movements (ledger & history)
   const { data: movements, isLoading: movementsLoading } = useQuery({
-    queryKey: ['stock_movements', orgId],
-    enabled: !!orgId,
+    queryKey: ['stock_movements', orgId, activeBranch?.id, isHeadOffice],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from('stock_movements')
         .select('*, products(name)')
         .eq('organization_id', orgId!)
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data } = await query
         .order('created_at', { ascending: false })
         .limit(200)
       return data ?? []
@@ -218,19 +304,56 @@ export function InventoryPage() {
       if (!openingProductId) throw new Error('Select a product first')
       if (openingQty <= 0) throw new Error('Quantity must be greater than 0')
 
-      const { error: invErr } = await supabase
-        .from('inventory')
-        .upsert({ organization_id: orgId, product_id: openingProductId, stock_qty: openingQty }, { onConflict: 'product_id' })
-      if (invErr) throw invErr
+      if (activeBranch && !isHeadOffice) {
+        const { data: existing } = await supabase
+          .from('branch_inventory')
+          .select('id')
+          .eq('branch_id', activeBranch.id)
+          .eq('product_id', openingProductId)
+          .maybeSingle()
 
-      await supabase.from('stock_movements').insert({
-        organization_id: orgId,
-        product_id: openingProductId,
-        qty_change: openingQty,
-        reason: 'opening',
-        note: openingNote.trim() || 'Opening stock entry',
-        created_by: user.id,
-      })
+        if (existing) {
+          const { error: updateError } = await supabase
+            .from('branch_inventory')
+            .update({ stock_qty: openingQty, updated_at: new Date().toISOString() })
+            .eq('id', existing.id)
+          if (updateError) throw updateError
+        } else {
+          const { error: insertError } = await supabase
+            .from('branch_inventory')
+            .insert({
+              organization_id: orgId,
+              branch_id: activeBranch.id,
+              product_id: openingProductId,
+              stock_qty: openingQty,
+            })
+          if (insertError) throw insertError
+        }
+
+        await supabase.from('stock_movements').insert({
+          organization_id: orgId,
+          branch_id: activeBranch.id,
+          product_id: openingProductId,
+          qty_change: openingQty,
+          reason: 'opening',
+          note: openingNote.trim() || 'Opening stock entry',
+          created_by: user.id,
+        })
+      } else {
+        const { error: invErr } = await supabase
+          .from('inventory')
+          .upsert({ organization_id: orgId, product_id: openingProductId, stock_qty: openingQty }, { onConflict: 'product_id' })
+        if (invErr) throw invErr
+
+        await supabase.from('stock_movements').insert({
+          organization_id: orgId,
+          product_id: openingProductId,
+          qty_change: openingQty,
+          reason: 'opening',
+          note: openingNote.trim() || 'Opening stock entry',
+          created_by: user.id,
+        })
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })

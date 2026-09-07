@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { formatINR } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -256,6 +257,7 @@ export function ProductsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { org } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
 
   const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota } = usePlanLimits()
@@ -279,22 +281,82 @@ export function ProductsPage() {
   const debouncedSearch = useDebounce(search, 300)
 
   const { data: categories } = useQuery({
-    queryKey: ['categories', orgId],
-    enabled: !!orgId,
+    queryKey: ['categories', orgId, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from('categories')
         .select('id, name, color')
         .eq('organization_id', orgId!)
         .order('name')
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.or(`branch_id.is.null,branch_id.eq.${activeBranch.id}`)
+      }
+
+      const { data } = await query
       return data ?? []
     },
   })
 
   const { data: products, isLoading } = useQuery({
-    queryKey: ['products', orgId, debouncedSearch, categoryFilter],
-    enabled: !!orgId,
+    queryKey: ['products', orgId, debouncedSearch, categoryFilter, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
+      // If active branch is a specific non-main branch, only show branch-created OR transferred inventory products!
+      if (activeBranch && !isHeadOffice) {
+        const { data: bInv } = await supabase
+          .from('branch_inventory')
+          .select('product_id, stock_qty, reorder_level')
+          .eq('branch_id', activeBranch.id)
+
+        const bInvMap: Record<string, { stock_qty: number; reorder_level: number }> = {}
+        const bInvProductIds: string[] = []
+        if (bInv) {
+          for (const item of bInv) {
+            bInvMap[item.product_id] = item
+            bInvProductIds.push(item.product_id)
+          }
+        }
+
+        let query = supabase
+          .from('products')
+          .select('*, inventory(stock_qty, reorder_level), categories(name, color)')
+          .eq('organization_id', orgId!)
+          .eq('is_active', true)
+          .order('name')
+
+        if (debouncedSearch) {
+          query = query.or(`name.ilike.%${debouncedSearch}%,barcode_value.ilike.%${debouncedSearch}%,sku.ilike.%${debouncedSearch}%`)
+        }
+        if (categoryFilter) {
+          query = query.eq('category_id', categoryFilter)
+        }
+
+        const { data, error } = await query
+        if (error) {
+          console.error('Error fetching products for branch:', error)
+          return []
+        }
+        if (!data) return []
+
+        // Only show products created in this branch OR transferred to this branch (in branch_inventory)
+        const branchProducts = data.filter(
+          (p) => p.branch_id === activeBranch.id || bInvProductIds.includes(p.id)
+        )
+
+        return branchProducts.map((p) => {
+          const branchItem = bInvMap[p.id]
+          return {
+            ...p,
+            inventory: {
+              stock_qty: branchItem ? Number(branchItem.stock_qty) : 0,
+              reorder_level: branchItem ? Number(branchItem.reorder_level) : (p.inventory?.reorder_level ?? 10),
+            },
+          }
+        }) as ProductWithInventory[]
+      }
+
       let query = supabase
         .from('products')
         .select('*, inventory(stock_qty, reorder_level), categories(name, color)')
@@ -478,6 +540,7 @@ export function ProductsPage() {
         const cols = line.split(',')
         return {
           organization_id: orgId,
+          branch_id: activeBranch?.id || null,
           name: parseCell(cols, nameIdx),
           price: parseFloat(parseCell(cols, priceIdx)) || 0,
           sku: parseCell(cols, skuIdx) || null,

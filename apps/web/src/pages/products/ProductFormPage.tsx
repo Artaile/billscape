@@ -41,6 +41,7 @@ import { VariantEditor, emptyVariantRow, type VariantFormRow } from '@/component
 
 import { usePlanLimits } from '@/hooks/usePlanLimits'
 import { PlanLimitModal } from '@/components/common/PlanLimitModal'
+import { useBranch } from '@/contexts/BranchContext'
 
 const GST_RATES = [0, 5, 12, 18, 28] as const
 
@@ -50,6 +51,7 @@ export function ProductFormPage() {
   const isEdit = !!id
   const queryClient = useQueryClient()
   const { org, user } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
   const taxInclusive = org?.branding?.tax_inclusive ?? false
 
@@ -142,14 +144,18 @@ export function ProductFormPage() {
   })
 
   const { data: categories, refetch: refetchCategories } = useQuery({
-    queryKey: ['categories', orgId],
-    enabled: !!orgId,
+    queryKey: ['categories', orgId, activeBranch?.id],
+    enabled: !!orgId && !branchLoading,
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from('categories')
         .select('id, name')
         .eq('organization_id', orgId!)
         .order('name')
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+      const { data } = await query
       return data ?? []
     },
   })
@@ -161,7 +167,7 @@ export function ProductFormPage() {
     mutationFn: async (name: string) => {
       const { data, error } = await supabase
         .from('categories')
-        .insert({ organization_id: orgId!, name })
+        .insert({ organization_id: orgId!, branch_id: activeBranch?.id || null, name })
         .select()
         .single()
       if (error) throw error
@@ -335,6 +341,7 @@ export function ProductFormPage() {
 
       const productData = {
         organization_id: orgId!,
+        branch_id: activeBranch?.id || null,
         name: values.name,
         sku: values.sku || null,
         hsn_code: values.hsn_code || null,

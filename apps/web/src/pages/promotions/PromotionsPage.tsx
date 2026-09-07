@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Loader2, Tag, Percent, ToggleLeft, ToggleRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { formatINR } from '@billscape/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +46,7 @@ const SCOPE_LABELS: Record<Promotion['scope'], string> = {
 
 export function PromotionsPage() {
   const { org } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
 
@@ -63,14 +65,20 @@ export function PromotionsPage() {
   const [validUntil, setValidUntil] = useState('')
 
   const { data: promotions = [], isLoading } = useQuery({
-    queryKey: ['promotions', orgId],
-    enabled: !!orgId,
+    queryKey: ['promotions', orgId, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('promotions')
         .select('*')
         .eq('organization_id', orgId!)
         .order('created_at', { ascending: false })
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data, error } = await query
       if (error) throw error
       return (data ?? []) as Promotion[]
     },
@@ -118,6 +126,7 @@ export function PromotionsPage() {
 
       const { error } = await supabase.from('promotions').insert({
         organization_id: orgId!,
+        branch_id: activeBranch?.id || null,
         name: name.trim(),
         code: code.trim().toUpperCase() || null,
         type,

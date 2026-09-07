@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Search, Plus, ChevronRight, Phone, Mail, CreditCard, X, Download, Upload, FileSpreadsheet, ArrowUpDown, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { formatINR } from '@billscape/core'
 import { formatDate, cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { logActivity } from '@/lib/activityLog'
@@ -84,6 +86,7 @@ interface CustomerWithLastSale extends Customer {
 
 export function CustomersPage() {
   const { org } = useAuth()
+  const { activeBranch, isHeadOffice, loading: branchLoading } = useBranch()
   const orgId = org?.id
 
   const { limitModalOpen, setLimitModalOpen, limitInfo, checkQuota, handleInsertError } = usePlanLimits()
@@ -110,14 +113,20 @@ export function CustomersPage() {
   })
 
   const { data: rawCustomers = [], isLoading } = useQuery({
-    queryKey: ['customers', orgId],
-    enabled: !!orgId,
+    queryKey: ['customers', orgId, activeBranch?.id],
+    enabled: !!orgId && !!activeBranch && !branchLoading,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('customers')
         .select('*')
         .eq('organization_id', orgId!)
         .order('name')
+
+      if (activeBranch && !isHeadOffice) {
+        query = query.eq('branch_id', activeBranch.id)
+      }
+
+      const { data, error } = await query
       if (error) throw error
       return (data ?? []) as CustomerWithLastSale[]
     },
@@ -214,6 +223,7 @@ export function CustomersPage() {
 
         await supabase.from('customers').insert({
           organization_id: orgId,
+          branch_id: activeBranch?.id || null,
           name: name.trim(),
           phone: phoneDigits || null,
           email: email.trim() || null,
@@ -274,6 +284,7 @@ export function CustomersPage() {
 
       const { data: customer, error } = await supabase.from('customers').insert({
         organization_id: orgId!,
+        branch_id: activeBranch?.id || null,
         name: values.name,
         phone: values.phone || null,
         email: values.email || null,

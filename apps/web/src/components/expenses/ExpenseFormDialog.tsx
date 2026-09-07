@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Plus } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { useBranch } from '@/contexts/BranchContext'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,6 +49,7 @@ async function nextExpenseNumber(orgId: string) {
 
 export function ExpenseFormDialog({ open, onOpenChange, editTarget }: ExpenseFormDialogProps) {
   const { org, user } = useAuth()
+  const { activeBranch } = useBranch()
   const orgId = org?.id
   const queryClient = useQueryClient()
   const isEdit = !!editTarget
@@ -131,6 +133,7 @@ export function ExpenseFormDialog({ open, onOpenChange, editTarget }: ExpenseFor
       if (!category) throw new Error('Select a category')
 
       const payload = {
+        branch_id: activeBranch?.id || null,
         description: description.trim(),
         amount: amt,
         category,

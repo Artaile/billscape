@@ -45,6 +45,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
 import { UnitsSettingsPanel } from '@/components/settings/UnitsSettingsPanel'
+import { BranchesPage } from './BranchesPage'
+
 import QRCode from 'qrcode'
 import JsBarcode from 'jsbarcode'
 import * as XLSX from 'xlsx'
@@ -1125,13 +1127,14 @@ function LivePrintBillPreview({
 }
 
 const SETTINGS_SECTION_VALUES = [
-  'shop', 'regional', 'tax', 'invoice', 'print', 'units',
+  'shop', 'branches', 'regional', 'tax', 'invoice', 'print', 'units',
   'inventory', 'barcode', 'custom_fields', 'routine',
   'notifications', 'team', 'billing', 'backup',
 ] as const
 
 export function SettingsPage() {
-  const { org, user, refreshOrg } = useAuth()
+  const { org, user, role, refreshOrg } = useAuth()
+
   const { theme, toggleTheme } = useTheme()
   const orgId = org?.id
   const queryClient = useQueryClient()
@@ -1436,11 +1439,11 @@ export function SettingsPage() {
       if (!mData || mData.length === 0) return []
 
       const userIds = mData.map((m) => m.user_id).filter(Boolean)
-      let profilesMap: Record<string, { full_name: string; avatar_url: string | null; phone: string | null }> = {}
+      let profilesMap: Record<string, { full_name: string; avatar_url: string | null; phone: string | null; email?: string | null }> = {}
       if (userIds.length > 0) {
         const { data: pData } = await supabase
           .from('profiles')
-          .select('id, full_name, avatar_url, phone')
+          .select('id, full_name, avatar_url, phone, email')
           .in('id', userIds)
 
         if (pData) {
@@ -1452,28 +1455,36 @@ export function SettingsPage() {
 
       const { data: empData } = await supabase
         .from('employees')
-        .select('id, full_name, email, phone, role')
+        .select('id, full_name, email, phone, role, user_id')
         .eq('organization_id', orgId!)
 
-      const empMap: Record<string, any> = {}
+      const empMapByEmpId: Record<string, any> = {}
+      const empMapByUserId: Record<string, any> = {}
+      const empMapByEmail: Record<string, any> = {}
+
       if (empData) {
         for (const emp of empData) {
-          empMap[emp.id] = emp
+          if (emp.id) empMapByEmpId[emp.id] = emp
+          if (emp.user_id) empMapByUserId[emp.user_id] = emp
+          if (emp.email) empMapByEmail[emp.email.toLowerCase().trim()] = emp
         }
       }
 
       return mData.map((m) => {
         const profile = profilesMap[m.user_id] || null
-        const emp = m.employee_id ? empMap[m.employee_id] : null
+        const emp = (m.employee_id ? empMapByEmpId[m.employee_id] : null)
+          || empMapByUserId[m.user_id]
+          || (profile?.email ? empMapByEmail[profile.email.toLowerCase().trim()] : null)
+
         const isCurrentUser = m.user_id === user?.id
 
         const name = isCurrentUser
-          ? (user?.user_metadata?.full_name || profile?.full_name || org?.name || 'Shop Owner')
+          ? (user?.user_metadata?.full_name || profile?.full_name || emp?.full_name || org?.name || 'Shop Owner')
           : (emp?.full_name || profile?.full_name || 'Dashboard User')
 
         const email = isCurrentUser
-          ? user?.email
-          : (emp?.email || null)
+          ? (user?.email || profile?.email || emp?.email)
+          : (emp?.email || profile?.email || null)
 
         const phone = emp?.phone || profile?.phone || null
         const avatarUrl = profile?.avatar_url || null
@@ -1489,6 +1500,7 @@ export function SettingsPage() {
       })
     },
   })
+
 
   // Fetch pending invitations
   const { data: pendingInvitations = [], isLoading: invitationsLoading } = useQuery({
@@ -2224,6 +2236,14 @@ export function SettingsPage() {
                 Shop Info
               </TabsTrigger>
 
+              {role === 'owner' && (
+                <TabsTrigger value="branches" className="justify-start px-3 py-2 text-sm font-medium rounded-xl data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold hover:bg-secondary/60 transition-all">
+                  <Building2 className="h-4 w-4 mr-2.5 shrink-0 text-primary" />
+                  Branches &amp; Locations
+                </TabsTrigger>
+              )}
+
+
               <TabsTrigger value="regional" className="justify-start px-3 py-2 text-sm font-medium rounded-xl data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold hover:bg-secondary/60 transition-all">
                 <Globe className="h-4 w-4 mr-2.5 shrink-0 text-primary" />
                 Regional
@@ -2306,8 +2326,14 @@ export function SettingsPage() {
 
         {/* Right Side Main Content Area */}
         <div className="flex-1 w-full min-w-0">
+          {/* Branches & Locations */}
+          <TabsContent value="branches" className="mt-0">
+            <BranchesPage />
+          </TabsContent>
+
           {/* Company Settings (Shop Info) */}
           <TabsContent value="shop" className="mt-0">
+
             <form onSubmit={shopForm.handleSubmit((v) => saveShopMutation.mutate(v))} className="space-y-6 pb-12">
               <div className="flex justify-between items-center mb-6">
                 <div>

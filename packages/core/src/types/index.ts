@@ -219,6 +219,7 @@ export interface Membership {
   user_id: string
   organization_id: string
   role: UserRole
+  assigned_branch_id?: string
   created_at: string
 }
 
@@ -244,6 +245,7 @@ export interface Unit {
 export interface Product {
   id: string
   organization_id: string
+  branch_id?: string
   category_id?: string
   name: string
   sku?: string
@@ -492,3 +494,73 @@ export interface ActivityLog {
   metadata?: Record<string, unknown>
   created_at: string
 }
+
+// ─── Branches & Logistics ──────────────────────────────────────────────────────
+export type LocationType = 'head_office' | 'retail_branch' | 'warehouse'
+export type TransferStatus = 'open_in_transit' | 'closed_accepted' | 'pending_discrepancy' | 'cancelled'
+
+export interface Branch {
+  id: string
+  organization_id: string
+  name: string
+  code: string
+  type: LocationType
+  address?: string
+  city?: string
+  pincode?: string
+  state_code?: string
+  phone?: string
+  email?: string
+  gstin?: string
+  invoice_prefix?: string
+  invoice_start_number?: number
+  enabled_features?: Record<string, boolean>
+  is_main: boolean
+  is_active: boolean
+  created_at: string
+}
+
+export interface BranchInventory {
+  id: string
+  organization_id: string
+  branch_id: string
+  product_id: string
+  variant_id?: string
+  stock_qty: number
+  reorder_level: number
+  updated_at: string
+}
+
+export interface StockTransfer {
+  id: string
+  organization_id: string
+  transfer_no: string
+  sender_branch_id: string
+  receiver_branch_id: string
+  sender_user_id: string
+  receiver_user_id?: string
+  vehicle_number?: string
+  driver_name?: string
+  driver_phone?: string
+  status: TransferStatus
+  notes?: string
+  discrepancy_notes?: string
+  created_at: string
+  completed_at?: string
+  sender_branch?: Branch
+  receiver_branch?: Branch
+  items?: StockTransferItem[]
+}
+
+export interface StockTransferItem {
+  id?: string
+  transfer_id?: string
+  product_id: string
+  product_name?: string
+  variant_id?: string
+  variant_name?: string
+  sent_qty: number
+  received_qty?: number
+  unit_cost?: number
+}
+

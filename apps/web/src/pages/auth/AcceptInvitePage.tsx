@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 
 export function AcceptInvitePage() {
   const navigate = useNavigate()
-  const { session, loading: authLoading } = useAuth()
+  const { session, refreshOrg, loading: authLoading } = useAuth()
   const [initWait, setInitWait] = useState(true)
   const [saving, setSaving] = useState(false)
   const [password, setPassword] = useState('')
@@ -45,26 +45,43 @@ export function AcceptInvitePage() {
       const { error: updateError } = await supabase.auth.updateUser({ password })
       if (updateError) throw updateError
 
-      // 2. Accept the invite (creates membership)
+      // 2. Accept the invite (creates membership and links assigned_branch_id)
       const { error: rpcError } = await supabase.rpc('accept_invite_by_email')
       if (rpcError) {
-        console.error("Accept invite error:", rpcError)
-        // If there's an error (e.g. no invite found because it was already accepted), 
-        // we just continue to dashboard where RLS will block them if they truly have no access.
+        console.error("Accept invite RPC error:", rpcError)
+        throw new Error(`Activation error: ${rpcError.message}`)
+      }
+
+      // 3. Refresh user organization state
+      await refreshOrg()
+
+      // 4. Verify if membership was successfully linked
+      const { data: mems } = await supabase
+        .from('memberships')
+        .select('organization_id')
+        .eq('user_id', session?.user?.id || '')
+
+      if (!mems || mems.length === 0) {
+        toast.error('Invitation record not found for this email. Please ask store owner to resend invite.')
+        setSaving(false)
+        return
       }
 
       toast.success('Password set successfully! Welcome to Billscape.')
       
       setTimeout(() => {
-        navigate('/')
-      }, 1000)
+        window.location.href = '/dashboard'
+      }, 500)
+
     } catch (err: any) {
       console.error(err)
       toast.error(err.message || 'Failed to set password.')
     } finally {
       setSaving(false)
     }
+
   }
+
 
   if (authLoading || initWait) {
     return (

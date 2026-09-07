@@ -10,3 +10,6 @@ export * from './purchasePayments'
 export * from './variantInventory'
 export * from './loyalty'
 export * from './quotations'
+export * from './branches'
+export * from './stockTransfers'
+

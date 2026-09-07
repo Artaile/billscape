@@ -1,4 +1,5 @@
 import { AuthProvider } from '@/contexts/AuthContext'
+import { BranchProvider } from '@/contexts/BranchContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { NavigationGuardProvider } from '@/contexts/NavigationGuardContext'
 import { AppRouter } from '@/router'
@@ -8,11 +9,14 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <NavigationGuardProvider>
-          <AppRouter />
-          <Toaster />
-        </NavigationGuardProvider>
+        <BranchProvider>
+          <NavigationGuardProvider>
+            <AppRouter />
+            <Toaster />
+          </NavigationGuardProvider>
+        </BranchProvider>
       </AuthProvider>
     </ThemeProvider>
   )
 }
+
