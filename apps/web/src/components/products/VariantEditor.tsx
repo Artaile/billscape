@@ -92,10 +92,11 @@ function PriceField({ label, required, amount, gstMode, taxRate, onAmountChange 
   )
 }
 
-export function VariantEditor({ variants, onChange, defaultTaxRate, showHsnField = true }: {
+export function VariantEditor({ variants, onChange, defaultTaxRate, barcodeType, showHsnField = true }: {
   variants: VariantFormRow[]
   onChange: (variants: VariantFormRow[]) => void
   defaultTaxRate: GSTRate
+  barcodeType?: string
   // Same gear toggle ("HSN Code" in PurchaseFormPage's Add Item settings) that controls the
   // main non-variant Row 2's HSN field also controls this one — one switch, both places.
   // Defaults true so any other caller of VariantEditor (e.g. ProductFormPage) that doesn't
@@ -137,13 +138,7 @@ export function VariantEditor({ variants, onChange, defaultTaxRate, showHsnField
             </div>
           </div>
 
-          {/* Row 1: Variant Name, Barcode, Tax %, GST — mirrors the main non-variant Row 1's
-              field set and order (Product Name, Product Code, Barcode, Tax %, GST) minus the
-              Product Code (variants have no parent-level code of their own, Barcode is their
-              identifier) and minus SKU, which was removed here for the same reason the main
-              form dropped its own separate free-text SKU field — a redundant second identifier
-              nobody used. GST Mode here applies to all 3 price fields below (MRP/Retail/
-              Purchase), a single shared toggle per variant rather than one per price field. */}
+          {/* Row 1: Variant Name, Barcode, Tax %, GST */}
           <div className="grid grid-cols-[1.7fr_1.6fr_0.7fr_0.9fr] gap-1.5">
             <div>
               <label className="text-[9px] uppercase text-zinc-500">Variant Name *</label>
@@ -151,7 +146,7 @@ export function VariantEditor({ variants, onChange, defaultTaxRate, showHsnField
             </div>
             <div>
               <label className="text-[9px] uppercase text-zinc-500">Barcode</label>
-              <VariantBarcodeField value={v.barcode_value} onChange={(val) => updateRow(i, { barcode_value: val })} onGenerate={() => updateRow(i, { barcode_value: generateBarcode() })} />
+              <VariantBarcodeField value={v.barcode_value} onChange={(val) => updateRow(i, { barcode_value: val })} onGenerate={() => updateRow(i, { barcode_value: generateBarcode(barcodeType) })} />
             </div>
             <div>
               <label className="text-[9px] uppercase text-zinc-500">Tax %</label>

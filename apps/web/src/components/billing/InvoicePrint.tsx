@@ -20,6 +20,11 @@ export interface InvoicePrintProps {
   customerPhone?: string
   customerGstin?: string
   customerAddress?: string
+  customerShippingAddress?: string
+  customerPan?: string
+  dueDate?: string
+  placeOfSupply?: string
+  deliveryNote?: string
   items: CartItem[]
   totals: InvoiceTotals
   paymentMode: string
@@ -47,6 +52,11 @@ export function InvoicePrint({
   customerPhone,
   customerGstin,
   customerAddress,
+  customerShippingAddress,
+  customerPan,
+  dueDate,
+  placeOfSupply,
+  deliveryNote,
   items,
   totals,
   paymentMode,
@@ -204,15 +214,22 @@ export function InvoicePrint({
   // Document Details Toggles
   const showDocumentNumber = branding?.print_show_document_number ?? true
   const showDocumentDate = branding?.print_show_document_date ?? true
+  const showDueDate = branding?.print_show_due_date ?? false
+  const showPlaceOfSupply = branding?.print_show_place_of_supply ?? false
+  const showDeliveryNote = branding?.print_show_delivery_note ?? false
   const showPaymentModeHeader = branding?.print_show_payment_mode ?? false
 
   // Party (Bill To) Toggles
   const showCustomerBillingAddress = (branding?.print_show_customer_billing_address ?? true) && !!customerAddress
+  const showCustomerShippingAddress = (branding?.print_show_customer_shipping_address ?? true) && !!customerShippingAddress
+  const showCustomerPanLine = (branding?.print_show_customer_pan ?? true) && !!customerPan
   const showCustomerPhoneLine = branding?.print_show_customer_phone ?? true
   const showPartyBlock = (branding?.print_show_party_details ?? true) && !!(
     customerName ||
     (showCustomerPhoneLine && customerPhone) ||
     (showCustomerBillingAddress && customerAddress) ||
+    (showCustomerShippingAddress && customerShippingAddress) ||
+    (showCustomerPanLine && customerPan) ||
     customerGstin
   )
 
@@ -226,6 +243,7 @@ export function InvoicePrint({
   const showBlockTaxAmount = branding?.print_show_block_tax_amount ?? true
   const showBlockRoundOff = branding?.print_show_block_round_off ?? true
   const showBlockGrandTotal = branding?.print_show_block_grand_total ?? true
+  const showBlockChangeReturned = branding?.print_show_block_change_returned ?? false
 
   return (
     <>
@@ -270,7 +288,7 @@ export function InvoicePrint({
         {/* Business Header */}
         <div className={`space-y-1 pb-3 mb-3 border-b-2 border-dashed border-zinc-400 ${isThermal ? 'text-center' : 'flex items-start justify-between text-left'}`}>
           <div className={`space-y-0.5 ${isThermal ? 'mx-auto' : ''}`}>
-            {(shopLogoUrl || branding?.print_show_logo) && (
+            {(branding?.print_show_logo ?? true) && (shopLogoUrl || branding?.logo_url) && (
               <div className={`flex items-center ${isThermal ? 'justify-center mb-1' : 'justify-start mb-2'}`}>
                 <img src={shopLogoUrl || branding?.logo_url} alt="Logo" className={`object-contain ${isThermal ? 'h-8' : 'h-10'}`} />
               </div>
@@ -294,15 +312,19 @@ export function InvoicePrint({
               <h2 className="font-bold text-[1.1em] uppercase text-zinc-950">TAX INVOICE</h2>
               {showDocumentNumber && <p className="text-zinc-600">Invoice: <span className="font-bold font-mono">{invoiceNo}</span></p>}
               {showDocumentDate && <p className="text-zinc-600">Date: {formatDateTime(date)}</p>}
+              {showDueDate && dueDate && <p className="text-zinc-600">Due: {dueDate}</p>}
+              {showPlaceOfSupply && placeOfSupply && <p className="text-zinc-600">PoS: {placeOfSupply}</p>}
+              {showDeliveryNote && deliveryNote && <p className="text-zinc-600">Del Note: {deliveryNote}</p>}
               {showPaymentModeHeader && <p className="text-zinc-600">Mode: <span className="capitalize">{paymentMode}</span></p>}
             </div>
           )}
         </div>
 
-        {isThermal && (showDocumentNumber || showDocumentDate || showPaymentModeHeader) && (
+        {isThermal && (showDocumentNumber || showDocumentDate || showDueDate || showPaymentModeHeader) && (
           <div className="py-1 text-[0.9em] flex justify-between text-zinc-600 border-b border-dashed border-zinc-400 flex-wrap gap-1 mb-3">
             {showDocumentNumber && <span>Invoice: <span className="font-bold font-mono">{invoiceNo}</span></span>}
             {showDocumentDate && <span>{formatDateTime(date)}</span>}
+            {showDueDate && dueDate && <span>Due: {dueDate}</span>}
             {showPaymentModeHeader && <span>Mode: <span className="capitalize">{paymentMode}</span></span>}
           </div>
         )}
@@ -312,11 +334,14 @@ export function InvoicePrint({
           <div className="py-2 mb-3 border-b border-dashed border-zinc-400 text-[0.9em]">
             <p className="font-bold text-zinc-800">Billed To:</p>
             {customerName && <p className="font-medium text-zinc-950">{customerName}</p>}
-            {showCustomerBillingAddress && <p className="text-zinc-600">{customerAddress}</p>}
+            {showCustomerBillingAddress && customerAddress && <p className="text-zinc-600">{customerAddress}</p>}
+            {showCustomerShippingAddress && customerShippingAddress && <p className="text-zinc-600">Ship: {customerShippingAddress}</p>}
             <div className="text-zinc-600 space-x-1">
               {showCustomerPhoneLine && customerPhone && <span>Ph: {customerPhone}</span>}
-              {showCustomerPhoneLine && customerPhone && customerGstin && <span>|</span>}
+              {showCustomerPhoneLine && customerPhone && (customerGstin || (showCustomerPanLine && customerPan)) && <span>|</span>}
               {customerGstin && <span>GSTIN: {customerGstin}</span>}
+              {customerGstin && showCustomerPanLine && customerPan && <span>|</span>}
+              {showCustomerPanLine && customerPan && <span>PAN: {customerPan}</span>}
             </div>
           </div>
         )}
@@ -571,6 +596,12 @@ export function InvoicePrint({
               <span>Net Payable:</span>
               <span>{formatINR(totals.net_payable)}</span>
             </div>
+            {showBlockChangeReturned && (
+              <div className="flex justify-between text-zinc-600 pt-0.5">
+                <span>Change Returned:</span>
+                <span>{formatINR(0)}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -636,11 +667,15 @@ export function InvoicePrint({
 
           {showSignatory && (
             <div className="pt-2 flex justify-end">
-              <div className="text-center w-28">
+              <div className="text-center w-32">
                 {showDigitalSignature && signatureUrl ? (
                   <img src={signatureUrl} alt="Signature" className="h-7 mx-auto object-contain" />
+                ) : showSignatureOutline ? (
+                  <div className="h-8 w-full border border-dashed border-zinc-400 rounded flex items-center justify-center text-[9px] text-zinc-500 italic mb-1">
+                    Sign Here
+                  </div>
                 ) : (
-                  <div className={`h-7 w-full ${showSignatureOutline ? 'border-b border-dashed border-zinc-300' : ''}`} />
+                  <div className="h-6 w-full" />
                 )}
                 <p className="border-t border-zinc-400 text-[0.75em] font-bold uppercase text-zinc-800 pt-0.5 mt-1">
                   Authorised Signatory

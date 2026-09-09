@@ -306,20 +306,33 @@ function LiveBarcodePreview({
   type,
   labelSize,
   templateStyle = 'standard',
+  showShopName = true,
+  showSku = true,
+  showCodeValue = true,
+  showMrp = true,
+  showSp = true,
+  strikethroughMrp = true,
   shopName,
   shopAddress,
 }: {
   type: string
   labelSize: string
   templateStyle?: 'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'
+  showShopName?: boolean
+  showSku?: boolean
+  showCodeValue?: boolean
+  showMrp?: boolean
+  showSp?: boolean
+  strikethroughMrp?: boolean
   shopName?: string
+  showAddress?: string
   shopAddress?: string
 }) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('')
   const svgRef = React.useRef<SVGSVGElement | null>(null)
 
   React.useEffect(() => {
-    if (type === 'qr' || templateStyle === 'saravana_stores') {
+    if (type === 'qr') {
       QRCode.toDataURL('https://billscape.app/item/8901234567890', {
         width: 140,
         margin: 1,
@@ -330,7 +343,7 @@ function LiveBarcodePreview({
         .catch((err) => console.error(err))
     }
 
-    if (svgRef.current && (type !== 'qr' || templateStyle === 'circular_bottle')) {
+    if (svgRef.current && type !== 'qr') {
       try {
         let value = '8901234567890'
         let format = 'CODE128'
@@ -341,16 +354,13 @@ function LiveBarcodePreview({
         } else if (type === 'code39') {
           value = 'BILL-ITEM-01'
           format = 'CODE39'
-        } else if (templateStyle === 'circular_bottle') {
-          value = '1003432492'
-          format = 'CODE128'
         }
 
         JsBarcode(svgRef.current, value, {
           format: format,
           width: type === 'code39' ? 1.3 : templateStyle === 'circular_bottle' ? 1.4 : 1.6,
           height: templateStyle === 'circular_bottle' ? 32 : 36,
-          displayValue: templateStyle !== 'circular_bottle',
+          displayValue: showCodeValue && templateStyle !== 'circular_bottle',
           fontSize: 10,
           font: 'monospace',
           textMargin: 2,
@@ -362,7 +372,7 @@ function LiveBarcodePreview({
         console.error('Barcode render error:', err)
       }
     }
-  }, [type, labelSize, templateStyle])
+  }, [type, labelSize, templateStyle, showCodeValue])
 
   // Dynamic label styling based on labelSize
   const getLabelDimensions = () => {
@@ -399,26 +409,39 @@ function LiveBarcodePreview({
       <div className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
         {/* Template 1: Circular Round Jar / Bottle Sticker */}
         {templateStyle === 'circular_bottle' && (
-          <div className="flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 w-52 h-52 p-4 text-center select-none transition-all duration-300">
-            <p className="font-bold tracking-tight uppercase text-[10px] leading-tight max-w-[140px]">
-              {shopName ? `${shopName} JAR` : 'GL CUBICAL JAR'}<br />
-              <span className="font-semibold text-[9px] text-zinc-600">300 ML [GD]</span>
-            </p>
+          <div className={cn('flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 text-center select-none transition-all duration-300', labelSize === '3x2cm' ? 'w-40 h-40 p-2 text-[8px]' : labelSize === '4x2.5cm' ? 'w-48 h-48 p-3 text-[9px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-60 h-60 p-5 text-xs' : 'w-52 h-52 p-4 text-[10px]')}>
+            {showShopName && (
+              <p className="font-bold tracking-tight uppercase leading-tight max-w-[140px]">
+                {shopName ? `${shopName} JAR` : 'GL CUBICAL JAR'}<br />
+                <span className="font-semibold text-zinc-600 text-[0.9em]">300 ML [GD]</span>
+              </p>
+            )}
 
             <div className="my-1 flex items-center justify-center max-w-[140px] overflow-hidden">
-              <svg ref={svgRef} className="max-w-full h-auto" />
+              {type === 'qr' ? (
+                qrDataUrl ? (
+                  <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} />
+                ) : (
+                  <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
+                )
+              ) : (
+                <svg ref={svgRef} className="max-w-full h-auto" />
+              )}
             </div>
 
-            <p className="text-[9px] font-mono font-bold text-zinc-900 tracking-wider">1003432492</p>
-            <p className="text-[8px] text-zinc-600 font-medium leading-tight mt-0.5">MRP RS 70.00 (Incl. all taxes)</p>
-            <p className="text-[11px] font-black text-zinc-950 tracking-tight">SP RS 49.00</p>
-            <p className="text-[8px] font-mono text-zinc-400">122602</p>
+            {showCodeValue && <p className="font-mono font-bold text-zinc-900 tracking-wider text-[0.9em]">1003432492</p>}
+            {showMrp && (
+              <p className="text-zinc-600 font-medium leading-tight mt-0.5 text-[0.8em]">
+                MRP RS {strikethroughMrp ? <span className="line-through">70.00</span> : '70.00'} (Incl. all taxes)
+              </p>
+            )}
+            {showSp && <p className="font-black text-zinc-950 tracking-tight text-[1.1em]">SP RS 49.00</p>}
           </div>
         )}
 
         {/* Template 2: Saravana Stores / Department Store Side-Ribbon Style */}
         {templateStyle === 'saravana_stores' && (
-          <div className="flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden w-[330px] min-h-[145px] transition-all duration-300 select-none">
+          <div className={cn('flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden transition-all duration-300 select-none', labelSize === '3x2cm' ? 'w-[250px] min-h-[110px]' : labelSize === '4x2.5cm' ? 'w-[290px] min-h-[125px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-[370px] min-h-[165px]' : 'w-[330px] min-h-[145px]')}>
             <div className="flex-1 p-3 flex flex-col justify-between">
               <div className="flex justify-between items-start text-[8px] font-mono text-zinc-500">
                 <span className="font-bold">15675</span>
@@ -427,17 +450,24 @@ function LiveBarcodePreview({
 
               <div className="flex items-center gap-3 my-1">
                 <div className="shrink-0">
-                  {qrDataUrl ? (
-                    <img src={qrDataUrl} alt="QR Code" className="h-16 w-16 object-contain" />
+                  {type === 'qr' ? (
+                    qrDataUrl ? (
+                      <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} />
+                    ) : (
+                      <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
+                    )
                   ) : (
-                    <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
+                    <div className="max-w-[130px] overflow-hidden">
+                      <svg ref={svgRef} className="max-w-full h-auto" />
+                    </div>
                   )}
                 </div>
 
                 <div className="flex flex-col min-w-0">
                   <p className="text-[11px] font-black tracking-tight uppercase text-zinc-950 truncate">TIA BUCKET 511</p>
-                  <p className="text-[9px] font-mono text-zinc-600">198411</p>
-                  <p className="text-sm font-black text-zinc-950 tracking-tight mt-0.5">Rs.232.00</p>
+                  {showCodeValue && <p className="text-[9px] font-mono text-zinc-600">198411</p>}
+                  {showMrp && <p className="text-[8px] text-zinc-500">MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
+                  {showSp && <p className="text-sm font-black text-zinc-950 tracking-tight">SP Rs.232.00</p>}
                 </div>
               </div>
 
@@ -450,7 +480,7 @@ function LiveBarcodePreview({
             {/* Vertical Orange Ribbon */}
             <div className="w-14 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
               <div className="writing-vertical transform -rotate-90 whitespace-nowrap text-center">
-                <span className="text-[9px] font-black uppercase tracking-wider block">{shopName || 'SARAVANA STORES'}</span>
+                {showShopName && <span className="text-[9px] font-black uppercase tracking-wider block">{shopName || 'SARAVANA STORES'}</span>}
                 <span className="text-[7px] text-amber-100 tracking-tight block max-w-[120px] truncate">{shopAddress || '129, Usman Road, T.Nagar, Chennai-17'}</span>
               </div>
             </div>
@@ -459,17 +489,18 @@ function LiveBarcodePreview({
 
         {/* Template 3: Compact Jewelry / Tag Style */}
         {templateStyle === 'compact_jewelry' && (
-          <div className="flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 p-3 w-[290px] min-h-[95px] transition-all duration-300 select-none">
+          <div className={cn('flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 transition-all duration-300 select-none', labelSize === '3x2cm' ? 'w-[230px] min-h-[75px] p-2' : labelSize === '4x2.5cm' ? 'w-[260px] min-h-[85px] p-2.5' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-[340px] min-h-[115px] p-4' : 'w-[290px] min-h-[95px] p-3')}>
             <div className="space-y-0.5 min-w-0 flex-1 pr-2">
-              <p className="text-[10px] font-black truncate uppercase text-zinc-900">{shopName || 'KALYAN JEWELLERS'}</p>
+              {showShopName && <p className="text-[10px] font-black truncate uppercase text-zinc-900">{shopName || 'KALYAN JEWELLERS'}</p>}
               <p className="text-[9px] font-semibold text-zinc-800 truncate">GOLD RING 22KT</p>
-              <p className="text-[8px] text-zinc-500 font-mono">WT: 4.250g | 916 HUID</p>
-              <p className="text-[11px] font-black text-zinc-950 mt-1">₹28,500.00</p>
+              {showSku && <p className="text-[8px] text-zinc-500 font-mono">WT: 4.250g | 916 HUID</p>}
+              {showMrp && <p className="text-[8px] text-zinc-500">MRP RS {strikethroughMrp ? <span className="line-through">30,000.00</span> : '30,000.00'}</p>}
+              {showSp && <p className="text-[11px] font-black text-zinc-950">SP RS 28,500.00</p>}
             </div>
             <div className="shrink-0">
               {type === 'qr' ? (
                 qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className="h-14 w-14 object-contain" />
+                  <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-11 w-11' : 'h-14 w-14')} />
                 ) : (
                   <div className="h-14 w-14 bg-zinc-100" />
                 )
@@ -485,8 +516,8 @@ function LiveBarcodePreview({
         {/* Template 4: Standard Retail Label */}
         {templateStyle === 'standard' && (
           <div className={cn('flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300 select-none', getLabelDimensions())}>
-            <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[11px]">{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>
-            <p className="text-[9px] text-zinc-500 font-mono">SKU: SHIRT-COTTON-001</p>
+            {showShopName && <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[11px]">{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>}
+            {showSku && <p className="text-[9px] text-zinc-500 font-mono">SKU: SHIRT-COTTON-001</p>}
 
             {type === 'qr' ? (
               <div className="my-1.5 flex items-center justify-center">
@@ -502,7 +533,8 @@ function LiveBarcodePreview({
               </div>
             )}
 
-            <p className="text-[10px] font-semibold text-zinc-900 mt-0.5">MRP: ₹499.00 <span className="text-[9px] font-normal text-zinc-500">(Incl. Taxes)</span></p>
+            {showMrp && <p className="text-[8px] text-zinc-500 font-medium">MRP RS {strikethroughMrp ? <span className="line-through">599.00</span> : '599.00'}</p>}
+            {showSp && <p className="text-[10px] font-black text-zinc-950">SP RS 499.00 <span className="text-[8px] font-normal text-zinc-500">(Incl. Taxes)</span></p>}
           </div>
         )}
       </div>
@@ -638,6 +670,7 @@ function LivePrintBillPreview({
   showPartyDetails,
   fontFamily,
   fontSize = 'Medium',
+  invoiceHeader,
 }: {
   paperSize: 'a4' | 'a5' | 'thermal_3inch' | 'thermal_2inch'
   showLogo?: boolean
@@ -706,6 +739,7 @@ function LivePrintBillPreview({
   showPartyDetails?: boolean
   fontFamily?: string
   fontSize?: string
+  invoiceHeader?: string
 }) {
   const isThermal = paperSize.startsWith('thermal')
   const is2Inch = paperSize === 'thermal_2inch'
@@ -723,6 +757,8 @@ function LivePrintBillPreview({
       })
         .then((url) => setUpiQrUrl(url))
         .catch((err) => console.error(err))
+    } else {
+      setUpiQrUrl('')
     }
   }, [showUpiQr, upiId, shopName, isThermal])
   
@@ -873,6 +909,13 @@ function LivePrintBillPreview({
                 : 'w-full max-w-[540px] p-6 rounded-sm'
           )}
         >
+          {/* Optional Header Message */}
+          {invoiceHeader && (
+            <div className="text-center pb-2 mb-2 border-b border-dashed border-zinc-300 text-[0.85em] italic text-zinc-700">
+              {invoiceHeader}
+            </div>
+          )}
+
           {/* Header */}
           <div className={cn('space-y-1 pb-3 border-b border-dashed border-zinc-400', isThermal ? 'text-center' : 'flex items-start justify-between text-left')}>
             <div className={cn('space-y-0.5', isThermal ? 'mx-auto' : '')}>
@@ -934,136 +977,208 @@ function LivePrintBillPreview({
             </div>
           )}
 
-          {/* Table Items */}
+          {/* Table / Thermal Items */}
           <div className="py-2">
-            <table className="w-full text-left text-[0.9em]">
-              <thead>
-                <tr className="border-b border-zinc-950 font-bold">
-                  {showColumnSno && <th className="py-1 pr-1">#</th>}
-                  {showColumnItemName !== false && <th className="py-1">Item</th>}
-                  {showColumnHsn && <th className="py-1">HSN</th>}
-                  {showColumnMrp && <th className="py-1 text-right">MRP</th>}
-                  {showColumnQty !== false && <th className="py-1 text-center">Qty</th>}
-                  {showColumnUnit && <th className="py-1">Unit</th>}
-                  {showColumnRate !== false && <th className="py-1 text-right">Rate</th>}
-                  {showColumnDiscount && <th className="py-1 text-right">Disc</th>}
-                  {showColumnTaxRate && <th className="py-1 text-right">GST%</th>}
-                  {showColumnTaxableValue && <th className="py-1 text-right">Taxable</th>}
-                  {showColumnTaxAmount && <th className="py-1 text-right">Tax Amt</th>}
-                  {showColumnItemTotal !== false && <th className="py-1 text-right">Amount</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200">
-                <tr>
-                  {showColumnSno && <td className="py-1 text-zinc-500">1</td>}
-                  {showColumnItemName !== false && <td className="py-1 font-medium">Premium Cotton T-Shirt</td>}
-                  {showColumnHsn && <td className="py-1 text-zinc-600">6109</td>}
-                  {showColumnMrp && <td className="py-1 text-right text-zinc-600">{currency}799</td>}
-                  {showColumnQty !== false && <td className="py-1 text-center font-bold">2</td>}
-                  {showColumnUnit && <td className="py-1 text-zinc-600">pcs</td>}
-                  {showColumnRate !== false && <td className="py-1 text-right">{currency}450</td>}
-                  {showColumnDiscount && <td className="py-1 text-right text-zinc-600">5%</td>}
-                  {showColumnTaxRate && <td className="py-1 text-right text-zinc-600">5%</td>}
-                  {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{currency}855.00</td>}
-                  {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{currency}42.75</td>}
-                  {showColumnItemTotal !== false && <td className="py-1 text-right font-bold">{currency}897.75</td>}
-                </tr>
-                <tr>
-                  {showColumnSno && <td className="py-1 text-zinc-500">2</td>}
-                  {showColumnItemName !== false && <td className="py-1 font-medium">Denim Jeans Regular</td>}
-                  {showColumnHsn && <td className="py-1 text-zinc-600">6203</td>}
-                  {showColumnMrp && <td className="py-1 text-right text-zinc-600">{currency}1499</td>}
-                  {showColumnQty !== false && <td className="py-1 text-center font-bold">1</td>}
-                  {showColumnUnit && <td className="py-1 text-zinc-600">pcs</td>}
-                  {showColumnRate !== false && <td className="py-1 text-right">{currency}999</td>}
-                  {showColumnDiscount && <td className="py-1 text-right text-zinc-600">0%</td>}
-                  {showColumnTaxRate && <td className="py-1 text-right text-zinc-600">12%</td>}
-                  {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{currency}999.00</td>}
-                  {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{currency}119.88</td>}
-                  {showColumnItemTotal !== false && <td className="py-1 text-right font-bold">{currency}1,118.88</td>}
-                </tr>
-              </tbody>
-            </table>
-          </div>
+            {isThermal ? (
+              <div className="divide-y divide-dashed divide-zinc-300 border-t border-b border-zinc-950 py-1">
+                {/* Sample Item 1 */}
+                <div className="py-1.5 space-y-0.5 text-[0.88em]">
+                  <div className="flex justify-between font-bold text-zinc-950 leading-tight">
+                    <span className="truncate pr-1">
+                      {showColumnSno ? '1. ' : ''}
+                      {showColumnItemName !== false ? 'Premium Cotton T-Shirt' : 'Item 1'}
+                    </span>
+                    {showColumnHsn && <span className="text-[0.82em] text-zinc-500 font-normal shrink-0">HSN: 6109</span>}
+                  </div>
+                  <div className="flex items-center justify-between text-zinc-700 text-[0.88em]">
+                    <span className="text-zinc-600">
+                      {showColumnQty !== false && <span className="font-semibold text-zinc-900">2</span>}
+                      {showColumnUnit && ' pcs'}
+                      {showColumnRate !== false && ` x ${currency}450`}
+                      {showColumnDiscount && <span className="text-zinc-500 text-[0.85em] ml-1">(-5%)</span>}
+                      {showColumnTaxRate && <span className="text-zinc-500 text-[0.85em] ml-1">GST 5%</span>}
+                    </span>
+                    {showColumnItemTotal !== false && <span className="font-bold text-zinc-950 tabular-nums shrink-0 ml-2">{currency}897.75</span>}
+                  </div>
+                </div>
 
-          {/* Tax Summary Table */}
-          {showTaxSummary && (
-            <div className="py-1.5 border-t border-zinc-200">
-              <p className="font-bold text-[0.85em] mb-1">Tax Summary</p>
-              <table className="w-full text-left text-[0.85em] text-zinc-600">
+                {/* Sample Item 2 */}
+                <div className="py-1.5 space-y-0.5 text-[0.88em]">
+                  <div className="flex justify-between font-bold text-zinc-950 leading-tight">
+                    <span className="truncate pr-1">
+                      {showColumnSno ? '2. ' : ''}
+                      {showColumnItemName !== false ? 'Denim Jeans Regular' : 'Item 2'}
+                    </span>
+                    {showColumnHsn && <span className="text-[0.82em] text-zinc-500 font-normal shrink-0">HSN: 6203</span>}
+                  </div>
+                  <div className="flex items-center justify-between text-zinc-700 text-[0.88em]">
+                    <span className="text-zinc-600">
+                      {showColumnQty !== false && <span className="font-semibold text-zinc-900">1</span>}
+                      {showColumnUnit && ' pcs'}
+                      {showColumnRate !== false && ` x ${currency}999`}
+                      {showColumnTaxRate && <span className="text-zinc-500 text-[0.85em] ml-1">GST 12%</span>}
+                    </span>
+                    {showColumnItemTotal !== false && <span className="font-bold text-zinc-950 tabular-nums shrink-0 ml-2">{currency}1,118.88</span>}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <table className="w-full text-left text-[0.9em]">
                 <thead>
-                  <tr className="border-b border-zinc-200">
-                    <th>Tax</th>
-                    <th className="text-right">Taxable</th>
-                    {showCgstSgstIgst && <th className="text-right">CGST</th>}
-                    {showCgstSgstIgst && <th className="text-right">SGST</th>}
-                    <th className="text-right">Tax Amt</th>
+                  <tr className="border-b border-zinc-950 font-bold">
+                    {showColumnSno && <th className="py-1 pr-1">#</th>}
+                    {showColumnItemName !== false && <th className="py-1">Item</th>}
+                    {showColumnHsn && <th className="py-1">HSN</th>}
+                    {showColumnMrp && <th className="py-1 text-right">MRP</th>}
+                    {showColumnQty !== false && <th className="py-1 text-center">Qty</th>}
+                    {showColumnUnit && <th className="py-1">Unit</th>}
+                    {showColumnRate !== false && <th className="py-1 text-right">Rate</th>}
+                    {showColumnDiscount && <th className="py-1 text-right">Disc</th>}
+                    {showColumnTaxRate && <th className="py-1 text-right">GST%</th>}
+                    {showColumnTaxableValue && <th className="py-1 text-right">Taxable</th>}
+                    {showColumnTaxAmount && <th className="py-1 text-right">Tax Amt</th>}
+                    {showColumnItemTotal !== false && <th className="py-1 text-right">Amount</th>}
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-zinc-200">
                   <tr>
-                    <td>GST 5%</td>
-                    <td className="text-right">{currency}855.00</td>
-                    {showCgstSgstIgst && <td className="text-right">{currency}21.38</td>}
-                    {showCgstSgstIgst && <td className="text-right">{currency}21.37</td>}
-                    <td className="text-right">{currency}42.75</td>
+                    {showColumnSno && <td className="py-1 text-zinc-500">1</td>}
+                    {showColumnItemName !== false && <td className="py-1 font-medium">Premium Cotton T-Shirt</td>}
+                    {showColumnHsn && <td className="py-1 text-zinc-600">6109</td>}
+                    {showColumnMrp && <td className="py-1 text-right text-zinc-600">{currency}799</td>}
+                    {showColumnQty !== false && <td className="py-1 text-center font-bold">2</td>}
+                    {showColumnUnit && <td className="py-1 text-zinc-600">pcs</td>}
+                    {showColumnRate !== false && <td className="py-1 text-right">{currency}450</td>}
+                    {showColumnDiscount && <td className="py-1 text-right text-zinc-600">5%</td>}
+                    {showColumnTaxRate && <td className="py-1 text-right text-zinc-600">5%</td>}
+                    {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{currency}855.00</td>}
+                    {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{currency}42.75</td>}
+                    {showColumnItemTotal !== false && <td className="py-1 text-right font-bold">{currency}897.75</td>}
                   </tr>
                   <tr>
-                    <td>GST 12%</td>
-                    <td className="text-right">{currency}999.00</td>
-                    {showCgstSgstIgst && <td className="text-right">{currency}59.94</td>}
-                    {showCgstSgstIgst && <td className="text-right">{currency}59.94</td>}
-                    <td className="text-right">{currency}119.88</td>
+                    {showColumnSno && <td className="py-1 text-zinc-500">2</td>}
+                    {showColumnItemName !== false && <td className="py-1 font-medium">Denim Jeans Regular</td>}
+                    {showColumnHsn && <td className="py-1 text-zinc-600">6203</td>}
+                    {showColumnMrp && <td className="py-1 text-right text-zinc-600">{currency}1499</td>}
+                    {showColumnQty !== false && <td className="py-1 text-center font-bold">1</td>}
+                    {showColumnUnit && <td className="py-1 text-zinc-600">pcs</td>}
+                    {showColumnRate !== false && <td className="py-1 text-right">{currency}999</td>}
+                    {showColumnDiscount && <td className="py-1 text-right text-zinc-600">0%</td>}
+                    {showColumnTaxRate && <td className="py-1 text-right text-zinc-600">12%</td>}
+                    {showColumnTaxableValue && <td className="py-1 text-right text-zinc-600">{currency}999.00</td>}
+                    {showColumnTaxAmount && <td className="py-1 text-right text-zinc-600">{currency}119.88</td>}
+                    {showColumnItemTotal !== false && <td className="py-1 text-right font-bold">{currency}1,118.88</td>}
                   </tr>
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Totals */}
-          <div className="border-t border-zinc-950 pt-1.5 text-right space-y-0.5 text-[0.9em]">
-            {showBlockSubtotal !== false && (
-              <div className="flex justify-between text-zinc-600">
-                <span>Subtotal:</span>
-                <span>{currency}1,854.00</span>
+          {/* Totals + Tax breakup */}
+          <div className={cn('flex mb-3', isThermal ? 'flex-col' : 'gap-4')}>
+            {/* Tax Summary Table */}
+            {showTaxSummary && !isThermal && (
+              <div className="flex-1 py-1.5 border-t border-zinc-200">
+                <p className="font-bold text-[0.85em] mb-1">Tax Summary</p>
+                <table className="w-full text-left text-[0.85em] text-zinc-600">
+                  <thead>
+                    <tr className="border-b border-zinc-200">
+                      <th>Rate</th>
+                      <th className="text-right">Taxable</th>
+                      {showCgstSgstIgst && <th className="text-right">CGST</th>}
+                      {showCgstSgstIgst && <th className="text-right">SGST</th>}
+                      <th className="text-right">Tax Amt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>GST 5%</td>
+                      <td className="text-right">{currency}855.00</td>
+                      {showCgstSgstIgst && <td className="text-right">{currency}21.38</td>}
+                      {showCgstSgstIgst && <td className="text-right">{currency}21.37</td>}
+                      <td className="text-right">{currency}42.75</td>
+                    </tr>
+                    <tr>
+                      <td>GST 12%</td>
+                      <td className="text-right">{currency}999.00</td>
+                      {showCgstSgstIgst && <td className="text-right">{currency}59.94</td>}
+                      {showCgstSgstIgst && <td className="text-right">{currency}59.94</td>}
+                      <td className="text-right">{currency}119.88</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             )}
-            {showBlockDiscount && (
-              <div className="flex justify-between text-zinc-600">
-                <span>Discount:</span>
-                <span>-{currency}0.00</span>
-              </div>
-            )}
-            {showBlockTaxAmount !== false && (
-              <div className="flex justify-between text-zinc-600">
-                <span>Tax (GST):</span>
-                <span>{currency}162.63</span>
-              </div>
-            )}
-            {showBlockRoundOff && (
-              <div className="flex justify-between text-zinc-600">
-                <span>Round Off:</span>
-                <span>{currency}0.37</span>
-              </div>
-            )}
-            {showBlockGrandTotal !== false && (
-              <div className="flex justify-between font-bold text-[1.1em] pt-1 border-t border-zinc-400 text-zinc-950">
-                <span>Grand Total:</span>
-                <span>{currency}2,017.00</span>
-              </div>
-            )}
-            {showBlockReceivedAmount && (
-              <div className="flex justify-between text-zinc-600 pt-1">
-                <span>Received:</span>
-                <span>{currency}2,017.00</span>
-              </div>
-            )}
-            {showBlockBalanceDue && (
-              <div className="flex justify-between text-zinc-600">
-                <span>Balance Due:</span>
-                <span>{currency}0.00</span>
-              </div>
-            )}
+
+            {/* Totals */}
+            <div className={cn('border-t border-zinc-950 pt-1.5 text-right space-y-0.5 text-[0.9em]', isThermal ? 'w-full' : 'w-56')}>
+              {showBlockSubtotal !== false && (
+                <div className="flex justify-between text-zinc-600">
+                  <span>Subtotal:</span>
+                  <span>{currency}1,854.00</span>
+                </div>
+              )}
+              {showBlockTaxAmount !== false && (
+                <div className="flex justify-between text-zinc-600">
+                  <span>Taxable Amount:</span>
+                  <span>{currency}1,854.00</span>
+                </div>
+              )}
+              {showCgstSgstIgst && (
+                <>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>CGST:</span>
+                    <span>{currency}81.32</span>
+                  </div>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>SGST:</span>
+                    <span>{currency}81.31</span>
+                  </div>
+                </>
+              )}
+              {showBlockDiscount && (
+                <div className="flex justify-between text-zinc-600">
+                  <span>Discount:</span>
+                  <span>-{currency}0.00</span>
+                </div>
+              )}
+              {showBlockRoundOff && (
+                <div className="flex justify-between text-zinc-600">
+                  <span>Round Off:</span>
+                  <span>{currency}0.37</span>
+                </div>
+              )}
+              {showBlockGrandTotal !== false && (
+                <div className="flex justify-between font-bold text-[1.1em] pt-1 border-t border-zinc-400 text-zinc-950">
+                  <span>Net Payable:</span>
+                  <span>{currency}2,017.00</span>
+                </div>
+              )}
+              {showBlockReceivedAmount && (
+                <div className="flex justify-between text-zinc-600 pt-1">
+                  <span>Received:</span>
+                  <span>{currency}2,017.00</span>
+                </div>
+              )}
+              {showBlockBalanceDue && (
+                <div className="flex justify-between text-zinc-600">
+                  <span>Balance Due:</span>
+                  <span>{currency}0.00</span>
+                </div>
+              )}
+              {showBlockChangeReturned && (
+                <div className="flex justify-between text-zinc-600">
+                  <span>Change Returned:</span>
+                  <span>{currency}0.00</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Amount in words */}
+          <div className="py-1.5 text-[0.85em] text-zinc-600 text-left">
+            <span className="font-bold text-zinc-800">Amount in Words: </span>
+            <span className="italic">Two Thousand Seventeen Rupees Only</span>
           </div>
 
           {/* Footer Details */}
@@ -1078,19 +1193,36 @@ function LivePrintBillPreview({
               </div>
             )}
 
-            {showUpiQr && (
-              <div className="flex items-center gap-3 p-2 bg-zinc-50 border border-zinc-200 rounded justify-center">
-                {upiQrUrl ? (
-                  <img src={upiQrUrl} alt="UPI QR Code" className="h-16 w-16 object-contain rounded border border-zinc-200 shadow-sm" />
-                ) : (
-                  <Smartphone className="h-5 w-5 text-zinc-800" />
-                )}
-                <div className="text-left space-y-0.5">
-                  <p className="text-[0.85em] font-bold text-zinc-900 uppercase">Scan & Pay via UPI</p>
-                  <p className="text-[0.8em] font-mono font-semibold text-zinc-700">{upiId || 'shop@okhdfcbank'}</p>
-                  <p className="text-[0.75em] text-zinc-500">Google Pay • PhonePe • Paytm</p>
+            {Boolean(showUpiQr) && (
+              isThermal ? (
+                <div className="py-2 border-t border-b border-dashed border-zinc-300 my-2 text-center space-y-1">
+                  {upiQrUrl ? (
+                    <img src={upiQrUrl} alt="UPI QR Code" className="h-24 w-24 object-contain mx-auto rounded border border-zinc-300 p-1 bg-white shadow-sm" />
+                  ) : (
+                    <Smartphone className="h-6 w-6 text-zinc-800 mx-auto" />
+                  )}
+                  <div>
+                    <p className="text-[0.85em] font-bold text-zinc-950 uppercase tracking-wide">
+                      Scan &amp; Pay {currency}2,017.00 via UPI
+                    </p>
+                    <p className="text-[0.8em] font-mono font-semibold text-zinc-700 mt-0.5">{upiId?.trim() ? upiId : 'shop@okhdfcbank'}</p>
+                    <p className="text-[0.72em] text-zinc-500 mt-0.5">Google Pay • PhonePe • Paytm • BHIM</p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center gap-3 p-2 bg-zinc-50 border border-zinc-200 rounded justify-center">
+                  {upiQrUrl ? (
+                    <img src={upiQrUrl} alt="UPI QR Code" className="h-16 w-16 object-contain rounded border border-zinc-200 shadow-sm" />
+                  ) : (
+                    <Smartphone className="h-5 w-5 text-zinc-800" />
+                  )}
+                  <div className="text-left space-y-0.5">
+                    <p className="text-[0.85em] font-bold text-zinc-900 uppercase">Scan &amp; Pay via UPI</p>
+                    <p className="text-[0.8em] font-mono font-semibold text-zinc-700">{upiId?.trim() ? upiId : 'shop@okhdfcbank'}</p>
+                    <p className="text-[0.75em] text-zinc-500">Google Pay • PhonePe • Paytm • BHIM</p>
+                  </div>
+                </div>
+              )
             )}
 
             {showTerms && terms && (
@@ -1099,11 +1231,15 @@ function LivePrintBillPreview({
 
             {showSignature && (
               <div className="pt-2 flex justify-end">
-                <div className="text-center w-28">
+                <div className="text-center w-32">
                   {signatureUrl ? (
                     <img src={signatureUrl} alt="Sign" className="h-7 mx-auto object-contain" />
+                  ) : showSignatureOutline ? (
+                    <div className="h-8 w-full border border-dashed border-zinc-400 rounded flex items-center justify-center text-[9px] text-zinc-500 italic mb-1">
+                      Sign Here
+                    </div>
                   ) : (
-                    <div className={cn("h-7 w-full", showSignatureOutline ? "border-b border-dashed border-zinc-300" : "")} />
+                    <div className="h-6 w-full" />
                   )}
                   <p className="border-t border-zinc-400 text-[0.75em] font-bold uppercase text-zinc-800 pt-0.5 mt-1">
                     Authorized Signatory
@@ -1231,6 +1367,12 @@ export function SettingsPage() {
   const [barcodeLabelSize, setBarcodeLabelSize] = useState<string>(org?.branding?.barcode_label_size ?? '5x3cm')
   const [barcodeTemplateStyle, setBarcodeTemplateStyle] = useState<'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'>((org?.branding as any)?.barcode_template_style ?? 'standard')
   const [autoPrintBarcodeOnPurchase, setAutoPrintBarcodeOnPurchase] = useState<boolean>(org?.branding?.auto_print_barcode_on_purchase ?? false)
+  const [barcodeShowShopName, setBarcodeShowShopName] = useState<boolean>((org?.branding as any)?.barcode_show_shop_name ?? true)
+  const [barcodeShowSku, setBarcodeShowSku] = useState<boolean>((org?.branding as any)?.barcode_show_sku ?? true)
+  const [barcodeShowCodeValue, setBarcodeShowCodeValue] = useState<boolean>((org?.branding as any)?.barcode_show_code_value ?? true)
+  const [barcodeShowMrp, setBarcodeShowMrp] = useState<boolean>((org?.branding as any)?.barcode_show_mrp ?? true)
+  const [barcodeShowSp, setBarcodeShowSp] = useState<boolean>((org?.branding as any)?.barcode_show_sp ?? true)
+  const [barcodeStrikethroughMrp, setBarcodeStrikethroughMrp] = useState<boolean>((org?.branding as any)?.barcode_strikethrough_mrp ?? true)
 
   // Invoice UPI / payment
   const [upiId, setUpiId] = useState<string>(org?.branding?.upi_id ?? '')
@@ -1398,6 +1540,24 @@ export function SettingsPage() {
       if ((org?.branding as any)?.financial_year_start) {
         setFinancialYearStart((org.branding as any).financial_year_start)
       }
+      if (org.branding?.print_paper_size) setPrintPaperSize(org.branding.print_paper_size as any)
+      if (org.branding?.upi_id !== undefined) setUpiId(org.branding.upi_id || '')
+      if (org.branding?.print_show_upi_qr !== undefined) setPrintShowUpiQr(org.branding.print_show_upi_qr)
+      if (org.branding?.print_show_bank_details !== undefined) setPrintShowBankDetails(org.branding.print_show_bank_details)
+      if (org.branding?.print_show_terms !== undefined) setPrintShowTerms(org.branding.print_show_terms)
+      if (org.branding?.print_show_notes !== undefined) setPrintShowNotes(org.branding.print_show_notes)
+      if (org.branding?.print_show_signature_outline !== undefined) setPrintShowSignatureOutline(org.branding.print_show_signature_outline)
+      if (org.branding?.print_show_signature !== undefined) setPrintShowSignature(org.branding.print_show_signature)
+      if (org.branding?.print_show_party_details !== undefined) setPrintShowPartyDetails(org.branding.print_show_party_details)
+      if (org.branding?.print_show_block_subtotal !== undefined) setPrintShowBlockSubtotal(org.branding.print_show_block_subtotal)
+      if (org.branding?.print_show_block_discount !== undefined) setPrintShowBlockDiscount(org.branding.print_show_block_discount)
+      if (org.branding?.print_show_block_tax_amount !== undefined) setPrintShowBlockTaxAmount(org.branding.print_show_block_tax_amount)
+      if (org.branding?.print_show_block_rounding !== undefined) setPrintShowBlockRounding(org.branding.print_show_block_rounding)
+      if (org.branding?.print_show_block_round_off !== undefined) setPrintShowBlockRoundOff(org.branding.print_show_block_round_off)
+      if (org.branding?.print_show_block_grand_total !== undefined) setPrintShowBlockGrandTotal(org.branding.print_show_block_grand_total)
+      if (org.branding?.print_show_block_received_amount !== undefined) setPrintShowBlockReceivedAmount(org.branding.print_show_block_received_amount)
+      if (org.branding?.print_show_block_balance_due !== undefined) setPrintShowBlockBalanceDue(org.branding.print_show_block_balance_due)
+      if (org.branding?.print_show_block_change_returned !== undefined) setPrintShowBlockChangeReturned(org.branding.print_show_block_change_returned)
     }
   }, [org])
 
@@ -1882,6 +2042,12 @@ export function SettingsPage() {
           barcode_label_size: barcodeLabelSize,
           barcode_template_style: barcodeTemplateStyle,
           auto_print_barcode_on_purchase: autoPrintBarcodeOnPurchase,
+          barcode_show_shop_name: barcodeShowShopName,
+          barcode_show_sku: barcodeShowSku,
+          barcode_show_code_value: barcodeShowCodeValue,
+          barcode_show_mrp: barcodeShowMrp,
+          barcode_show_sp: barcodeShowSp,
+          barcode_strikethrough_mrp: barcodeStrikethroughMrp,
         },
       }, { onConflict: 'organization_id' })
       if (error) throw error
@@ -3785,54 +3951,9 @@ export function SettingsPage() {
                 <p className="text-sm text-muted-foreground mt-0.5">Configure how barcodes are generated and printed for your products.</p>
               </div>
 
+              {/* 1. Label Design Template at Top */}
               <div className="space-y-3">
-                <Label>Barcode Type</Label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {[
-                    { value: 'code128', label: 'CODE 128', desc: 'Most common, alphanumeric' },
-                    { value: 'ean13', label: 'EAN-13', desc: 'Retail standard, 13 digits' },
-                    { value: 'qr', label: 'QR Code', desc: 'Can store more data' },
-                    { value: 'code39', label: 'CODE 39', desc: 'Industrial / warehouse' },
-                  ].map((type) => (
-                    <button
-                      key={type.value}
-                      type="button"
-                      onClick={() => setBarcodeType(type.value)}
-                      className={cn(
-                        'rounded-lg border-2 p-3 text-left transition-all',
-                        barcodeType === type.value ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'
-                      )}
-                    >
-                      <p className="text-sm font-semibold text-foreground">{type.label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{type.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-3">
-                <Label>Label Size</Label>
-                <div className="flex gap-2 flex-wrap">
-                  {['3x2cm', '4x2.5cm', '5x3cm', '6x4cm', 'A4 Sheet'].map((size) => (
-                    <button
-                      key={size}
-                      type="button"
-                      onClick={() => setBarcodeLabelSize(size)}
-                      className={cn(
-                        'rounded-lg border-2 px-4 py-2 text-sm font-medium transition-all',
-                        barcodeLabelSize === size ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-primary/50'
-                      )}
-                    >
-                      {size}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <Label>Label Design Template</Label>
+                <Label className="text-sm font-semibold text-foreground">Label Design Template</Label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {[
                     { value: 'standard', label: 'Standard Retail', desc: 'Classic rectangular with barcode/QR & MRP' },
@@ -3860,11 +3981,107 @@ export function SettingsPage() {
 
               <Separator />
 
+              {/* 2. Label Size */}
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold text-foreground">Label Size</Label>
+                <div className="flex gap-2 flex-wrap">
+                  {['3x2cm', '4x2.5cm', '5x3cm', '6x4cm', 'A4 Sheet'].map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => setBarcodeLabelSize(size)}
+                      className={cn(
+                        'rounded-lg border-2 px-4 py-2 text-sm font-medium transition-all',
+                        barcodeLabelSize === size ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-primary/50'
+                      )}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* 3. Barcode Type */}
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold text-foreground">Barcode Type</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { value: 'code128', label: 'CODE 128', desc: 'Most common, alphanumeric' },
+                    { value: 'ean13', label: 'EAN-13', desc: 'Retail standard, 13 digits' },
+                    { value: 'qr', label: 'QR Code', desc: 'Can store more data' },
+                    { value: 'code39', label: 'CODE 39', desc: 'Industrial / warehouse' },
+                  ].map((type) => (
+                    <button
+                      key={type.value}
+                      type="button"
+                      onClick={() => setBarcodeType(type.value)}
+                      className={cn(
+                        'rounded-lg border-2 p-3 text-left transition-all',
+                        barcodeType === type.value ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'
+                      )}
+                    >
+                      <p className="text-sm font-semibold text-foreground">{type.label}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{type.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* 4. Label Elements Visibility Toggles */}
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-sm font-semibold text-foreground">Label Elements &amp; Information</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">Toggle which details appear on printed barcode/QR labels</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {[
+                    { id: 'show_shop_name', label: 'Shop Name / Brand', desc: 'Include store header on label', value: barcodeShowShopName, setter: setBarcodeShowShopName },
+                    { id: 'show_sku', label: 'SKU / Product Code', desc: 'Include SKU identifier on label', value: barcodeShowSku, setter: setBarcodeShowSku },
+                    { id: 'show_code_value', label: 'Barcode Text Value', desc: 'Display code digits below barcode', value: barcodeShowCodeValue, setter: setBarcodeShowCodeValue },
+                    { id: 'show_mrp', label: 'Show MRP', desc: 'Display Maximum Retail Price', value: barcodeShowMrp, setter: setBarcodeShowMrp },
+                    { id: 'show_sp', label: 'Show Selling Price (SP)', desc: 'Display Selling Price / Offer Price', value: barcodeShowSp, setter: setBarcodeShowSp },
+                    { id: 'strikethrough_mrp', label: 'Strike-through MRP', desc: 'Cross out MRP when SP is lower', value: barcodeStrikethroughMrp, setter: setBarcodeStrikethroughMrp },
+                  ].map(({ id, label, desc, value, setter }) => (
+                    <div key={id} className="flex items-center justify-between p-3 rounded-xl border border-border bg-secondary/20">
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">{label}</p>
+                        <p className="text-[11px] text-muted-foreground">{desc}</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={value}
+                        onClick={() => setter(!value)}
+                        className={cn(
+                          'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 cursor-pointer',
+                          value ? 'bg-primary' : 'bg-zinc-600'
+                        )}
+                      >
+                        <span className={cn('pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200', value ? 'translate-x-4' : 'translate-x-0')} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <Separator />
+
               {/* Live Barcode Format Preview */}
               <LiveBarcodePreview
                 type={barcodeType}
                 labelSize={barcodeLabelSize}
                 templateStyle={barcodeTemplateStyle}
+                showShopName={barcodeShowShopName}
+                showSku={barcodeShowSku}
+                showCodeValue={barcodeShowCodeValue}
+                showMrp={barcodeShowMrp}
+                showSp={barcodeShowSp}
+                strikethroughMrp={barcodeStrikethroughMrp}
                 shopName={shopForm.watch('name')}
                 shopAddress={[shopForm.watch('address'), shopForm.watch('city')].filter(Boolean).join(', ')}
               />
@@ -4096,23 +4313,62 @@ export function SettingsPage() {
 
                 {/* Helper function for Switch Grids */}
                 {(() => {
-                  const renderSwitches = (title: string, items: { label: string, value: boolean, setter: (v: boolean) => void }[]) => (
+                  const renderSwitches = (
+                    title: string,
+                    items: {
+                      label: string
+                      value: boolean
+                      setter: (v: boolean) => void
+                      disabled?: boolean
+                      tooltip?: string
+                      badgeText?: string
+                    }[]
+                  ) => (
                     <div className="rounded-xl border border-border bg-card overflow-hidden">
                       <div className="px-5 py-3 border-b border-border bg-secondary/30">
                         <h3 className="font-semibold text-sm text-foreground">{title}</h3>
                       </div>
                       <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {items.map((item, i) => (
-                          <div key={i} className="flex items-center justify-between p-2.5 rounded-lg border border-border/50 bg-secondary/10 hover:bg-secondary/20 transition-colors">
-                            <span className="text-xs font-medium text-foreground">{item.label}</span>
+                          <div
+                            key={i}
+                            title={item.disabled ? item.tooltip : undefined}
+                            className={cn(
+                              'flex items-center justify-between p-2.5 rounded-lg border transition-colors',
+                              item.disabled
+                                ? 'border-border/40 bg-secondary/5 opacity-60 cursor-not-allowed'
+                                : 'border-border/50 bg-secondary/10 hover:bg-secondary/20'
+                            )}
+                            onClick={() => {
+                              if (item.disabled && item.tooltip) {
+                                toast.error('Field not configured', item.tooltip)
+                              }
+                            }}
+                          >
+                            <div className="flex flex-col min-w-0 pr-2">
+                              <span className="text-xs font-medium text-foreground truncate">{item.label}</span>
+                              {item.disabled && (item.badgeText || item.tooltip) && (
+                                <span className="text-[10px] text-amber-500 font-normal truncate mt-0.5">
+                                  {item.badgeText || 'Not configured'}
+                                </span>
+                              )}
+                            </div>
                             <button
                               type="button"
                               role="switch"
+                              disabled={item.disabled}
                               aria-checked={item.value}
-                              onClick={() => item.setter(!item.value)}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (item.disabled) {
+                                  if (item.tooltip) toast.error('Field not configured', item.tooltip)
+                                  return
+                                }
+                                item.setter(!item.value)
+                              }}
                               className={cn(
                                 'relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200',
-                                item.value ? 'bg-primary' : 'bg-zinc-600'
+                                item.disabled ? 'bg-zinc-700 cursor-not-allowed' : item.value ? 'bg-primary cursor-pointer' : 'bg-zinc-600 cursor-pointer'
                               )}
                             >
                               <span className={cn('pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200', item.value ? 'translate-x-3' : 'translate-x-0')} />
@@ -4123,16 +4379,49 @@ export function SettingsPage() {
                     </div>
                   )
 
+                  const gstinVal = shopForm.watch('gstin')
+                  const phoneVal = shopForm.watch('phone')
+                  const emailVal = shopForm.watch('email')
+                  const panVal = shopForm.watch('pan')
+
                   return (
                     <>
                       {/* 2. Business Information */}
                       {renderSwitches('Business Information', [
-                        { label: 'Business Logo', value: printShowLogo, setter: setPrintShowLogo },
+                        {
+                          label: 'Business Logo',
+                          value: printShowLogo,
+                          setter: setPrintShowLogo,
+                          disabled: !logoPreview,
+                          badgeText: 'Not set in Shop Info',
+                          tooltip: 'Business Logo is not uploaded. Go to Settings > Shop Info to upload logo.',
+                        },
                         { label: 'Business Name', value: printShowShopName, setter: setPrintShowShopName },
                         { label: 'Business Address', value: printShowAddress, setter: setPrintShowAddress },
-                        { label: 'Contact Details', value: printShowContact, setter: setPrintShowContact },
-                        { label: 'GST Number', value: printShowGstin, setter: setPrintShowGstin },
-                        { label: 'Email / Website', value: printShowEmailWebsite, setter: setPrintShowEmailWebsite },
+                        {
+                          label: 'Contact Details',
+                          value: printShowContact,
+                          setter: setPrintShowContact,
+                          disabled: !phoneVal,
+                          badgeText: 'Not set in Shop Info',
+                          tooltip: 'Phone number is not set. Go to Settings > Shop Info to set phone number.',
+                        },
+                        {
+                          label: 'GST Number',
+                          value: printShowGstin,
+                          setter: setPrintShowGstin,
+                          disabled: !gstinVal,
+                          badgeText: 'Not set in Tax & GST',
+                          tooltip: 'GSTIN is not configured. Go to Settings > Tax & GST to add GSTIN.',
+                        },
+                        {
+                          label: 'Email / Website',
+                          value: printShowEmailWebsite,
+                          setter: setPrintShowEmailWebsite,
+                          disabled: !emailVal,
+                          badgeText: 'Not set in Shop Info',
+                          tooltip: 'Email is not set. Go to Settings > Shop Info to set email address.',
+                        },
                       ])}
 
                       {/* 3. Customer / Party Details */}
@@ -4190,41 +4479,28 @@ export function SettingsPage() {
                       ])}
 
                       {/* 8. Additional Sections */}
-                      <div className="rounded-xl border border-border bg-card overflow-hidden">
-                        <div className="px-5 py-3 border-b border-border bg-secondary/30">
-                          <h3 className="font-semibold text-sm text-foreground">Additional Sections</h3>
-                        </div>
-                        <div className="p-5 space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {[
-                              { label: 'Terms & Conditions', value: printShowTerms, setter: setPrintShowTerms },
-                              { label: 'Notes', value: printShowNotes, setter: setPrintShowNotes },
-                              { label: 'Bank Details', value: printShowBankDetails, setter: setPrintShowBankDetails },
-                              { label: 'Signature Outline', value: printShowSignatureOutline, setter: setPrintShowSignatureOutline },
-                              { label: 'Authorized Signatory', value: printShowSignature, setter: setPrintShowSignature },
-                              { label: 'UPI QR Code', value: printShowUpiQr, setter: setPrintShowUpiQr },
-                            ].map((item, i) => (
-                              <div key={i} className="flex items-center justify-between p-2.5 rounded-lg border border-border/50 bg-secondary/10 hover:bg-secondary/20 transition-colors">
-                                <span className="text-xs font-medium text-foreground">{item.label}</span>
-                                <button
-                                  type="button"
-                                  role="switch"
-                                  aria-checked={item.value}
-                                  onClick={() => item.setter(!item.value)}
-                                  className={cn(
-                                    'relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200',
-                                    item.value ? 'bg-primary' : 'bg-zinc-600'
-                                  )}
-                                >
-                                  <span className={cn('pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200', item.value ? 'translate-x-3' : 'translate-x-0')} />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                          
-                          
-                        </div>
-                      </div>
+                      {renderSwitches('Additional Sections', [
+                        { label: 'Terms & Conditions', value: printShowTerms, setter: setPrintShowTerms },
+                        { label: 'Notes', value: printShowNotes, setter: setPrintShowNotes },
+                        {
+                          label: 'Bank Details',
+                          value: printShowBankDetails,
+                          setter: setPrintShowBankDetails,
+                          disabled: !bankAccount && !bankName,
+                          badgeText: 'Not set in Invoice & UPI',
+                          tooltip: 'Bank details not set. Go to Settings > Invoice & UPI to configure Bank details.',
+                        },
+                        { label: 'Authorized Signatory', value: printShowSignature, setter: setPrintShowSignature },
+                        { label: 'Signature Outline', value: printShowSignatureOutline, setter: setPrintShowSignatureOutline },
+                        {
+                          label: 'UPI QR Code',
+                          value: upiId ? printShowUpiQr : false,
+                          setter: setPrintShowUpiQr,
+                          disabled: !upiId,
+                          badgeText: 'Not set in Invoice & UPI',
+                          tooltip: 'UPI ID is not set. Go to Settings > Invoice & UPI to add UPI ID.',
+                        },
+                      ])}
                     </>
                   )
                 })()}
@@ -4282,6 +4558,7 @@ export function SettingsPage() {
                    <div className="flex-1 overflow-y-auto bg-zinc-900 p-4 flex justify-center custom-scrollbar">
                      <LivePrintBillPreview
                         paperSize={printPaperSize}
+                        invoiceHeader={invoiceHeader}
                         showLogo={printShowLogo}
                         showShopName={printShowShopName}
                         showAddress={printShowAddress}
@@ -4310,7 +4587,7 @@ export function SettingsPage() {
                         bankName={bankName}
                         bankAccount={bankAccount}
                         bankIfsc={bankIfsc}
-                        showUpiQr={printShowUpiQr}
+                        showUpiQr={upiId ? printShowUpiQr : false}
                         upiId={upiId}
                         showTerms={printShowTerms}
                         terms={invoiceTerms}

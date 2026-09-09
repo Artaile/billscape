@@ -42,7 +42,7 @@ import { PlanLimitModal } from '@/components/common/PlanLimitModal'
 import { useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { ScanBarcodeDialog } from '@/components/ui/ScanBarcodeDialog'
-import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty } from '@billscape/core'
+import { computeGST, computeLineTax, applyOrderDiscount, applyLoyaltyRedemption, applyRoundOff, formatINR, qtyStepForUnit, toBaseQty, getStateName } from '@billscape/core'
 import { createSale, getSales, getLoyaltyByCustomerId, getLoyaltySettings, ensureLoyaltyCustomer, getVariantStockMap, getVariantStock } from '@billscape/api'
 import type { CartItem, DiscountType, GSTContext, InvoiceTotals, Unit } from '@billscape/core'
 import type { LoyaltyCustomer, LoyaltySettings } from '@billscape/api'
@@ -1770,7 +1770,7 @@ export function POSTab() {
                 invoiceNo={completedSale.invoiceNo}
                 date={new Date().toISOString()}
                 shopName={org?.name ?? 'BillScape Shop'}
-                shopAddress={org?.address}
+                shopAddress={[org?.address, getStateName(org?.state_code)].filter(Boolean).join(', ')}
                 shopGstin={org?.gstin}
                 shopPan={org?.pan}
                 shopLogoUrl={org?.branding?.logo_url}
