@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag, ChevronRight, ChevronDown } from 'lucide-react'
+import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag, ChevronRight, ChevronDown, Printer } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { getVariantStockMap } from '@billscape/api'
 import { VariantAdjustStockDialog } from '@/components/products/VariantAdjustStockDialog'
+import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -83,6 +84,7 @@ export function InventoryPage() {
   const [adjustNote, setAdjustNote] = useState('')
   const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set())
   const [variantAdjustTarget, setVariantAdjustTarget] = useState<{ id: string; name: string; stock: number; unitSymbol?: string | null } | null>(null)
+  const [variantPrintTarget, setVariantPrintTarget] = useState<{ id: string; variant_name: string; barcode_value: string | null; sale_price: number | null; productName: string } | null>(null)
 
   // Expiring within 30 days
   const { data: expiringBatches } = useQuery({
@@ -149,16 +151,16 @@ export function InventoryPage() {
     queryFn: async () => {
       const { data: variants } = await supabase
         .from('product_variants')
-        .select('id, product_id, variant_name')
+        .select('id, product_id, variant_name, barcode_value, sale_price')
         .eq('organization_id', orgId!)
-      if (!variants || variants.length === 0) return new Map<string, { id: string; variant_name: string; stock: number }[]>()
+      if (!variants || variants.length === 0) return new Map<string, { id: string; variant_name: string; stock: number; barcode_value: string | null; sale_price: number | null }[]>()
 
       const stockMap = await getVariantStockMap(supabase, orgId!, variants.map((v) => v.id))
 
-      const map = new Map<string, { id: string; variant_name: string; stock: number }[]>()
+      const map = new Map<string, { id: string; variant_name: string; stock: number; barcode_value: string | null; sale_price: number | null }[]>()
       for (const v of variants) {
         const list = map.get(v.product_id) ?? []
-        list.push({ id: v.id, variant_name: v.variant_name, stock: stockMap.data.get(v.id) ?? 0 })
+        list.push({ id: v.id, variant_name: v.variant_name, stock: stockMap.data.get(v.id) ?? 0, barcode_value: v.barcode_value ?? null, sale_price: v.sale_price ?? null })
         map.set(v.product_id, list)
       }
       return map
@@ -551,19 +553,29 @@ export function InventoryPage() {
                             <TableCell className="text-right text-muted-foreground">—</TableCell>
                             <TableCell>{getVariantRowStatusBadge(variant.stock)}</TableCell>
                             <TableCell className="text-right">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs"
-                                onClick={() => setVariantAdjustTarget({
-                                  id: variant.id,
-                                  name: `${item.products?.name ?? ''} — ${variant.variant_name}`,
-                                  stock: variant.stock,
-                                  unitSymbol: item.products?.unit?.symbol,
-                                })}
-                              >
-                                <SlidersHorizontal className="h-3 w-3" /> Adjust
-                              </Button>
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  title="Print label"
+                                  onClick={() => setVariantPrintTarget({ id: variant.id, variant_name: variant.variant_name, barcode_value: variant.barcode_value ?? null, sale_price: variant.sale_price ?? null, productName: item.products!.name })}
+                                  className="p-1 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+                                >
+                                  <Printer className="h-3.5 w-3.5" />
+                                </button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => setVariantAdjustTarget({
+                                    id: variant.id,
+                                    name: `${item.products?.name ?? ''} — ${variant.variant_name}`,
+                                    stock: variant.stock,
+                                    unitSymbol: item.products?.unit?.symbol,
+                                  })}
+                                >
+                                  <SlidersHorizontal className="h-3 w-3" /> Adjust
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         )
@@ -876,6 +888,22 @@ export function InventoryPage() {
           variantName={variantAdjustTarget.name}
           currentStock={variantAdjustTarget.stock}
           unitSymbol={variantAdjustTarget.unitSymbol}
+        />
+      )}
+
+      {/* Per-variant barcode print dialog */}
+      {variantPrintTarget && (
+        <BarcodeLabelDialog
+          open={!!variantPrintTarget}
+          onOpenChange={(v) => { if (!v) setVariantPrintTarget(null) }}
+          items={[{
+            key: variantPrintTarget.id,
+            name: variantPrintTarget.productName,
+            variantLabel: variantPrintTarget.variant_name,
+            barcode_value: variantPrintTarget.barcode_value,
+            price: variantPrintTarget.sale_price ?? 0,
+          }]}
+          orgName={org?.name}
         />
       )}
     </div>
