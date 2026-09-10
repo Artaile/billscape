@@ -738,14 +738,40 @@ export function ProductFormPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="brand">Brand</Label>
-                <Input id="brand" placeholder="e.g. Samsung" value={brand} onChange={(e) => setBrand(e.target.value)} />
+                <Input id="brand" placeholder="e.g. Raymond / Nike" value={brand} onChange={(e) => setBrand(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="hsn_code">HSN Code</Label>
-                <Input id="hsn_code" placeholder="e.g. 2501" {...register('hsn_code')} />
+                <Input id="hsn_code" placeholder="e.g. 6109" {...register('hsn_code')} />
                 {errors.hsn_code && <p className="text-xs text-red-400">{errors.hsn_code.message}</p>}
               </div>
             </div>
+
+            {(org?.branding as any)?.industry_template === 'clothing' && (
+              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border/50">
+                <div className="space-y-1.5">
+                  <Label htmlFor="fabric">Fabric / Material (Garment)</Label>
+                  <Input id="fabric" placeholder="e.g. 100% Cotton / Denim" value={(existingProduct as any)?.fabric ?? ''} onChange={(e) => {
+                    if (existingProduct) (existingProduct as any).fabric = e.target.value
+                  }} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="gender">Gender / Category</Label>
+                  <select
+                    value={(existingProduct as any)?.gender ?? 'Unisex'}
+                    onChange={(e) => {
+                      if (existingProduct) (existingProduct as any).gender = e.target.value
+                    }}
+                    className="flex h-9 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="Men">Men</option>
+                    <option value="Women">Women</option>
+                    <option value="Kids">Kids</option>
+                    <option value="Unisex">Unisex</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Pricing */}

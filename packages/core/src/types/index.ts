@@ -252,17 +252,18 @@ export interface Unit {
 export interface Product {
   id: string
   organization_id: string
-  category_id?: string
+  category_id?: string | null
   name: string
-  sku?: string
-  hsn_code?: string
+  sku?: string | null
+  extra_sku?: string | null
+  hsn_code?: string | null
   tax_rate: GSTRate
   price: number
   cost_price: number
   mrp?: number
   special_price?: number
-  barcode_value?: string
-  image_url?: string
+  barcode_value?: string | null
+  image_url?: string | null
   track_stock: boolean
   is_active: boolean
   created_at: string
@@ -275,6 +276,15 @@ export interface Product {
   conversion_factor?: number
   unit?: Unit
   secondary_unit?: Unit
+  // Optional clothing traits
+  brand?: string | null
+  fabric?: string | null
+  gender?: string | null
+  // Computed / Joined
+  category_name?: string
+  stock_qty?: number
+  min_stock_level?: number
+  has_variants?: boolean
 }
 
 export interface ProductVariant {

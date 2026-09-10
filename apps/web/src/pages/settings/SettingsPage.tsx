@@ -38,6 +38,8 @@ import {
   Sparkles,
   CheckCircle2,
   Clock,
+  ShoppingBag,
+  Tag,
   AlertTriangle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -2530,6 +2532,87 @@ export function SettingsPage() {
                     <CreditCard className="h-3.5 w-3.5" />
                     Manage Plan / Upgrade
                   </Button>
+                </div>
+              </div>
+
+              {/* Card 0.5: Industry Template Selector */}
+              <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
+                <div className="px-6 py-3.5 border-b border-border bg-secondary/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Store className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold text-sm text-foreground">Industry Template Preset</h3>
+                  </div>
+                  <Badge variant="outline" className="text-xs uppercase font-mono">
+                    {(org?.branding as any)?.industry_template === 'clothing' ? 'Clothing & Apparel' : 'General Retail'}
+                  </Badge>
+                </div>
+                <div className="p-6 space-y-4">
+                  <p className="text-xs text-muted-foreground">
+                    Choose the template that best matches your business operations. Clothing template enables Size/Color variant matrix, Brand &amp; Garment tags, while streamlining Purchase entry.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const existing = org?.branding ?? {}
+                        const { error } = await supabase.from('org_settings').upsert({
+                          organization_id: orgId!,
+                          branding: { ...existing, industry_template: 'general' },
+                        }, { onConflict: 'organization_id' })
+                        if (error) {
+                          toast.error('Failed to update template', error.message)
+                        } else {
+                          await refreshOrg()
+                          toast.success('Switched to General Retail Template')
+                        }
+                      }}
+                      className={cn(
+                        'flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all cursor-pointer',
+                        ((org?.branding as any)?.industry_template ?? 'general') === 'general'
+                          ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
+                          : 'border-border hover:border-border/80 bg-background'
+                      )}
+                    >
+                      <div className="p-2.5 rounded-lg bg-primary/20 text-primary shrink-0">
+                        <ShoppingBag className="h-5 w-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-bold text-foreground">General Retail / Supermarket</p>
+                        <p className="text-xs text-muted-foreground">Standard barcode billing, general inventory, batch &amp; expiry tracking.</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const existing = org?.branding ?? {}
+                        const { error } = await supabase.from('org_settings').upsert({
+                          organization_id: orgId!,
+                          branding: { ...existing, industry_template: 'clothing' },
+                        }, { onConflict: 'organization_id' })
+                        if (error) {
+                          toast.error('Failed to update template', error.message)
+                        } else {
+                          await refreshOrg()
+                          toast.success('Switched to Clothing & Apparel Template')
+                        }
+                      }}
+                      className={cn(
+                        'flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all cursor-pointer',
+                        (org?.branding as any)?.industry_template === 'clothing'
+                          ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/30'
+                          : 'border-border hover:border-border/80 bg-background'
+                      )}
+                    >
+                      <div className="p-2.5 rounded-lg bg-indigo-500/20 text-indigo-400 shrink-0">
+                        <Tag className="h-5 w-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-bold text-foreground">Clothing &amp; Apparel Store</p>
+                        <p className="text-xs text-muted-foreground">Size/Color matrix, Brand &amp; Fabric traits, Garment price tags, streamlined Purchase form.</p>
+                      </div>
+                    </button>
+                  </div>
                 </div>
               </div>
 

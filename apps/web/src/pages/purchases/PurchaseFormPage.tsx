@@ -1422,7 +1422,7 @@ export function PurchaseFormPage() {
                     {/* Expiry Date — only rendered at all when the gear's "Show Expiry Date"
                         is on; turning that off removes the field from the form entirely rather
                         than merely disabling it. */}
-                    {showExpiryField && (
+                    {showExpiryField && (org?.branding as any)?.industry_template !== 'clothing' && (
                       <div className="space-y-1">
                         <Label className="text-xs">Expiry Date</Label>
                         <Input type="date" value={entry.expiry_date}
