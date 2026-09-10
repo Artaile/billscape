@@ -39,7 +39,13 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
     if (!open) return
     setChecked(new Set(items.filter((i) => i.barcode_value).map((i) => i.key)))
     setCopiesByKey(Object.fromEntries(items.map((i) => [i.key, 1])))
-  }, [open, items])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `items` is intentionally excluded:
+    // every call site passes an inline array literal with an unstable reference on every render,
+    // so including it here would reset checked/copies on every parent re-render (e.g. a
+    // background query refetch), silently discarding whatever the merchant had already
+    // unchecked or changed. This effect should only fire when the dialog transitions from
+    // closed to open; it still reads the current `items` from this render's closure when it runs.
+  }, [open])
 
   const checkedItems = items.filter((i) => checked.has(i.key))
   const totalLabels = checkedItems.reduce((sum, i) => sum + (copiesByKey[i.key] ?? 1), 0)
@@ -138,8 +144,9 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   <Input
                     type="number"
                     min={1}
+                    max={100}
                     value={copiesByKey[item.key] ?? 1}
-                    onChange={(e) => setCopiesByKey((prev) => ({ ...prev, [item.key]: Math.max(1, parseInt(e.target.value) || 1) }))}
+                    onChange={(e) => setCopiesByKey((prev) => ({ ...prev, [item.key]: Math.min(100, Math.max(1, parseInt(e.target.value) || 1)) }))}
                     className="w-16 h-7 text-xs shrink-0"
                   />
                 </div>
@@ -230,6 +237,15 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   )
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function buildLabelHtml(
   items: LabelItem[],
   copiesByKey: Record<string, number>,
@@ -242,9 +258,9 @@ function buildLabelHtml(
     const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
     return Array.from({ length: copies }, () => `
       <div class="label">
-        ${orgName ? `<div class="shop">${orgName}</div>` : ''}
-        ${showName ? `<div class="name">${displayName}</div>` : ''}
-        ${item.barcode_value ? `<svg data-barcode="${item.barcode_value}" id="bc_${Math.random().toString(36).slice(2)}"></svg>` : ''}
+        ${orgName ? `<div class="shop">${escapeHtml(orgName)}</div>` : ''}
+        ${showName ? `<div class="name">${escapeHtml(displayName)}</div>` : ''}
+        ${item.barcode_value ? `<svg data-barcode="${escapeHtml(item.barcode_value)}" id="bc_${Math.random().toString(36).slice(2)}"></svg>` : ''}
         ${showPrice ? `<div class="price">&#8377;${item.price.toFixed(2)}</div>` : ''}
       </div>
     `)

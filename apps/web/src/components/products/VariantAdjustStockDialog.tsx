@@ -68,6 +68,7 @@ export function VariantAdjustStockDialog({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
       queryClient.invalidateQueries({ queryKey: ['inventory-variant-names', orgId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-variant-stock', orgId] })
       queryClient.invalidateQueries({ queryKey: ['product-detail', orgId] })
       queryClient.invalidateQueries({ queryKey: ['product-variants-detail', orgId] })
       queryClient.invalidateQueries({ queryKey: ['products', orgId] })
