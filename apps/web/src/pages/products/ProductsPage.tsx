@@ -215,7 +215,7 @@ function ProductCard({
             <SlidersHorizontal className="h-4 w-4" />
             <span className="text-[10px] font-medium">Stock</span>
           </button>
-          {product.barcode_value ? (
+          {(product.barcode_value || hasVariants) ? (
             <button
               type="button"
               title="Print label"
@@ -237,7 +237,7 @@ function ProductCard({
             </button>
           )}
         </div>
-        {product.barcode_value && (
+        {(product.barcode_value || hasVariants) && (
           <button
             type="button"
             title="Delete"
@@ -385,6 +385,21 @@ export function ProductsPage() {
     }
     return true
   }
+
+  // Fetch the variant rows for the current print target only when it's a has_variants product —
+  // BarcodeLabelDialog needs one LabelItem per variant instead of a single product-level item.
+  const { data: printTargetVariants } = useQuery({
+    queryKey: ['print-target-variants', printTarget?.id],
+    enabled: !!printTarget && !!(printTarget as any).has_variants,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('product_variants')
+        .select('id, variant_name, barcode_value, sale_price')
+        .eq('product_id', printTarget!.id)
+        .order('variant_name')
+      return data ?? []
+    },
+  })
 
   const allFiltered = (products ?? []).filter(matchesFilters)
   const filteredProducts = allFiltered.filter((p) => !(p as any).has_variants)
@@ -680,7 +695,17 @@ export function ProductsPage() {
         <BarcodeLabelDialog
           open={!!printTarget}
           onOpenChange={(v) => { if (!v) setPrintTarget(null) }}
-          product={printTarget}
+          items={
+            (printTarget as any).has_variants
+              ? (printTargetVariants ?? []).map((v) => ({
+                  key: v.id,
+                  name: printTarget.name,
+                  variantLabel: v.variant_name,
+                  barcode_value: v.barcode_value,
+                  price: v.sale_price ?? 0,
+                }))
+              : [{ key: printTarget.id, name: printTarget.name, barcode_value: printTarget.barcode_value, price: printTarget.price }]
+          }
           orgName={org?.name}
         />
       )}
