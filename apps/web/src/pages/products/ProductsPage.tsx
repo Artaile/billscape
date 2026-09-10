@@ -690,8 +690,15 @@ export function ProductsPage() {
         initialProductId={adjustStockProductId}
       />
 
-      {/* Barcode label print dialog */}
-      {printTarget && (
+      {/* Barcode label print dialog — for a has_variants target, held back until
+          printTargetVariants actually resolves (not just !!printTarget) so the dialog never
+          mounts with an empty `items` array. BarcodeLabelDialog's reset effect only re-runs when
+          `open` transitions to true (see its own comment) — mounting early with `items: []` and
+          having the real variant list arrive a moment later, while `open` stays true the whole
+          time, would seed `checked`/`copiesByKey` empty and never re-seed them, leaving every
+          row unchecked and Print permanently disabled until the merchant manually re-checks each
+          one. */}
+      {printTarget && (!(printTarget as any).has_variants || printTargetVariants) && (
         <BarcodeLabelDialog
           open={!!printTarget}
           onOpenChange={(v) => { if (!v) setPrintTarget(null) }}
