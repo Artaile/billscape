@@ -38,6 +38,33 @@ export function recordVariantPurchase(
   return adjustVariantStock(client, { ...args, reason: 'purchase' })
 }
 
+// Manual stock adjustment for a single variant (mirrors AdjustStockDialog.tsx's non-variant
+// flow) — unlike recordVariantSale/recordVariantPurchase, the caller already knows the signed
+// delta (Add Stock vs Remove Stock), so this does not force a sign the way adjustVariantStock
+// does. reason is always 'adjustment' to match variant_stock_movements' reason enum and the
+// non-variant AdjustStockDialog's own default reason.
+export async function recordVariantAdjustment(
+  client: TypedSupabaseClient,
+  args: { organizationId: string; variantId: string; delta: number; note?: string; createdBy: string },
+) {
+  const { error: rpcError } = await client.rpc('increment_variant_inventory', {
+    p_org_id: args.organizationId,
+    p_variant_id: args.variantId,
+    p_qty: args.delta,
+  })
+  if (rpcError) return { error: rpcError }
+
+  const { error: logError } = await client.from('variant_stock_movements').insert({
+    organization_id: args.organizationId,
+    product_variant_id: args.variantId,
+    qty_change: args.delta,
+    reason: 'adjustment',
+    note: args.note ?? null,
+    created_by: args.createdBy,
+  })
+  return { error: logError }
+}
+
 // Reverses a previously-recorded variant purchase (used when editing a purchase — the
 // original quantities must be un-applied before the new ones are inserted). Deliberately NOT
 // implemented via adjustVariantStock, whose sign-forcing logic (`reason === 'sale' ? negative :
