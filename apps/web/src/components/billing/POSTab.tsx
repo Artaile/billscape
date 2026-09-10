@@ -429,11 +429,25 @@ export function POSTab() {
     queryKey: ['billing-products-variant-match', orgId, debouncedProductSearch],
     enabled: !!orgId && !!debouncedProductSearch,
     queryFn: async () => {
+      // A search term can be the full "Product Name — Variant Name" label the merchant sees
+      // (and can copy) in the Items table / cart elsewhere in this app — e.g. "QC Clothing Test
+      // Shirt — XS" — rather than just the bare variant name. variant_name alone never contains
+      // the parent product's name, so an ilike match on the whole typed string found nothing
+      // even though the variant itself exists, and the grid went blank. When the term contains
+      // the "Name — Variant" separator, also try just the part after it against variant_name.
+      const dashIdx = debouncedProductSearch.lastIndexOf('—')
+      const variantNamePart = dashIdx !== -1 ? debouncedProductSearch.slice(dashIdx + 1).trim() : null
+      const orConditions = [
+        `barcode_value.ilike.%${debouncedProductSearch}%`,
+        `variant_name.ilike.%${debouncedProductSearch}%`,
+      ]
+      if (variantNamePart) orConditions.push(`variant_name.ilike.%${variantNamePart}%`)
+
       const { data: variantMatches } = await supabase
         .from('product_variants')
         .select('product_id')
         .eq('organization_id', orgId!)
-        .or(`barcode_value.ilike.%${debouncedProductSearch}%,variant_name.ilike.%${debouncedProductSearch}%`)
+        .or(orConditions.join(','))
 
       const matchedParentIds = [...new Set((variantMatches ?? []).map((v) => v.product_id))]
       if (matchedParentIds.length === 0) return []

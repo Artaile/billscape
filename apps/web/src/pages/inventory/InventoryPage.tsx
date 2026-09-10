@@ -111,6 +111,31 @@ export function InventoryPage() {
     },
   })
 
+  // Stock List is one row per PRODUCT (from the `inventory` table), never per-variant, so
+  // searching e.g. "QC Clothing Test Shirt — XS" or just "XS" against products.name alone found
+  // nothing even though that variant genuinely exists — the row search had no visibility into
+  // product_variants at all. Fetched once per org (not re-queried per keystroke — the match
+  // itself happens client-side in filteredInventory below, same as the existing name search) and
+  // mapped product_id -> its variant names, so a search matching ANY variant surfaces that
+  // product's row, same convention as billing POS's own variant-name search.
+  const { data: variantNamesByProduct } = useQuery({
+    queryKey: ['inventory-variant-names', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('product_variants')
+        .select('product_id, variant_name')
+        .eq('organization_id', orgId!)
+      const map = new Map<string, string[]>()
+      for (const row of data ?? []) {
+        const list = map.get(row.product_id) ?? []
+        list.push(row.variant_name)
+        map.set(row.product_id, list)
+      }
+      return map
+    },
+  })
+
   const { data: categories } = useQuery({
     queryKey: ['categories', orgId],
     enabled: !!orgId,
@@ -161,7 +186,15 @@ export function InventoryPage() {
 
   const filteredInventory = inventory?.filter((item) => {
     const productName = item.products?.name ?? ''
-    const matchesSearch = productName.toLowerCase().includes(search.toLowerCase())
+    const q = search.toLowerCase()
+    // Matches the bare product name, OR any of its variant names, OR the combined
+    // "Product Name — Variant Name" label the merchant sees (and can copy) elsewhere in the
+    // app, e.g. in the Purchase Items table — see variantNamesByProduct above for why this
+    // product-row-only search needed variant awareness at all.
+    const variantNames = (item.products?.id && variantNamesByProduct?.get(item.products.id)) || []
+    const matchesSearch =
+      productName.toLowerCase().includes(q) ||
+      variantNames.some((v) => v.toLowerCase().includes(q) || `${productName} — ${v}`.toLowerCase().includes(q))
     const threshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
 
     let matchesFilter = true
