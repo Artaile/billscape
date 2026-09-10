@@ -5,8 +5,8 @@ import { ArrowLeft, Loader2, Pencil, Printer, Package, Trash2 } from 'lucide-rea
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
-import { formatDate } from '@/lib/utils'
-import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { formatDate, cn } from '@/lib/utils'
+import { getVariantStockMap } from '@billscape/api'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -19,6 +19,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog'
+import { BarcodeLabelDialog } from '@/components/ui/BarcodeLabelDialog'
 import { toast } from '@/hooks/use-toast'
 import { logActivity } from '@/lib/activityLog'
 
@@ -31,6 +32,8 @@ export function ProductViewPage() {
   const orgId = org?.id
   const queryClient = useQueryClient()
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [printOpen, setPrintOpen] = useState(false)
+  const [singleVariantPrint, setSingleVariantPrint] = useState<{ id: string; variant_name: string; barcode_value: string | null; sale_price: number | null } | null>(null)
 
   const { data: product, isLoading } = useQuery({
     queryKey: ['product-detail', orgId, id],
@@ -44,6 +47,26 @@ export function ProductViewPage() {
         .single()
       if (error) throw error
       return data
+    },
+  })
+
+  const hasVariants = !!(product as any)?.has_variants
+
+  const { data: variants } = useQuery({
+    queryKey: ['product-variants-detail', orgId, id],
+    enabled: !!orgId && !!id && hasVariants,
+    queryFn: async () => {
+      const { data: rows } = await supabase
+        .from('product_variants')
+        .select('id, variant_name, barcode_value, tax_rate, mrp, sale_price, purchase_price')
+        .eq('product_id', id!)
+        .eq('organization_id', orgId!)
+        .order('variant_name')
+      if (!rows || rows.length === 0) return []
+
+      const stockMap = await getVariantStockMap(supabase, orgId!, rows.map((r) => r.id))
+
+      return rows.map((r) => ({ ...r, stock: stockMap.data.get(r.id) ?? 0 }))
     },
   })
 
@@ -105,8 +128,20 @@ export function ProductViewPage() {
 
   const stock = product?.inventory?.stock_qty ?? 0
   const reorderLevel = product?.inventory?.reorder_level ?? 5
-  const hasVariants = !!(product as any)?.has_variants
   const totalBatchQty = (batches ?? []).reduce((s, b) => s + (b.qty ?? 0), 0)
+
+  const variantPrices = (variants ?? []).map((v) => v.sale_price ?? 0)
+  const variantPurchasePrices = (variants ?? []).map((v) => v.purchase_price ?? 0)
+  const variantTaxRates = new Set((variants ?? []).map((v) => v.tax_rate))
+  const totalVariantStock = (variants ?? []).reduce((sum, v) => sum + v.stock, 0)
+  const totalVariantStockValue = (variants ?? []).reduce((sum, v) => sum + v.stock * (v.purchase_price ?? 0), 0)
+
+  function priceRangeLabel(values: number[]): string {
+    if (values.length === 0) return '—'
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    return min === max ? formatINR(min) : `${formatINR(min)} – ${formatINR(max)}`
+  }
 
   function stockBadge() {
     if (!product?.track_stock) return null
@@ -129,11 +164,8 @@ export function ProductViewPage() {
         </div>
         {product && (
           <div className="flex items-center gap-2">
-            {product.barcode_value && (
-              <Button
-                variant="outline" size="sm"
-                onClick={() => printBarcodeLabel(product.name, product.barcode_value!, product.price)}
-              >
+            {(product.barcode_value || hasVariants) && (
+              <Button variant="outline" size="sm" onClick={() => setPrintOpen(true)}>
                 <Printer className="h-4 w-4" /> Print Label
               </Button>
             )}
@@ -205,25 +237,32 @@ export function ProductViewPage() {
                   </div>
                   <div>
                     <span className="text-zinc-500 text-xs">Sale Price</span>
-                    <p className="text-indigo-300 font-semibold">{hasVariants ? 'Multiple prices' : formatINR(product.price)}</p>
+                    <p className="text-indigo-300 font-semibold">
+                      {hasVariants ? priceRangeLabel(variantPrices) : formatINR(product.price)}
+                      {hasVariants && variants && variants.length > 0 && (
+                        <span className="text-zinc-500 text-xs font-normal"> ({variants.length} variants)</span>
+                      )}
+                    </p>
                   </div>
                   <div>
                     <span className="text-zinc-500 text-xs">Purchase Price</span>
-                    <p className="text-zinc-200">{hasVariants ? '—' : formatINR(product.cost_price ?? 0)}</p>
+                    <p className="text-zinc-200">{hasVariants ? priceRangeLabel(variantPurchasePrices) : formatINR(product.cost_price ?? 0)}</p>
                   </div>
                   <div>
                     <span className="text-zinc-500 text-xs">Tax Rate</span>
-                    <p className="text-zinc-200">{product.tax_rate}%</p>
+                    <p className="text-zinc-200" title={hasVariants ? [...variantTaxRates].map((r) => `${r}%`).join(', ') : undefined}>
+                      {hasVariants ? (variantTaxRates.size > 1 ? 'Varies' : `${[...variantTaxRates][0] ?? product.tax_rate}%`) : `${product.tax_rate}%`}
+                    </p>
                   </div>
                   {product.track_stock && (
                     <>
                       <div>
-                        <span className="text-zinc-500 text-xs">Current Stock</span>
-                        <p className="text-indigo-300 font-semibold">{stock} {product.unit?.symbol ?? ''}</p>
+                        <span className="text-zinc-500 text-xs">{hasVariants ? 'Total Stock (all variants)' : 'Current Stock'}</span>
+                        <p className="text-indigo-300 font-semibold">{hasVariants ? totalVariantStock : stock} {product.unit?.symbol ?? ''}</p>
                       </div>
                       <div>
                         <span className="text-zinc-500 text-xs">Stock Value</span>
-                        <p className="text-zinc-200">{formatINR(stock * (product.cost_price ?? 0))}</p>
+                        <p className="text-zinc-200">{formatINR(hasVariants ? totalVariantStockValue : stock * (product.cost_price ?? 0))}</p>
                       </div>
                     </>
                   )}
@@ -231,6 +270,62 @@ export function ProductViewPage() {
               </div>
             </div>
           </div>
+
+          {/* Variants */}
+          {hasVariants && (
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4">
+                <h3 className="text-sm font-semibold text-zinc-300">Variants ({variants?.length ?? 0})</h3>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Variant Name</TableHead>
+                    <TableHead>Barcode</TableHead>
+                    <TableHead className="text-right">Tax %</TableHead>
+                    <TableHead className="text-right">MRP</TableHead>
+                    <TableHead className="text-right">Retail Price</TableHead>
+                    <TableHead className="text-right">Purchase Price</TableHead>
+                    <TableHead className="text-right">Stock</TableHead>
+                    <TableHead className="w-[5%]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {!variants || variants.length === 0 ? (
+                    <TableRow><TableCell colSpan={8} className="text-center text-zinc-500 py-4">No variants recorded</TableCell></TableRow>
+                  ) : variants.map((v) => {
+                    const outOfStock = v.stock <= 0
+                    const lowStock = !outOfStock && v.stock <= reorderLevel
+                    return (
+                      <TableRow key={v.id}>
+                        <TableCell className="text-zinc-200">{v.variant_name}</TableCell>
+                        <TableCell className="font-mono text-xs text-zinc-400">{v.barcode_value ?? '—'}</TableCell>
+                        <TableCell className="text-right text-zinc-400">{v.tax_rate}%</TableCell>
+                        <TableCell className="text-right text-zinc-400">{v.mrp != null ? formatINR(v.mrp) : '—'}</TableCell>
+                        <TableCell className="text-right text-zinc-300">{v.sale_price != null ? formatINR(v.sale_price) : '—'}</TableCell>
+                        <TableCell className="text-right text-zinc-400">{v.purchase_price != null ? formatINR(v.purchase_price) : '—'}</TableCell>
+                        <TableCell className="text-right">
+                          <span className={cn('text-sm', outOfStock ? 'text-red-400' : lowStock ? 'text-yellow-400' : 'text-zinc-300')}>
+                            {v.stock} {product.unit?.symbol ?? ''}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            type="button"
+                            title="Print label"
+                            onClick={() => setSingleVariantPrint(v)}
+                            className="p-1 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+                          >
+                            <Printer className="h-3.5 w-3.5" />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
 
           {/* Batches */}
           {product.has_batches && (
@@ -324,6 +419,40 @@ export function ProductViewPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {product && (
+        <BarcodeLabelDialog
+          open={printOpen}
+          onOpenChange={setPrintOpen}
+          items={
+            hasVariants
+              ? (variants ?? []).map((v) => ({
+                  key: v.id,
+                  name: product.name,
+                  variantLabel: v.variant_name,
+                  barcode_value: v.barcode_value,
+                  price: v.sale_price ?? 0,
+                }))
+              : [{ key: product.id, name: product.name, barcode_value: product.barcode_value, price: product.price }]
+          }
+          orgName={org?.name}
+        />
+      )}
+
+      {singleVariantPrint && (
+        <BarcodeLabelDialog
+          open={!!singleVariantPrint}
+          onOpenChange={(v) => { if (!v) setSingleVariantPrint(null) }}
+          items={[{
+            key: singleVariantPrint.id,
+            name: product?.name ?? '',
+            variantLabel: singleVariantPrint.variant_name,
+            barcode_value: singleVariantPrint.barcode_value,
+            price: singleVariantPrint.sale_price ?? 0,
+          }]}
+          orgName={org?.name}
+        />
+      )}
     </div>
   )
 }
