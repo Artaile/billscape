@@ -137,6 +137,12 @@ export function PurchaseFormPage() {
   const { org, user, refreshOrg } = useAuth()
   const orgId = org?.id
   const taxInclusive = org?.branding?.tax_inclusive ?? false
+  // Clothing & Apparel industry template (Settings > Industry Template Preset) simplifies the
+  // variant-tracked purchase flow: the parent card keeps its full field set (Row1/Row2, same as
+  // a non-variant product) and drives shared tax/price values onto every variant, while each
+  // variant row itself is stripped down to just Name/Qty/Barcode — see VariantEditor's
+  // `simplified` prop and syncClothingVariants below.
+  const isClothing = (org?.branding as any)?.industry_template === 'clothing'
   const queryClient = useQueryClient()
   const { requestNavigation } = useNavigationGuard()
 
@@ -240,6 +246,31 @@ export function PurchaseFormPage() {
       setEntry((p) => ({ ...p, has_batches: false }))
     }
   }, [entry.is_new_product, entry.has_variants, entry.has_batches, showBatchesField])
+
+  // Clothing template: every variant shares the parent row's tax_rate/gst_mode/mrp/sale_price/
+  // purchase_price (Row 1/Row 2 above) instead of carrying its own — this keeps that in sync on
+  // every keystroke so the values already sitting on each entry.variants[i] are correct by the
+  // time Add to List runs (no special-casing needed in the submit mapping; each variant's
+  // tax_rate/mrp/sale_price/purchase_price/gst_mode already flow through PurchaseLineInput's
+  // normal per-variant fields, see the items.map below). Only runs when eligible, mirroring the
+  // has_batches effect's own eligible-gate pattern above.
+  useEffect(() => {
+    if (!isClothing || !entry.is_new_product || !entry.has_variants) return
+    setEntry((p) => {
+      const needsSync = p.variants.some((v) =>
+        v.tax_rate !== p.tax_rate || v.gst_mode !== p.gst_mode ||
+        v.mrp !== p.mrp || v.sale_price !== p.price || v.purchase_price !== p.unit_cost,
+      )
+      if (!needsSync) return p
+      return {
+        ...p,
+        variants: p.variants.map((v) => ({
+          ...v, tax_rate: p.tax_rate, gst_mode: p.gst_mode,
+          mrp: p.mrp, sale_price: p.price, purchase_price: p.unit_cost,
+        })),
+      }
+    })
+  }, [isClothing, entry.is_new_product, entry.has_variants, entry.tax_rate, entry.gst_mode, entry.mrp, entry.price, entry.unit_cost, entry.variants])
 
   const [entrySearch, setEntrySearch] = useState('')
   const [entryDropdownOpen, setEntryDropdownOpen] = useState(false)
@@ -670,6 +701,17 @@ export function PurchaseFormPage() {
     }, 400)
   }
 
+  // Clothing template only: sum of variant quantities must exactly equal the parent's Total
+  // Qty (entry.qty) before the row can be added — e.g. Total Qty 9 = XS 3 + S 3 + L 3. Returns
+  // false (no mismatch, safe to add) whenever the check doesn't apply, so callers don't need to
+  // separately gate on isClothing/has_variants.
+  function clothingVariantQtyMismatch(): boolean {
+    if (!isClothing || !entry.has_variants) return false
+    const parentQty = parseNum(entry.qty)
+    const variantQtySum = entry.variants.reduce((sum, v) => sum + parseNum(v.qty), 0)
+    return parentQty !== variantQtySum
+  }
+
   function canAddEntry(): boolean {
     if (!entry.product_name.trim()) return false
     if (!entry.has_variants && parseNum(entry.qty) <= 0) return false
@@ -678,6 +720,7 @@ export function PurchaseFormPage() {
     if (entry.is_new_product && !entry.unit_id) return false
     if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) return false
     if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || (showExpiryField && !b.expiry_date))) return false
+    if (clothingVariantQtyMismatch()) return false
     // A known duplicate code/barcode (sibling row or a real saved product) must block adding —
     // otherwise this exact row sails past validation here only to fail with an opaque DB
     // constraint error later at Save Purchase, once it's too late to tell which row was the
@@ -700,6 +743,7 @@ export function PurchaseFormPage() {
     if (entry.is_new_product && !entry.barcode_value.trim()) errs.add('barcode_value')
     if (entry.is_new_product && !entry.unit_id) errs.add('unit_id')
     if (entry.is_new_product && entry.codeError) { errs.add('sku'); errs.add('barcode_value') }
+    if (clothingVariantQtyMismatch()) errs.add('qty')
     return errs
   }
 
@@ -713,6 +757,9 @@ export function PurchaseFormPage() {
         msg = 'At least one variant needs a name and a quantity greater than 0'
       } else if (entry.has_variants && entry.variants.some((v) => !v.variant_name.trim())) {
         msg = 'Each variant needs a name before it can be added — remove empty rows or fill them in'
+      } else if (clothingVariantQtyMismatch()) {
+        const variantQtySum = entry.variants.reduce((sum, v) => sum + parseNum(v.qty), 0)
+        msg = `Variant quantities (${variantQtySum}) must add up to Total Qty (${parseNum(entry.qty)})`
       } else if (entry.has_batches && entry.batches.some((b) => !b.batch_no.trim() || (showExpiryField && !b.expiry_date))) {
         msg = showExpiryField
           ? 'Each batch row needs both a Batch No and an Expiry Date — remove empty rows or fill them in'
@@ -1114,10 +1161,14 @@ export function PurchaseFormPage() {
                     </div>
                   </div>
                 </div>
-                {/* Row 1 (has_variants only): Product name shares this row with Product Code —
-                    VariantEditor below carries every real barcode/SKU/GST/price per-variant, so
-                    the parent's own Product Code is the only identifying field left up here. */}
-                {entry.has_variants && (
+                {/* Row 1 (has_variants only, General Retail template): Product name shares this
+                    row with Product Code — VariantEditor below carries every real barcode/SKU/
+                    GST/price per-variant, so the parent's own Product Code is the only
+                    identifying field left up here. Clothing template skips this stripped-down
+                    block entirely — it reuses the full non-variant Row 1/Row 2 below instead
+                    (see isClothing branches), since every variant there shares the parent's
+                    tax/price and only needs Name/Qty/Barcode of its own. */}
+                {entry.has_variants && !isClothing && (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px_200px]">
                     <div className="space-y-1 relative" ref={dropdownRef}>
                       <Label className="text-xs">Product *</Label>
@@ -1195,15 +1246,18 @@ export function PurchaseFormPage() {
                   </div>
                 )}
 
-                {/* Row 1 (non-variant): Product Name, Product Code, Barcode, Tax %, GST mode —
-                    reordered per merchant UX request so the auto-generated Product Code sits
-                    right next to the name (its primary identifier), followed by Barcode and tax
-                    fields. The separate free-text "SKU" field (extra_sku) was removed from this
-                    entry form entirely — extra_sku stays on PurchaseRow/products for edit-mode
-                    loading and other call sites, it's just no longer collected here. Rendered
-                    only when !has_variants; the has_variants Row 1 above already covers Product
-                    Name + Code in that case. */}
-                {!entry.has_variants && (
+                {/* Row 1 (non-variant, or clothing template regardless of has_variants):
+                    Product Name, Product Code, Barcode, Tax %, GST mode — reordered per merchant
+                    UX request so the auto-generated Product Code sits right next to the name
+                    (its primary identifier), followed by Barcode and tax fields. The separate
+                    free-text "SKU" field (extra_sku) was removed from this entry form entirely —
+                    extra_sku stays on PurchaseRow/products for edit-mode loading and other call
+                    sites, it's just no longer collected here. For the Clothing & Apparel
+                    template, this full row also renders when has_variants is on — Barcode here
+                    becomes the base every variant's own barcode auto-derives from (see
+                    VariantEditor/syncClothingVariants), and Tax%/GST become the shared value
+                    applied to every variant instead of a per-variant field. */}
+                {(!entry.has_variants || isClothing) && (
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-[2fr_0.9fr_1.4fr_0.7fr_0.9fr]">
                     <div className="space-y-1 relative col-span-2 sm:col-span-1" ref={dropdownRef}>
                       <Label className="text-xs">Product Name *</Label>
@@ -1332,11 +1386,18 @@ export function PurchaseFormPage() {
                     these fields are actually visible right now (row2LgColsClass, 6-8 columns)
                     instead of a fixed lg:grid-cols-8 — with a fixed 8 and only 6 rendered, the
                     row left two empty trailing cells instead of the remaining fields stretching
-                    to fill the width. Narrower screens keep the static 2/4-col wrap. */}
-                {!entry.has_variants && (
+                    to fill the width. Narrower screens keep the static 2/4-col wrap.
+
+                    Clothing template + has_variants: this row also renders (see Row 1 above for
+                    the matching change) and Qty becomes the "Total Qty" target that the sum of
+                    all variant quantities below must match exactly before Add to List is
+                    allowed (enforced in canAddEntry/computeFieldErrors) — Purchase Price/MRP/
+                    Retail Price/Tax%/GST here are likewise the single shared values applied to
+                    every variant, kept in sync via the syncClothingVariants effect. */}
+                {(!entry.has_variants || isClothing) && (
                   <div className={cn('grid grid-cols-2 gap-2 sm:grid-cols-4', row2LgColsClass)}>
                     <div className="space-y-1">
-                      <Label className="text-xs">Qty *</Label>
+                      <Label className="text-xs">{entry.has_variants ? 'Total Qty *' : 'Qty *'}</Label>
                       {/* Qty is only locked to the batch-editor rollup while that editor is
                           actually visible (showBatchesField on) — otherwise a row edited after
                           the org turned "Show Batches" off would show a permanently disabled Qty
@@ -1490,8 +1551,21 @@ export function PurchaseFormPage() {
                     onChange={(variants) => setEntry((p) => ({ ...p, variants }))}
                     defaultTaxRate={entry.tax_rate}
                     showHsnField={showHsnField}
+                    simplified={isClothing}
+                    parentBarcode={entry.barcode_value}
                   />
                 )}
+                {isClothing && entry.is_new_product && entry.has_variants && (() => {
+                  const variantQtySum = entry.variants.reduce((sum, v) => sum + parseNum(v.qty), 0)
+                  const parentQty = parseNum(entry.qty)
+                  const hasAnyVariantQty = entry.variants.some((v) => parseNum(v.qty) > 0)
+                  const mismatch = hasAnyVariantQty && parentQty > 0 && variantQtySum !== parentQty
+                  return mismatch ? (
+                    <p className="text-xs text-red-400">
+                      Variant quantities ({variantQtySum}) must add up to Total Qty ({parentQty})
+                    </p>
+                  ) : null
+                })()}
 
                 {/* Batches — no toggle at all any more: the gear's "Show Batches" switch is the
                     sole on/off control (see the has_batches-sync effect near the top of this

@@ -30,14 +30,27 @@ export interface VariantFormRow {
   // request, HSN is entered per-variant here rather than only once at the parent product
   // level, since variants can legitimately carry different HSN codes.
   hsn_code: string
+  // Clothing template only: true once the merchant has directly typed/edited this variant's
+  // own Barcode field — stops auto-derivation (parent barcode + variant name) from overwriting
+  // their manual entry on the next keystroke of the variant name. Mirrors the parent row's own
+  // barcodeManuallyEdited flag in PurchaseFormPage.tsx.
+  barcodeManuallyEdited?: boolean
 }
 
 export function emptyVariantRow(defaultTaxRate: GSTRate): VariantFormRow {
   return {
     variant_name: '', barcode_value: '', sku: '', tax_rate: defaultTaxRate,
     mrp: '', sale_price: '', special_price: '', purchase_price: '', gst_mode: 'include',
-    qty: '', expiry_date: '', hsn_code: '',
+    qty: '', expiry_date: '', hsn_code: '', barcodeManuallyEdited: false,
   }
+}
+
+// Clothing template's variant barcode auto-derivation: parent barcode + variant name, no
+// separator (e.g. parent "8901234" + variant "XS" -> "8901234XS") — keeps the result a single
+// scannable alnum token rather than introducing a hyphen some barcode symbologies/printers
+// mishandle. Non-alnum characters in the variant name (spaces, slashes, etc.) are stripped.
+export function deriveVariantBarcode(parentBarcode: string, variantName: string): string {
+  return `${parentBarcode}${variantName.replace(/[^a-zA-Z0-9]/g, '')}`.toUpperCase()
 }
 
 function parseNum(s: string): number {
@@ -92,7 +105,7 @@ function PriceField({ label, required, amount, gstMode, taxRate, onAmountChange 
   )
 }
 
-export function VariantEditor({ variants, onChange, defaultTaxRate, barcodeType, showHsnField = true }: {
+export function VariantEditor({ variants, onChange, defaultTaxRate, barcodeType, showHsnField = true, simplified = false, parentBarcode = '' }: {
   variants: VariantFormRow[]
   onChange: (variants: VariantFormRow[]) => void
   defaultTaxRate: GSTRate
@@ -102,6 +115,16 @@ export function VariantEditor({ variants, onChange, defaultTaxRate, barcodeType,
   // Defaults true so any other caller of VariantEditor (e.g. ProductFormPage) that doesn't
   // pass this prop keeps showing HSN, unaffected by the purchase-entry gear setting.
   showHsnField?: boolean
+  // Clothing & Apparel industry template: each variant row shrinks to just Name/Qty/Barcode —
+  // tax/GST/pricing/expiry/HSN are all driven by the parent row instead (PurchaseFormPage keeps
+  // every variant's own tax_rate/mrp/sale_price/purchase_price/gst_mode in sync with the
+  // parent's Row 2 fields, so the values still travel through the normal per-variant save path
+  // unchanged — only this editor's UI is different). Defaults false for every other caller.
+  simplified?: boolean
+  // Base barcode (the parent row's own Barcode field, only collected at all when simplified)
+  // used to auto-derive each variant's barcode as the variant name is typed — see
+  // deriveVariantBarcode. Ignored when simplified is false.
+  parentBarcode?: string
 }) {
   function updateRow(i: number, patch: Partial<VariantFormRow>) {
     onChange(variants.map((v, j) => (j === i ? { ...v, ...patch } : v)))
@@ -117,8 +140,21 @@ export function VariantEditor({ variants, onChange, defaultTaxRate, barcodeType,
       variant_name: source.variant_name ? `${source.variant_name} (copy)` : '',
       barcode_value: '', // never duplicate a barcode — it must stay unique per variant
       sku: '',
+      barcodeManuallyEdited: false,
     }
     onChange([...variants.slice(0, i + 1), copy, ...variants.slice(i + 1)])
+  }
+  // Simplified (clothing) variant name change: re-derives this row's barcode from
+  // parentBarcode + the new name, unless the merchant has already hand-edited the barcode
+  // directly (barcodeManuallyEdited) — same "auto-fill until touched" convention already used
+  // by the parent row's own Product Code/Barcode fields elsewhere in this form.
+  function updateVariantName(i: number, name: string) {
+    const v = variants[i]
+    const patch: Partial<VariantFormRow> = { variant_name: name }
+    if (!v.barcodeManuallyEdited) {
+      patch.barcode_value = name.trim() ? deriveVariantBarcode(parentBarcode, name) : ''
+    }
+    updateRow(i, patch)
   }
   return (
     <div className="space-y-2">
@@ -138,66 +174,90 @@ export function VariantEditor({ variants, onChange, defaultTaxRate, barcodeType,
             </div>
           </div>
 
-          {/* Row 1: Variant Name, Barcode, Tax %, GST */}
-          <div className="grid grid-cols-[1.7fr_1.6fr_0.7fr_0.9fr] gap-1.5">
-            <div>
-              <label className="text-[9px] uppercase text-zinc-500">Variant Name *</label>
-              <Input placeholder="e.g. 256GB · Blue" value={v.variant_name} onChange={(e) => updateRow(i, { variant_name: e.target.value })} className="h-8 text-xs" />
-            </div>
-            <div>
-              <label className="text-[9px] uppercase text-zinc-500">Barcode</label>
-              <VariantBarcodeField value={v.barcode_value} onChange={(val) => updateRow(i, { barcode_value: val })} onGenerate={() => updateRow(i, { barcode_value: generateBarcode(barcodeType) })} />
-            </div>
-            <div>
-              <label className="text-[9px] uppercase text-zinc-500">Tax %</label>
-              <select value={v.tax_rate} onChange={(e) => updateRow(i, { tax_rate: Number(e.target.value) as GSTRate })}
-                className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
-                {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[9px] uppercase text-zinc-500">GST</label>
-              <select value={v.gst_mode} onChange={(e) => updateRow(i, { gst_mode: e.target.value as 'include' | 'exclude' })}
-                className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
-                <option value="include">Include</option>
-                <option value="exclude">Exclude</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Row 2: Qty, Purchase Price, MRP, Retail Price, Expiry, HSN Code — mirrors the main
-              non-variant Row 2's order (Qty first, then pricing) and its SP (Special Price)
-              removal; there's no per-variant Category/Unit equivalent (both are parent-product-
-              level fields, unaffected by the variant being tracked). HSN Code is gear-controlled
-              (same "HSN Code" switch as the main non-variant Row 2 in PurchaseFormPage) — only
-              rendered when showHsnField is on, which shrinks the grid rather than leaving a dead
-              trailing cell. */}
-          <div className={cn('grid gap-1.5', showHsnField ? 'grid-cols-[0.6fr_1fr_1fr_1fr_0.75fr_0.75fr]' : 'grid-cols-[0.6fr_1fr_1fr_1fr_0.75fr]')}>
-            <div>
-              <label className="text-[9px] uppercase text-zinc-500">Qty *</label>
-              <Input type="text" inputMode="decimal" value={v.qty} onFocus={(e) => e.target.select()}
-                onChange={(e) => updateRow(i, { qty: e.target.value.replace(/[^0-9.]/g, '') })} className="h-8 text-xs" />
-            </div>
-            <PriceField label="Purchase Price" required amount={v.purchase_price} gstMode={v.gst_mode} taxRate={v.tax_rate}
-              onAmountChange={(val) => updateRow(i, { purchase_price: val })} />
-            <PriceField label="MRP" amount={v.mrp} gstMode={v.gst_mode} taxRate={v.tax_rate}
-              onAmountChange={(val) => updateRow(i, { mrp: val })} />
-            <PriceField label="Retail Price" required amount={v.sale_price} gstMode={v.gst_mode} taxRate={v.tax_rate}
-              onAmountChange={(val) => updateRow(i, { sale_price: val })} />
-            <div>
-              <label className="text-[9px] uppercase text-zinc-500">Expiry</label>
-              <Input type="date" value={v.expiry_date} onChange={(e) => updateRow(i, { expiry_date: e.target.value })} className="h-8 text-xs" />
-            </div>
-            {showHsnField && (
+          {simplified ? (
+            /* Clothing template: Name, Qty, Barcode only — tax/GST/pricing/expiry/HSN all come
+               from the parent row's own Row 1/Row 2 fields instead (see PurchaseFormPage). */
+            <div className="grid grid-cols-[1.6fr_0.7fr_1.6fr] gap-1.5">
               <div>
-                <label className="text-[9px] uppercase text-zinc-500">HSN Code</label>
-                <Input placeholder="e.g. 2501" value={v.hsn_code} onChange={(e) => updateRow(i, { hsn_code: e.target.value })} className="h-8 text-xs" />
-                {hsnCodeError(v.hsn_code) && (
-                  <p className="text-[9px] text-amber-400 mt-0.5">{hsnCodeError(v.hsn_code)}</p>
+                <label className="text-[9px] uppercase text-zinc-500">Variant Name *</label>
+                <Input placeholder="e.g. XS, S, M, L" value={v.variant_name} onChange={(e) => updateVariantName(i, e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase text-zinc-500">Qty *</label>
+                <Input type="text" inputMode="decimal" value={v.qty} onFocus={(e) => e.target.select()}
+                  onChange={(e) => updateRow(i, { qty: e.target.value.replace(/[^0-9.]/g, '') })} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase text-zinc-500">Barcode</label>
+                <VariantBarcodeField value={v.barcode_value}
+                  onChange={(val) => updateRow(i, { barcode_value: val, barcodeManuallyEdited: true })}
+                  onGenerate={() => updateRow(i, { barcode_value: generateBarcode(barcodeType), barcodeManuallyEdited: true })} />
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Row 1: Variant Name, Barcode, Tax %, GST */}
+              <div className="grid grid-cols-[1.7fr_1.6fr_0.7fr_0.9fr] gap-1.5">
+                <div>
+                  <label className="text-[9px] uppercase text-zinc-500">Variant Name *</label>
+                  <Input placeholder="e.g. 256GB · Blue" value={v.variant_name} onChange={(e) => updateRow(i, { variant_name: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase text-zinc-500">Barcode</label>
+                  <VariantBarcodeField value={v.barcode_value} onChange={(val) => updateRow(i, { barcode_value: val })} onGenerate={() => updateRow(i, { barcode_value: generateBarcode(barcodeType) })} />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase text-zinc-500">Tax %</label>
+                  <select value={v.tax_rate} onChange={(e) => updateRow(i, { tax_rate: Number(e.target.value) as GSTRate })}
+                    className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
+                    {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase text-zinc-500">GST</label>
+                  <select value={v.gst_mode} onChange={(e) => updateRow(i, { gst_mode: e.target.value as 'include' | 'exclude' })}
+                    className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100">
+                    <option value="include">Include</option>
+                    <option value="exclude">Exclude</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Row 2: Qty, Purchase Price, MRP, Retail Price, Expiry, HSN Code — mirrors the main
+                  non-variant Row 2's order (Qty first, then pricing) and its SP (Special Price)
+                  removal; there's no per-variant Category/Unit equivalent (both are parent-product-
+                  level fields, unaffected by the variant being tracked). HSN Code is gear-controlled
+                  (same "HSN Code" switch as the main non-variant Row 2 in PurchaseFormPage) — only
+                  rendered when showHsnField is on, which shrinks the grid rather than leaving a dead
+                  trailing cell. */}
+              <div className={cn('grid gap-1.5', showHsnField ? 'grid-cols-[0.6fr_1fr_1fr_1fr_0.75fr_0.75fr]' : 'grid-cols-[0.6fr_1fr_1fr_1fr_0.75fr]')}>
+                <div>
+                  <label className="text-[9px] uppercase text-zinc-500">Qty *</label>
+                  <Input type="text" inputMode="decimal" value={v.qty} onFocus={(e) => e.target.select()}
+                    onChange={(e) => updateRow(i, { qty: e.target.value.replace(/[^0-9.]/g, '') })} className="h-8 text-xs" />
+                </div>
+                <PriceField label="Purchase Price" required amount={v.purchase_price} gstMode={v.gst_mode} taxRate={v.tax_rate}
+                  onAmountChange={(val) => updateRow(i, { purchase_price: val })} />
+                <PriceField label="MRP" amount={v.mrp} gstMode={v.gst_mode} taxRate={v.tax_rate}
+                  onAmountChange={(val) => updateRow(i, { mrp: val })} />
+                <PriceField label="Retail Price" required amount={v.sale_price} gstMode={v.gst_mode} taxRate={v.tax_rate}
+                  onAmountChange={(val) => updateRow(i, { sale_price: val })} />
+                <div>
+                  <label className="text-[9px] uppercase text-zinc-500">Expiry</label>
+                  <Input type="date" value={v.expiry_date} onChange={(e) => updateRow(i, { expiry_date: e.target.value })} className="h-8 text-xs" />
+                </div>
+                {showHsnField && (
+                  <div>
+                    <label className="text-[9px] uppercase text-zinc-500">HSN Code</label>
+                    <Input placeholder="e.g. 2501" value={v.hsn_code} onChange={(e) => updateRow(i, { hsn_code: e.target.value })} className="h-8 text-xs" />
+                    {hsnCodeError(v.hsn_code) && (
+                      <p className="text-[9px] text-amber-400 mt-0.5">{hsnCodeError(v.hsn_code)}</p>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       ))}
       <Button type="button" variant="outline" size="sm" className="text-xs"

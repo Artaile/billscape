@@ -127,6 +127,20 @@ async function createProductForLine(
 
   const { data, error } = await client.from('products').insert(payload).select('id').single()
   if (!error && data) {
+    // Seed the base `inventory` row up front — ProductFormPage.tsx does this for every
+    // track_stock product created from /products/new, but this purchase-entry product-creation
+    // path never did, which is invisible for a non-variant product (the increment_stock_on_purchase
+    // trigger's ON CONFLICT upsert on the purchase_items insert below creates the row if missing)
+    // but was a real bug for a has_variants product: that trigger explicitly no-ops
+    // (`IF NEW.product_variant_id IS NOT NULL THEN RETURN NEW`) since variant stock lives in
+    // variant_inventory instead, so a has_variants product created purely through Purchase Entry
+    // ended up with NO row in `inventory` at all — silently disappearing from InventoryPage.tsx's
+    // Stock List (which queries the `inventory` table directly, so a missing row means the whole
+    // product doesn't appear, not just a wrong count). POS/variant lookups were unaffected since
+    // they read real stock from variant_inventory instead. Stock_qty starts at 0 here regardless
+    // of has_variants — a non-variant line's real qty is added moments later by the trigger.
+    await client.from('inventory').insert({ product_id: data.id, organization_id: orgId, stock_qty: 0 })
+
     // Best-effort: variants/batches entered during purchase item entry. Same filtering rules as
     // ProductFormPage's own save mutation (empty rows dropped). A failure here should not fail
     // the whole purchase — the product itself was already created successfully.
