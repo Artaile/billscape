@@ -1,9 +1,11 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag } from 'lucide-react'
+import { Search, SlidersHorizontal, Plus, Minus, AlertTriangle, History, PackageOpen, Tag, ChevronRight, ChevronDown } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
+import { getVariantStockMap } from '@billscape/api'
+import { VariantAdjustStockDialog } from '@/components/products/VariantAdjustStockDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -47,8 +49,9 @@ interface InventoryRow {
     id: string
     name: string
     category_id: string | null
+    has_variants: boolean
     categories: { name: string; color: string | null } | null
-    unit: { symbol: string } | null
+    unit: { id: string; symbol: string } | null
   } | null
 }
 
@@ -78,6 +81,8 @@ export function InventoryPage() {
   const [adjustType, setAdjustType] = useState<'+' | '-'>('+')
   const [adjustReason, setAdjustReason] = useState<StockMovementReason>('purchase')
   const [adjustNote, setAdjustNote] = useState('')
+  const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set())
+  const [variantAdjustTarget, setVariantAdjustTarget] = useState<{ id: string; name: string; stock: number; unitSymbol?: string | null } | null>(null)
 
   // Expiring within 30 days
   const { data: expiringBatches } = useQuery({
@@ -104,7 +109,7 @@ export function InventoryPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('inventory')
-        .select('product_id, stock_qty, reorder_level, products(id, name, category_id, categories(name, color), unit:unit_id(symbol))')
+        .select('product_id, stock_qty, reorder_level, products(id, name, category_id, has_variants, categories(name, color), unit:unit_id(id, symbol))')
         .eq('organization_id', orgId!)
         .order('stock_qty', { ascending: true })
       return (data ?? []) as unknown as InventoryRow[]
@@ -131,6 +136,30 @@ export function InventoryPage() {
         const list = map.get(row.product_id) ?? []
         list.push(row.variant_name)
         map.set(row.product_id, list)
+      }
+      return map
+    },
+  })
+
+  // Full per-variant detail (id + stock) needed to render expanded sub-rows and to drive the
+  // per-variant Adjust dialog — variantNamesByProduct above only carries names, for search matching.
+  const { data: variantStockByProduct } = useQuery({
+    queryKey: ['inventory-variant-stock', orgId],
+    enabled: !!orgId,
+    queryFn: async () => {
+      const { data: variants } = await supabase
+        .from('product_variants')
+        .select('id, product_id, variant_name')
+        .eq('organization_id', orgId!)
+      if (!variants || variants.length === 0) return new Map<string, { id: string; variant_name: string; stock: number }[]>()
+
+      const stockMap = await getVariantStockMap(supabase, orgId!, variants.map((v) => v.id))
+
+      const map = new Map<string, { id: string; variant_name: string; stock: number }[]>()
+      for (const v of variants) {
+        const list = map.get(v.product_id) ?? []
+        list.push({ id: v.id, variant_name: v.variant_name, stock: stockMap.data.get(v.id) ?? 0 })
+        map.set(v.product_id, list)
       }
       return map
     },
@@ -206,11 +235,45 @@ export function InventoryPage() {
     return matchesSearch && matchesFilter && matchesCategory
   })
 
+  // If the search matched via a variant name (not the bare product name), auto-expand that
+  // product's row so the matching variant is immediately visible rather than hidden in a
+  // collapsed "N variants" badge.
+  useEffect(() => {
+    if (!search.trim() || !filteredInventory) return
+    const q = search.toLowerCase()
+    const toExpand = new Set<string>()
+    for (const item of filteredInventory) {
+      const pid = item.products?.id
+      if (!pid) continue
+      const productNameMatches = (item.products?.name ?? '').toLowerCase().includes(q)
+      if (!productNameMatches) toExpand.add(pid)
+    }
+    if (toExpand.size > 0) setExpandedProductIds((prev) => new Set([...prev, ...toExpand]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
+
   const getStatusBadge = (item: InventoryRow) => {
     const threshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
     if (item.stock_qty === 0) return <Badge variant="destructive">Out of Stock ({item.stock_qty})</Badge>
     if (item.stock_qty <= threshold) return <Badge variant="warning">Low Stock ({item.stock_qty})</Badge>
     return <Badge variant="success">In Stock ({item.stock_qty})</Badge>
+  }
+
+  // Aggregate status for a has_variants parent row, computed across all its variants' stock
+  // rather than a single stock_qty (which the parent `inventory` row does not meaningfully carry
+  // for a variant product).
+  const getVariantAggregateStatusBadge = (variants: { stock: number }[]) => {
+    const threshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
+    if (variants.length === 0 || variants.every((v) => v.stock === 0)) return <Badge variant="destructive">Out of Stock</Badge>
+    if (variants.some((v) => v.stock > 0 && v.stock <= threshold)) return <Badge variant="warning">Low Stock</Badge>
+    return <Badge variant="success">In Stock</Badge>
+  }
+
+  const getVariantRowStatusBadge = (stock: number) => {
+    const threshold = (org as any)?.feature_flags?.low_stock_threshold ?? 10
+    if (stock === 0) return <Badge variant="destructive">Out of Stock ({stock})</Badge>
+    if (stock <= threshold) return <Badge variant="warning">Low Stock ({stock})</Badge>
+    return <Badge variant="success">In Stock ({stock})</Badge>
   }
 
   // Stock movements (ledger & history)
@@ -394,35 +457,121 @@ export function InventoryPage() {
                     ))}</TableRow>
                   ))
                 ) : filteredInventory && filteredInventory.length > 0 ? (
-                  filteredInventory.map((item) => (
-                    <TableRow key={item.product_id}>
-                      <TableCell className="font-medium text-foreground">{item.products?.name ?? 'Unknown'}</TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {item.products?.categories ? (
-                          <span className="flex items-center gap-1.5">
-                            <span
-                              className="h-1.5 w-1.5 rounded-full shrink-0"
-                              style={{ backgroundColor: item.products.categories.color ?? '#6366f1' }}
-                            />
-                            {item.products.categories.name}
+                  filteredInventory.flatMap((item) => {
+                    const isVariantProduct = !!item.products?.has_variants
+                    const productId = item.products?.id
+                    const variantRows = (productId && variantStockByProduct?.get(productId)) || []
+                    const isExpanded = !!productId && expandedProductIds.has(productId)
+
+                    if (!isVariantProduct) {
+                      return [(
+                        <TableRow key={item.product_id}>
+                          <TableCell className="font-medium text-foreground">{item.products?.name ?? 'Unknown'}</TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {item.products?.categories ? (
+                              <span className="flex items-center gap-1.5">
+                                <span
+                                  className="h-1.5 w-1.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: item.products.categories.color ?? '#6366f1' }}
+                                />
+                                {item.products.categories.name}
+                              </span>
+                            ) : '—'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <span className={cn('font-semibold tabular-nums',
+                              item.stock_qty === 0 ? 'text-red-400' : item.stock_qty <= item.reorder_level ? 'text-yellow-400' : 'text-foreground')}>
+                              {item.stock_qty}{item.products?.unit?.symbol ? ` ${item.products.unit.symbol}` : ''}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground">{item.reorder_level}</TableCell>
+                          <TableCell>{getStatusBadge(item)}</TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openAdjust(item)}>
+                              <SlidersHorizontal className="h-3 w-3" /> Adjust
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )]
+                    }
+
+                    const rows = [
+                      <TableRow key={item.product_id}>
+                        <TableCell className="font-medium text-foreground">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!productId) return
+                              setExpandedProductIds((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(productId)) next.delete(productId)
+                                else next.add(productId)
+                                return next
+                              })
+                            }}
+                            className="flex items-center gap-1.5 hover:text-indigo-400 transition-colors"
+                          >
+                            {isExpanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                            {item.products?.name ?? 'Unknown'}
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {item.products?.categories ? (
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0"
+                                style={{ backgroundColor: item.products.categories.color ?? '#6366f1' }}
+                              />
+                              {item.products.categories.name}
+                            </span>
+                          ) : '—'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="text-zinc-500 text-xs">
+                            {variantRows.length} variant{variantRows.length !== 1 ? 's' : ''}
                           </span>
-                        ) : '—'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className={cn('font-semibold tabular-nums',
-                          item.stock_qty === 0 ? 'text-red-400' : item.stock_qty <= item.reorder_level ? 'text-yellow-400' : 'text-foreground')}>
-                          {item.stock_qty}{item.products?.unit?.symbol ? ` ${item.products.unit.symbol}` : ''}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">{item.reorder_level}</TableCell>
-                      <TableCell>{getStatusBadge(item)}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openAdjust(item)}>
-                          <SlidersHorizontal className="h-3 w-3" /> Adjust
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">—</TableCell>
+                        <TableCell>{getVariantAggregateStatusBadge(variantRows)}</TableCell>
+                        <TableCell className="text-right" />
+                      </TableRow>,
+                    ]
+
+                    if (isExpanded) {
+                      for (const variant of variantRows) {
+                        rows.push(
+                          <TableRow key={variant.id}>
+                            <TableCell className="pl-8 text-zinc-400 text-sm">— {variant.variant_name}</TableCell>
+                            <TableCell className="text-muted-foreground text-sm">—</TableCell>
+                            <TableCell className="text-right">
+                              <span className="font-semibold tabular-nums text-foreground">
+                                {variant.stock}{item.products?.unit?.symbol ? ` ${item.products.unit.symbol}` : ''}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">—</TableCell>
+                            <TableCell>{getVariantRowStatusBadge(variant.stock)}</TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => setVariantAdjustTarget({
+                                  id: variant.id,
+                                  name: `${item.products?.name ?? ''} — ${variant.variant_name}`,
+                                  stock: variant.stock,
+                                  unitSymbol: item.products?.unit?.symbol,
+                                })}
+                              >
+                                <SlidersHorizontal className="h-3 w-3" /> Adjust
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }
+                    }
+
+                    return rows
+                  })
                 ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center text-muted-foreground py-12">No inventory records found</TableCell>
@@ -717,6 +866,18 @@ export function InventoryPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Per-variant adjust stock dialog */}
+      {variantAdjustTarget && (
+        <VariantAdjustStockDialog
+          open={!!variantAdjustTarget}
+          onOpenChange={(v) => { if (!v) setVariantAdjustTarget(null) }}
+          variantId={variantAdjustTarget.id}
+          variantName={variantAdjustTarget.name}
+          currentStock={variantAdjustTarget.stock}
+          unitSymbol={variantAdjustTarget.unitSymbol}
+        />
+      )}
     </div>
   )
 }
