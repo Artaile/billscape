@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { formatINR } from '@billscape/core'
 import { getPurchaseWithItems } from '@billscape/api'
 import { formatDate } from '@/lib/utils'
-import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { BarcodeLabelDialog, type LabelItem } from '@/components/ui/BarcodeLabelDialog'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
@@ -24,6 +24,8 @@ export function PurchaseViewPage() {
   const queryClient = useQueryClient()
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [printAllOpen, setPrintAllOpen] = useState(false)
+  const [printOneItem, setPrintOneItem] = useState<LabelItem | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['purchase-detail', orgId, id],
@@ -96,13 +98,7 @@ export function PurchaseViewPage() {
             {items.some((it: any) => it.products?.barcode_value) && (
               <Button
                 type="button" variant="outline" size="sm" className="h-7 text-xs"
-                onClick={() => {
-                  for (const it of items) {
-                    if (it.products?.barcode_value) {
-                      printBarcodeLabel(it.product_name, it.products.barcode_value, it.products.price ?? it.unit_cost)
-                    }
-                  }
-                }}
+                onClick={() => setPrintAllOpen(true)}
               >
                 <Printer className="h-3.5 w-3.5 mr-1" />Print All Labels
               </Button>
@@ -145,7 +141,14 @@ export function PurchaseViewPage() {
                           <button
                             type="button"
                             title="Print label"
-                            onClick={() => printBarcodeLabel(it.product_name, it.products!.barcode_value!, it.products?.price ?? it.unit_cost)}
+                            onClick={() => setPrintOneItem({
+                              key: it.id,
+                              name: it.product_name,
+                              barcode_value: it.products!.barcode_value!,
+                              price: it.products?.price ?? it.unit_cost,
+                              mrp: it.products?.mrp ?? null,
+                              sku: it.products?.sku ?? null,
+                            })}
                             className="p-1 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
                           >
                             <Printer className="h-3.5 w-3.5" />
@@ -209,6 +212,28 @@ export function PurchaseViewPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BarcodeLabelDialog
+        open={printAllOpen}
+        onOpenChange={setPrintAllOpen}
+        items={items.filter((it: any) => it.products?.barcode_value).map((it: any) => ({
+          key: it.id,
+          name: it.product_name,
+          barcode_value: it.products.barcode_value,
+          price: it.products.price ?? it.unit_cost,
+          mrp: it.products.mrp ?? null,
+          sku: it.products.sku ?? null,
+        }))}
+        orgName={org?.name}
+      />
+      {printOneItem && (
+        <BarcodeLabelDialog
+          open={!!printOneItem}
+          onOpenChange={(v) => { if (!v) setPrintOneItem(null) }}
+          items={[printOneItem]}
+          orgName={org?.name}
+        />
+      )}
     </div>
   )
 }
