@@ -29,7 +29,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { ProductSchema, type ProductInput, type GSTRate, formatINR, splitInclusiveGST } from '@billscape/core'
 import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
-import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { BarcodeLabelDialog, type LabelItem } from '@/components/ui/BarcodeLabelDialog'
 import { logActivity } from '@/lib/activityLog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -63,6 +63,7 @@ export function ProductFormPage() {
   const [showNewCategory, setShowNewCategory] = useState(false)
   const barcodeRef = useRef<SVGSVGElement>(null)
   const [scanOpen, setScanOpen] = useState(false)
+  const [printLabelOpen, setPrintLabelOpen] = useState(false)
 
   const [brand, setBrand] = useState('')
 
@@ -339,17 +340,17 @@ export function ProductFormPage() {
     setValue('barcode_value', code, { shouldValidate: true })
   }
 
+  const printLabelItem: LabelItem = {
+    key: 'current-product',
+    name: watch('name') || 'Product',
+    barcode_value: barcodeValue || null,
+    price: watch('price') || 0,
+    mrp: watch('mrp') ? Number(watch('mrp')) : null,
+    sku: watch('sku') || null,
+  }
+
   const handlePrintLabel = () => {
-    printBarcodeLabel(
-      watch('name') || 'Product',
-      barcodeValue ?? '',
-      watch('price') || 0,
-      barcodeType,
-      org?.branding?.barcode_label_size,
-      (org?.branding as any)?.barcode_template_style ?? 'standard',
-      org?.name,
-      org?.address
-    )
+    setPrintLabelOpen(true)
   }
 
   const saveMutation = useMutation({
@@ -1314,24 +1315,7 @@ export function ProductFormPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      printBarcodeLabel(
-                        watch('name') || 'Product',
-                        barcodeValue ?? '',
-                        watch('price') || 0,
-                        barcodeType,
-                        org?.branding?.barcode_label_size,
-                        (org?.branding as any)?.barcode_template_style ?? 'standard',
-                        org?.name,
-                        org?.address,
-                        {
-                          showShopName: (org?.branding as any)?.barcode_show_shop_name ?? true,
-                          showSku: (org?.branding as any)?.barcode_show_sku ?? true,
-                          showCodeValue: (org?.branding as any)?.barcode_show_code_value ?? true,
-                          showPrice: (org?.branding as any)?.barcode_show_price ?? true,
-                        }
-                      )
-                    }}
+                    onClick={() => setPrintLabelOpen(true)}
                   >
                     <Printer className="h-3.5 w-3.5" />
                     Print Label ({org?.branding?.barcode_label_size ?? '58×40mm'} • {((org?.branding as any)?.barcode_template_style ?? 'standard').replace('_', ' ')})
@@ -1489,6 +1473,12 @@ export function ProductFormPage() {
         </div>
       </form>
       <PlanLimitModal open={limitModalOpen} onClose={() => setLimitModalOpen(false)} limitInfo={limitInfo} />
+      <BarcodeLabelDialog
+        open={printLabelOpen}
+        onOpenChange={setPrintLabelOpen}
+        items={[printLabelItem]}
+        orgName={org?.name}
+      />
     </div>
   )
 }
