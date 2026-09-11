@@ -349,10 +349,6 @@ export function ProductFormPage() {
     sku: watch('sku') || null,
   }
 
-  const handlePrintLabel = () => {
-    setPrintLabelOpen(true)
-  }
-
   const saveMutation = useMutation({
     mutationFn: async (values: ProductInput & { initialStock?: number }) => {
       let imageUrl = existingProduct?.image_url ?? null
