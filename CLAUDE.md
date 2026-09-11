@@ -115,7 +115,12 @@ primary_color, logo_url, shop_name, invoice_header, invoice_footer,
 bank_name, bank_account, bank_ifsc, invoice_terms, invoice_prefix, invoice_start_number,
 currency, date_format, timezone
 **Tax & GST**: tax_inclusive, default_gst_rate, composition_scheme, inter_state_tax, show_hsn_on_invoice, rcm_enabled
-**Barcode**: barcode_type, barcode_label_size, auto_print_barcode_on_purchase
+**Barcode**: barcode_type, barcode_label_size, barcode_template_style (`standard`/`saravana_stores`/
+`circular_bottle`/`compact_jewelry`), barcode_show_shop_name, barcode_show_sku, barcode_show_code_value,
+barcode_show_mrp, barcode_show_sp, barcode_strikethrough_mrp, auto_print_barcode_on_purchase — all
+properly typed on `OrgBranding` as of 2026-09-11 (previously the 7 non-`barcode_type`/`barcode_label_size`
+fields existed only as `as any` casts scattered through `SettingsPage.tsx`). See Barcode label
+printing section below for how these drive every print surface in the app.
 **UPI / Payments**: upi_id, default_payment_mode, default_payment_terms, payment_reminder_days
 **Signature**: signature_url, show_signature_on_invoice
 **Notifications**: notify_low_stock, notify_expiry, notify_invoice_due, notify_payment_received, notify_daily_summary
@@ -339,6 +344,39 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
   `purchases.bill_discount_value`, `purchases.round_off` added; `purchase_items.tax_rate`,
   `taxable_amount`, `cgst_amount`, `sgst_amount`, `igst_amount` added (migration
   `013_purchase_enhancements.sql`).
+- **Clothing & Apparel industry template variant entry (added 2026-09-10)**: when Settings →
+  Shop Info's Industry Template Preset is `clothing` (`org.branding.industry_template === 'clothing'`,
+  distinct from the barcode-print `barcode_template_style` field above), Track Variants mode on
+  this form changes shape: the parent card KEEPS the full non-variant Row 1/Row 2 (Product Name,
+  Product Code, Barcode, Tax %, GST / Qty→relabeled "Total Qty *", Unit, Purchase Price, MRP,
+  Retail Price, Category) instead of collapsing to the stripped-down General-Retail variant Row 1
+  — and every variant row itself shrinks to just Variant Name, Qty, Barcode (no per-variant Tax%/
+  GST/MRP/Retail/Purchase Price/HSN/Expiry; a `useEffect` keeps every `entry.variants[i]`'s
+  price/tax/gst_mode fields in sync with the parent's shared values on every keystroke). Two new
+  validations only apply in this mode: (1) sum of variant quantities must exactly equal the
+  parent's Total Qty before Add to List is allowed (`clothingVariantQtyMismatch()` in
+  `PurchaseFormPage.tsx`, blocks with a toast + inline red warning); (2) each variant's barcode
+  auto-derives from the parent barcode + variant name with no separator (e.g. parent `BSMT123` +
+  variant `XS` → `BSMT123XS`, via `deriveVariantBarcode()` in `VariantEditor.tsx`) UNTIL the
+  merchant manually edits that variant's barcode field directly, tracked per-variant via
+  `VariantFormRow.barcodeManuallyEdited` (mirrors the parent row's own
+  `barcodeManuallyEdited` convention). General Retail template is completely unaffected by any of
+  this — `VariantEditor`'s `simplified` prop (default `false`) gates the whole reduced-field
+  variant-row UI, and the API layer (`packages/api/src/purchases.ts`) needed NO changes since each
+  variant's tax_rate/mrp/sale_price/purchase_price/gst_mode already flow through the existing
+  per-variant `PurchaseLineInput.variants[]` fields regardless of which template populated them.
+- **Purchase-created products previously vanished from Inventory (fixed 2026-09-10)**:
+  `createProductForLine` never inserted a base `inventory` row for a product created via Purchase
+  Entry (unlike `ProductFormPage.tsx`'s own save path, which always does) — invisible for a
+  non-variant product (the `increment_stock_on_purchase` trigger's `ON CONFLICT` upsert on the
+  `purchase_items` insert silently created the row), but a real bug for a `has_variants` product:
+  that trigger explicitly no-ops when `product_variant_id IS NOT NULL` (variant stock lives in
+  `variant_inventory` instead), so a variant product created purely through Purchase Entry ended
+  up with **zero row in `inventory`** — and `InventoryPage.tsx`'s Stock List queries the
+  `inventory` table directly, so a missing row means the whole product silently disappears from
+  it (POS/variant lookups were unaffected — they already read real stock from
+  `variant_inventory`). Fixed by having `createProductForLine` always insert a `stock_qty: 0`
+  base `inventory` row immediately after creating any new product, variant or not.
 
 ## Dialog / Radix UI focus rules (CRITICAL — do not revert)
 - All dialogs use DialogContent from apps/web/src/components/ui/dialog.tsx
@@ -639,6 +677,79 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
   silently computes zero for flat-discounted lines, which previously made a printed invoice's
   per-line Taxable/Tax Amount columns visibly contradict the totals card and tax summary on the
   same document for any bill using a ₹ (not %) line discount. Do not revert to inline math here.
+
+## Variant product clarity — Inventory & Product Details (as of 2026-09-11)
+- **Inventory Stock List** (`InventoryPage.tsx`) rows for a `has_variants` product are now
+  expandable: collapsed shows a chevron + "N variants" text (replacing the old stale/meaningless
+  parent-level `inventory.stock_qty` number) and an aggregated status badge (`Out of Stock` only
+  if every variant is at 0, `Low Stock` if any variant is at/under the org's low-stock threshold,
+  else `In Stock`); expanding reveals one indented sub-row per variant with its REAL stock (via
+  the existing `getVariantStockMap` helper in `packages/api/src/variantInventory.ts`), a
+  per-variant status badge, and a per-variant **Adjust** button. A new `VariantAdjustStockDialog`
+  component (`apps/web/src/components/products/VariantAdjustStockDialog.tsx`) backs that button —
+  no such per-variant manual-adjustment UI existed anywhere before this (`AdjustStockDialog.tsx`
+  explicitly excludes `has_variants` products); it writes via a new
+  `recordVariantAdjustment(client, { organizationId, variantId, delta, note?, createdBy })` export
+  in `packages/api/src/variantInventory.ts` — unlike `recordVariantSale`/`recordVariantPurchase`,
+  which force the sign based on `reason`, this one takes an already-signed `delta` directly (Add
+  vs Remove) and always writes `reason: 'adjustment'`. Search auto-expands a product row when the
+  match came from a variant name (not the bare product name), reusing the same variant-name search
+  matching this page already had.
+- **Product Details page** (`ProductViewPage.tsx`) for a `has_variants` product: Sale Price /
+  Purchase Price show a `₹min–₹max` range (single value if all variants are equal, never a fake
+  "₹X–₹X"), Current Stock is relabeled "Total Stock (all variants)" and summed from real variant
+  stock, Stock Value is `Σ(variant.stock × variant.purchase_price)`, Tax Rate shows "Varies" when
+  variants disagree. A new **Variants (N) table** renders below the summary card (same card style
+  as the existing Batches table) with Variant Name/Barcode/Tax%/MRP/Retail/Purchase Price/Stock
+  columns and a per-row print icon. None of this touches the non-variant path — every cell keeps
+  its original behavior when `has_variants` is false.
+
+## Barcode label printing — one Settings-driven pipeline (as of 2026-09-11)
+- **`apps/web/src/components/ui/BarcodeLabelDialog.tsx` is now the ONLY barcode-print surface in
+  the app**, used from 8 call sites: Products list (`ProductsPage.tsx`), Product Details header +
+  its Variants-table per-row icon (`ProductViewPage.tsx`), Inventory's expanded variant-row icon
+  (`InventoryPage.tsx`), Purchase Save's post-save confirmation (`PurchaseFormPage.tsx`), Purchase
+  View's "Print All Labels" + per-row icon (`PurchaseViewPage.tsx`), and Product Form's Print
+  Label button (`ProductFormPage.tsx`). The old `apps/web/src/lib/printBarcodeLabel.ts` one-shot
+  popup helper — previously used by 4 of those 8 sites with wildly inconsistent argument-passing
+  (only one call site out of five ever passed the full Settings config) — is DELETED entirely.
+- **No per-print override UI of any kind, by explicit non-negotiable design** — the dialog has NO
+  "Show Name"/"Show Price" toggles of its own (a prior version did; they were removed). Every
+  visual choice is read directly from `org.branding` via `useAuth()` inside the dialog itself:
+  `barcode_template_style` (renders one of 4 distinct layouts — standard/saravana_stores/
+  circular_bottle/compact_jewelry, both in the live preview AND the generated print HTML, ported
+  from the deleted helper's own layout logic), `barcode_type` (code128/ean13/code39 via JsBarcode,
+  or `qr` via the `qrcode` package's `QRCode.toDataURL`/`QRCode.toCanvas`), and the 6
+  `barcode_show_*`/`barcode_strikethrough_mrp` toggles. Whatever a merchant configures in Settings
+  → Barcode is what prints everywhere, with zero exceptions — do not reintroduce a per-print
+  toggle without re-confirming with the user, this was explicit repeated direction.
+- `LabelItem` (`{ key, name, variantLabel?, barcode_value?, price, mrp?, sku? }`) is the shared
+  shape every call site builds — `price` is always the selling price. The 3 call sites from a
+  prior plan (Products list, Product Details, Inventory) don't currently populate `mrp`/`sku`
+  (those two settings render nothing from those 3 entry points even when enabled) — a known,
+  deliberately-deferred inconsistency, not yet fixed.
+- Multi-item selection (checkboxes + per-item copies count, footer reads "Print N variants · M
+  labels") is unchanged mechanics from a prior plan — this pass only changed what determines the
+  VISUAL layout, not the selection/quantity UX.
+- `barcode_label_size` (Settings' 5 options: `3x2cm`/`4x2.5cm`/`5x3cm`/`6x4cm`/`A4 Sheet`) is read
+  and shown in the dialog's own "Print Mode" text, and threaded into the generated print HTML's
+  CSS — but the CSS `@page { size: ... }` value for the 4 non-A4 sizes is a direct port of the
+  deleted helper's own `labelSize.replace('cm', '0mm')` string transform (e.g. `5x3cm` → `5x30mm`),
+  which is **not valid CSS `@page size` syntax** (real syntax wants two space-separated length
+  values, not a joined `WxHmm` token) — browsers typically ignore/fall back to the print dialog's
+  own paper-size control when this happens. This is a known, deliberately-deferred pre-existing
+  quirk carried over as-is, not something introduced fresh — a future fix should compute valid
+  `size: 50mm 30mm`-style values instead of replicating the old string transform.
+- **`getPurchaseWithItems` (`packages/api/src/purchases.ts`) now also joins `product_variants`**
+  (`sku, barcode_value, sale_price, mrp, purchase_price`) alongside its existing `products` join —
+  a `has_variants` purchase line's real identifying data lives on its own variant row, never on
+  the parent product, so `PurchaseViewPage.tsx` previously showed blank Barcode/MRP/Retail/SP for
+  every variant purchase line and never showed its "Print All Labels" button at all (no line ever
+  resolved a barcode). A `resolveItemFields()` helper in `PurchaseViewPage.tsx` now prefers the
+  variant's own fields when `purchase_items.product_variant_id` is set, falling back to the
+  parent product's fields otherwise. This join is additive-only (a new field in the `.select()`,
+  not a shape change) — `updatePurchase` doesn't call this function, and the one other caller
+  (`PurchaseFormPage.tsx`'s edit-mode load) destructures named columns and is unaffected.
 
 ## Dashboard Invitations (as of 2026-08-12)
 - The manual 6-digit OTP flow for adding dashboard users has been completely replaced by a frictionless, secure **Supabase Magic Link** flow.
