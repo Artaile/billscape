@@ -571,9 +571,17 @@ export async function getPurchaseWithItems(client: TypedSupabaseClient, orgId: s
     .single()
   if (purchaseError) return { data: null, error: purchaseError }
 
+  // Also joins product_variants (via purchase_items.product_variant_id, when set) — a
+  // has_variants purchase line's real sku/barcode_value/price/mrp live on its own variant row,
+  // never on the parent product (whose own barcode_value/price etc. are meaningless/blank for
+  // a variant-tracked product, per this app's established convention — see product_variants
+  // Row 2 fields in PurchaseFormPage.tsx). Selecting only `products(...)` here previously left
+  // every variant purchase line's Barcode/MRP/Retail/SP columns blank in PurchaseViewPage.tsx,
+  // and hid its "Print All Labels" button entirely (it only shows when at least one line has a
+  // resolved barcode).
   const { data: items, error: itemsError } = await client
     .from('purchase_items')
-    .select('*, products(sku, extra_sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor, gst_mode, expiry_date)')
+    .select('*, products(sku, extra_sku, barcode_value, price, mrp, special_price, unit_id, secondary_unit_id, conversion_factor, gst_mode, expiry_date), product_variants(sku, barcode_value, sale_price, mrp, purchase_price)')
     .eq('purchase_id', purchaseId)
     .eq('organization_id', orgId)
   if (itemsError) return { data: null, error: itemsError }

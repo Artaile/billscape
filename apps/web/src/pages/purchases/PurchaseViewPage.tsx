@@ -55,6 +55,29 @@ export function PurchaseViewPage() {
   const purchase = data?.purchase
   const items = data?.items ?? []
 
+  // A has_variants purchase line's real sku/barcode/price/mrp live on its own product_variants
+  // row (joined via purchase_items.product_variant_id), never on the parent product — the
+  // parent's own barcode_value/price/mrp are meaningless/blank once variants are tracked, per
+  // this app's established convention. Prefer the variant's fields when this line has one;
+  // fall back to the parent product's fields for a non-variant line.
+  function resolveItemFields(it: any): { sku: string | null; barcode_value: string | null; price: number; mrp: number | null } {
+    const v = it.product_variants
+    if (v) {
+      return {
+        sku: v.sku ?? null,
+        barcode_value: v.barcode_value ?? null,
+        price: v.sale_price ?? it.unit_cost,
+        mrp: v.mrp ?? null,
+      }
+    }
+    return {
+      sku: it.products?.sku ?? null,
+      barcode_value: it.products?.barcode_value ?? null,
+      price: it.products?.price ?? it.unit_cost,
+      mrp: it.products?.mrp ?? null,
+    }
+  }
+
   const taxableTotal = items.reduce((s: number, it: any) => s + (it.taxable_amount ?? 0), 0)
   const cgstTotal = items.reduce((s: number, it: any) => s + (it.cgst_amount ?? 0), 0)
   const sgstTotal = items.reduce((s: number, it: any) => s + (it.sgst_amount ?? 0), 0)
@@ -95,7 +118,7 @@ export function PurchaseViewPage() {
           <Separator />
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-zinc-300">Items</h3>
-            {items.some((it: any) => it.products?.barcode_value) && (
+            {items.some((it: any) => resolveItemFields(it).barcode_value) && (
               <Button
                 type="button" variant="outline" size="sm" className="h-7 text-xs"
                 onClick={() => setPrintAllOpen(true)}
@@ -124,30 +147,32 @@ export function PurchaseViewPage() {
               <TableBody>
                 {items.length === 0
                   ? <TableRow><TableCell colSpan={11} className="text-center text-zinc-500 py-4">No items</TableCell></TableRow>
-                  : items.map((it: any) => (
+                  : items.map((it: any) => {
+                    const fields = resolveItemFields(it)
+                    return (
                     <TableRow key={it.id}>
-                      <TableCell className="font-mono text-xs text-zinc-400">{it.products?.sku ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-400">{fields.sku ?? '—'}</TableCell>
                       <TableCell className="text-zinc-200">{it.product_name}</TableCell>
                       <TableCell className="text-right text-zinc-400">{it.tax_rate}%</TableCell>
                       <TableCell className="text-right text-zinc-400">{it.qty}</TableCell>
                       <TableCell className="text-right text-zinc-400">{formatINR(it.unit_cost)}</TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-400">{it.products?.barcode_value ?? '—'}</TableCell>
-                      <TableCell className="text-right text-zinc-400">{it.products?.mrp != null ? formatINR(it.products.mrp) : '—'}</TableCell>
-                      <TableCell className="text-right text-zinc-400">{it.products?.price != null ? formatINR(it.products.price) : '—'}</TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-400">{fields.barcode_value ?? '—'}</TableCell>
+                      <TableCell className="text-right text-zinc-400">{fields.mrp != null ? formatINR(fields.mrp) : '—'}</TableCell>
+                      <TableCell className="text-right text-zinc-400">{fields.price != null ? formatINR(fields.price) : '—'}</TableCell>
                       <TableCell className="text-right text-zinc-400">{it.products?.special_price != null ? formatINR(it.products.special_price) : '—'}</TableCell>
                       <TableCell className="text-right font-medium text-white">{formatINR(it.line_total)}</TableCell>
                       <TableCell>
-                        {it.products?.barcode_value && (
+                        {fields.barcode_value && (
                           <button
                             type="button"
                             title="Print label"
                             onClick={() => setPrintOneItem({
                               key: it.id,
                               name: it.product_name,
-                              barcode_value: it.products!.barcode_value!,
-                              price: it.products?.price ?? it.unit_cost,
-                              mrp: it.products?.mrp ?? null,
-                              sku: it.products?.sku ?? null,
+                              barcode_value: fields.barcode_value,
+                              price: fields.price,
+                              mrp: fields.mrp,
+                              sku: fields.sku,
                             })}
                             className="p-1 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
                           >
@@ -156,7 +181,8 @@ export function PurchaseViewPage() {
                         )}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    )
+                  })}
               </TableBody>
             </Table>
           </div>
@@ -216,14 +242,19 @@ export function PurchaseViewPage() {
       <BarcodeLabelDialog
         open={printAllOpen}
         onOpenChange={setPrintAllOpen}
-        items={items.filter((it: any) => it.products?.barcode_value).map((it: any) => ({
-          key: it.id,
-          name: it.product_name,
-          barcode_value: it.products.barcode_value,
-          price: it.products.price ?? it.unit_cost,
-          mrp: it.products.mrp ?? null,
-          sku: it.products.sku ?? null,
-        }))}
+        items={items
+          .filter((it: any) => resolveItemFields(it).barcode_value)
+          .map((it: any) => {
+            const fields = resolveItemFields(it)
+            return {
+              key: it.id,
+              name: it.product_name,
+              barcode_value: fields.barcode_value,
+              price: fields.price,
+              mrp: fields.mrp,
+              sku: fields.sku,
+            }
+          })}
         orgName={org?.name}
       />
       {printOneItem && (
