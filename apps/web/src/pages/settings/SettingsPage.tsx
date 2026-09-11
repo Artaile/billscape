@@ -383,8 +383,9 @@ function LiveBarcodePreview({
         return 'w-[220px] min-h-[120px] p-2.5 text-[9px]'
       case '4x2.5cm':
         return 'w-[260px] min-h-[140px] p-3 text-[10px]'
+      case '5x2.5cm':
       case '5x3cm':
-        return 'w-[300px] min-h-[160px] p-3.5 text-xs'
+        return 'w-[300px] min-h-[150px] p-3.5 text-xs'
       case '6x4cm':
         return 'w-[340px] min-h-[180px] p-4 text-xs'
       case 'A4 Sheet':
@@ -1366,7 +1367,7 @@ export function SettingsPage() {
 
   // Barcode settings
   const [barcodeType, setBarcodeType] = useState<string>(org?.branding?.barcode_type ?? 'code128')
-  const [barcodeLabelSize, setBarcodeLabelSize] = useState<string>(org?.branding?.barcode_label_size ?? '5x3cm')
+  const [barcodeLabelSize, setBarcodeLabelSize] = useState<string>(org?.branding?.barcode_label_size ?? '5x2.5cm')
   const [barcodeTemplateStyle, setBarcodeTemplateStyle] = useState<'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'>(org?.branding?.barcode_template_style ?? 'standard')
   const [autoPrintBarcodeOnPurchase, setAutoPrintBarcodeOnPurchase] = useState<boolean>(org?.branding?.auto_print_barcode_on_purchase ?? false)
   const [barcodeShowShopName, setBarcodeShowShopName] = useState<boolean>(org?.branding?.barcode_show_shop_name ?? true)
@@ -4068,7 +4069,7 @@ export function SettingsPage() {
               <div className="space-y-3">
                 <Label className="text-sm font-semibold text-foreground">Label Size</Label>
                 <div className="flex gap-2 flex-wrap">
-                  {['3x2cm', '4x2.5cm', '5x3cm', '6x4cm', 'A4 Sheet'].map((size) => (
+                  {['3x2cm', '4x2.5cm', '5x2.5cm', '6x4cm', 'A4 Sheet'].map((size) => (
                     <button
                       key={size}
                       type="button"

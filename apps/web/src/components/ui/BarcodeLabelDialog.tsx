@@ -58,7 +58,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   const showMrp = branding?.barcode_show_mrp ?? true
   const showSp = branding?.barcode_show_sp ?? true
   const strikethroughMrp = branding?.barcode_strikethrough_mrp ?? true
-  const labelSize = branding?.barcode_label_size ?? '5x3cm'
+  const labelSize = branding?.barcode_label_size ?? '5x2.5cm'
 
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [copiesByKey, setCopiesByKey] = useState<Record<string, number>>({})
@@ -381,13 +381,20 @@ function buildLabelHtml(
 ): string {
   const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
   const isQr = barcodeType === 'qr'
-  // Replicates the exact (quirky) transform the old deleted printBarcodeLabel.ts helper used:
-  // replace() only hits the LAST "cm", so '5x3cm' -> '5x30mm' (i.e. 50mm x 30mm, textually).
-  // Preserved as-is for behavioral consistency — not "fixed" to something more sensible.
-  const pageSize = labelSize === 'A4 Sheet' ? 'A4' : labelSize.replace('cm', '0mm')
-  // '58mm' is kept ONLY as the A4-sheet-default fallback (A4 tiles multiple labels per sheet
-  // rather than being one big label, so there's no single "label size" to derive a width from).
-  const labelWidthMm = pageSize === 'A4' ? '58mm' : `${pageSize.split('x')[0]}mm`
+  let pageSize = '50mm 25mm'
+  let labelWidthMm = '50mm'
+  if (labelSize === 'A4 Sheet') {
+    pageSize = 'A4'
+    labelWidthMm = '58mm'
+  } else {
+    const match = labelSize.match(/^([\d.]+)x([\d.]+)cm$/i)
+    if (match) {
+      const widthMm = Number(match[1]) * 10
+      const heightMm = Number(match[2]) * 10
+      pageSize = `${widthMm}mm ${heightMm}mm`
+      labelWidthMm = `${widthMm}mm`
+    }
+  }
 
   const rows = items.flatMap((item) => {
     const copies = copiesByKey[item.key] ?? 1

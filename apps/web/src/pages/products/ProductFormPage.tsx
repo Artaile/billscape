@@ -1314,7 +1314,7 @@ export function ProductFormPage() {
                     onClick={() => setPrintLabelOpen(true)}
                   >
                     <Printer className="h-3.5 w-3.5" />
-                    Print Label ({org?.branding?.barcode_label_size ?? '58×40mm'} • {((org?.branding as any)?.barcode_template_style ?? 'standard').replace('_', ' ')})
+                    Print Label ({org?.branding?.barcode_label_size ?? '5x2.5cm'} • {((org?.branding as any)?.barcode_template_style ?? 'standard').replace('_', ' ')})
                   </Button>
                 </div>
               )}
