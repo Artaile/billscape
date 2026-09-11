@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import JsBarcode from 'jsbarcode'
+import QRCode from 'qrcode'
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Printer } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/contexts/AuthContext'
 
 export interface LabelItem {
   key: string
@@ -20,6 +22,8 @@ export interface LabelItem {
   variantLabel?: string
   barcode_value?: string | null
   price: number
+  mrp?: number | null
+  sku?: string | null
 }
 
 interface Props {
@@ -29,11 +33,35 @@ interface Props {
   orgName?: string
 }
 
+function ItemCode({ item, barcodeType, qrDataUrl, svgRef, sizeClass }: {
+  item: LabelItem
+  barcodeType: string
+  qrDataUrl: string | undefined
+  svgRef: (el: SVGSVGElement | null) => void
+  sizeClass: string
+}) {
+  if (!item.barcode_value) return <p className="text-[10px] text-gray-400 py-2">No barcode set</p>
+  if (barcodeType === 'qr') {
+    return qrDataUrl ? <img src={qrDataUrl} alt="QR" className={sizeClass} /> : <div className={cn(sizeClass, 'bg-gray-100')} />
+  }
+  return <svg ref={svgRef} className={sizeClass} />
+}
+
 export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props) {
+  const { org } = useAuth()
+  const branding = org?.branding
+  const templateStyle = branding?.barcode_template_style ?? 'standard'
+  const barcodeType = branding?.barcode_type ?? 'code128'
+  const showShopName = branding?.barcode_show_shop_name ?? true
+  const showSku = branding?.barcode_show_sku ?? true
+  const showCodeValue = branding?.barcode_show_code_value ?? true
+  const showMrp = branding?.barcode_show_mrp ?? true
+  const showSp = branding?.barcode_show_sp ?? true
+  const strikethroughMrp = branding?.barcode_strikethrough_mrp ?? true
+
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [copiesByKey, setCopiesByKey] = useState<Record<string, number>>({})
-  const [showName, setShowName] = useState(true)
-  const [showPrice, setShowPrice] = useState(true)
+  const [qrDataUrls, setQrDataUrls] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!open) return
@@ -56,14 +84,15 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   const previewItems = checkedItems.slice(0, PREVIEW_CAP)
 
   useEffect(() => {
-    if (!open) return
+    if (!open || barcodeType === 'qr') return
+    const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
     const timer = setTimeout(() => {
       for (const item of previewItems) {
         const el = svgRefs.current[item.key]
         if (!el || !item.barcode_value) continue
         try {
           JsBarcode(el, item.barcode_value, {
-            format: 'CODE128',
+            format,
             width: isMulti ? 1.2 : 1.8,
             height: isMulti ? 32 : 50,
             displayValue: true,
@@ -78,10 +107,30 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
       }
     }, 100)
     return () => clearTimeout(timer)
-  }, [open, previewItems, isMulti])
+  }, [open, previewItems, isMulti, barcodeType])
+
+  useEffect(() => {
+    if (!open || barcodeType !== 'qr') return
+    let cancelled = false
+    ;(async () => {
+      const entries = await Promise.all(
+        previewItems
+          .filter((item) => item.barcode_value)
+          .map(async (item) => {
+            const url = await QRCode.toDataURL(item.barcode_value!, { width: 120, margin: 1 })
+            return [item.key, url] as const
+          }),
+      )
+      if (!cancelled) setQrDataUrls(Object.fromEntries(entries))
+    })()
+    return () => { cancelled = true }
+  }, [open, barcodeType, previewItems])
 
   const handlePrint = () => {
-    const labelHtml = buildLabelHtml(checkedItems, copiesByKey, orgName, showName, showPrice)
+    const labelHtml = buildLabelHtml(
+      checkedItems, copiesByKey, orgName, templateStyle, barcodeType,
+      showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp,
+    )
     const win = window.open('', '_blank', 'width=600,height=400')
     if (!win) return
     win.document.write(labelHtml)
@@ -165,34 +214,6 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
             </div>
           )}
 
-          <div className="flex items-center justify-between">
-            <Label className="cursor-pointer" htmlFor="bc-show-name">Show Product Name</Label>
-            <button
-              id="bc-show-name"
-              type="button"
-              role="switch"
-              aria-checked={showName}
-              onClick={() => setShowName((v) => !v)}
-              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${showName ? 'bg-indigo-600' : 'bg-zinc-700'}`}
-            >
-              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${showName ? 'translate-x-4' : 'translate-x-0.5'}`} />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <Label className="cursor-pointer" htmlFor="bc-show-price">Show Price</Label>
-            <button
-              id="bc-show-price"
-              type="button"
-              role="switch"
-              aria-checked={showPrice}
-              onClick={() => setShowPrice((v) => !v)}
-              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${showPrice ? 'bg-indigo-600' : 'bg-zinc-700'}`}
-            >
-              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${showPrice ? 'translate-x-4' : 'translate-x-0.5'}`} />
-            </button>
-          </div>
-
           {/* Preview */}
           <div className="space-y-1.5">
             <Label className="text-zinc-500">Preview</Label>
@@ -202,21 +223,86 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
               </div>
             ) : (
               <div className={cn('space-y-2', isMulti && 'max-h-48 overflow-y-auto pr-1')}>
-                {previewItems.map((item) => (
-                  <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black">
-                    {showName && (
-                      <p className="text-xs font-bold text-center leading-tight mb-1">
-                        {item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name}
-                      </p>
-                    )}
-                    {item.barcode_value ? (
-                      <svg ref={(el) => { svgRefs.current[item.key] = el }} />
-                    ) : (
-                      <p className="text-[10px] text-gray-400 py-4">No barcode set</p>
-                    )}
-                    {showPrice && <p className="text-sm font-bold mt-1">₹{item.price.toFixed(2)}</p>}
-                  </div>
-                ))}
+                {previewItems.map((item) => {
+                  const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
+                  const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
+                  const code = (
+                    <ItemCode
+                      item={item}
+                      barcodeType={barcodeType}
+                      qrDataUrl={qrDataUrls[item.key]}
+                      svgRef={(el) => { svgRefs.current[item.key] = el }}
+                      sizeClass="max-w-[110px] max-h-[60px]"
+                    />
+                  )
+                  if (templateStyle === 'compact_jewelry') {
+                    return (
+                      <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2">
+                        <div className="text-left">
+                          {showShopName && <p className="text-[9px] font-bold uppercase">{orgName || 'JEWELRY TAG'}</p>}
+                          <p className="text-[9px] font-bold mt-0.5">{displayName}</p>
+                          {showSku && item.sku && <p className="text-[8px] text-gray-500 font-mono">{item.sku}</p>}
+                          {showMrp && item.mrp != null && (
+                            <p className="text-[8px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                          )}
+                          {showSp && <p className="text-[10px] font-black mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                        </div>
+                        <div className="shrink-0">{code}</div>
+                      </div>
+                    )
+                  }
+                  if (templateStyle === 'saravana_stores') {
+                    return (
+                      <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden">
+                        <div className="flex-1 p-3 flex items-center gap-2 text-left">
+                          {code}
+                          <div>
+                            <p className="text-[9px] font-bold uppercase">{displayName}</p>
+                            {showSku && item.sku && <p className="text-[8px] text-gray-500 font-mono">{item.sku}</p>}
+                            {showMrp && item.mrp != null && (
+                              <p className="text-[8px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                            )}
+                            {showSp && <p className="text-[10px] font-black mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                          </div>
+                        </div>
+                        {showShopName && (
+                          <div className="w-6 bg-gradient-to-b from-amber-500 to-orange-600 text-white text-[7px] font-bold flex items-center justify-center uppercase [writing-mode:vertical-rl] rotate-180 px-1">
+                            {orgName || 'DEPARTMENT STORE'}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+                  if (templateStyle === 'circular_bottle') {
+                    return (
+                      <div key={item.key} className="rounded-full border-2 border-gray-300 bg-white text-black w-36 h-36 mx-auto flex flex-col items-center justify-center text-center p-2">
+                        {showShopName && <p className="text-[8px] font-bold uppercase">{orgName || 'JAR LABEL'}</p>}
+                        <p className="text-[8px] mt-0.5">{displayName}</p>
+                        {code}
+                        {showMrp && item.mrp != null && (
+                          <p className="text-[7.5px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                        )}
+                        {showSp && <p className="text-[9px] font-black mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                      </div>
+                    )
+                  }
+                  // standard
+                  return (
+                    <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black">
+                      {showShopName && <p className="text-xs font-bold text-center leading-tight uppercase">{orgName || displayName}</p>}
+                      <p className="text-[10px] text-gray-500 mt-0.5">{displayName}</p>
+                      {showSku && item.sku && <p className="text-[9px] text-gray-500 font-mono mt-0.5">SKU: {item.sku}</p>}
+                      <div className="my-1">{code}</div>
+                      {showCodeValue && barcodeType !== 'qr' && item.barcode_value && (
+                        <p className="text-[9px] font-mono font-bold">{item.barcode_value}</p>
+                      )}
+                      {showMrp && item.mrp != null && (
+                        <p className="text-[9px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                      )}
+                      {showSp && <p className="text-sm font-bold mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                    </div>
+                  )
+                })}
                 {checkedItems.length > PREVIEW_CAP && (
                   <p className="text-[11px] text-zinc-500 text-center">+{checkedItems.length - PREVIEW_CAP} more</p>
                 )}
@@ -250,20 +336,80 @@ function buildLabelHtml(
   items: LabelItem[],
   copiesByKey: Record<string, number>,
   orgName: string | undefined,
-  showName: boolean,
-  showPrice: boolean,
+  templateStyle: string,
+  barcodeType: string,
+  showShopName: boolean,
+  showSku: boolean,
+  showCodeValue: boolean,
+  showMrp: boolean,
+  showSp: boolean,
+  strikethroughMrp: boolean,
 ): string {
+  const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
+  const isQr = barcodeType === 'qr'
+
   const rows = items.flatMap((item) => {
     const copies = copiesByKey[item.key] ?? 1
     const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
-    return Array.from({ length: copies }, () => `
-      <div class="label">
+    const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
+    const mrpLine = showMrp && item.mrp != null
+      ? `<div class="mrp">MRP &#8377;${mrpStrike ? `<span style="text-decoration:line-through">${item.mrp.toFixed(2)}</span>` : item.mrp.toFixed(2)}</div>`
+      : ''
+    const spLine = showSp ? `<div class="sp">SP &#8377;${item.price.toFixed(2)}</div>` : ''
+    const skuLine = showSku && item.sku ? `<div class="sku">${escapeHtml(item.sku)}</div>` : ''
+    const codeId = `bc_${Math.random().toString(36).slice(2)}`
+    const codeEl = !item.barcode_value
+      ? ''
+      : isQr
+        ? `<canvas class="qr-canvas" data-qr="${escapeHtml(item.barcode_value)}" id="${codeId}"></canvas>`
+        : `<svg data-barcode="${escapeHtml(item.barcode_value)}" data-format="${format}" id="${codeId}"></svg>`
+    const codeValueLine = showCodeValue && !isQr && item.barcode_value
+      ? `<div class="codevalue">${escapeHtml(item.barcode_value)}</div>`
+      : ''
+
+    let labelInner = ''
+    if (templateStyle === 'compact_jewelry') {
+      labelInner = `
+        <div class="jewelry">
+          <div class="jewelry-text">
+            ${showShopName ? `<div class="shop">${escapeHtml(orgName || 'JEWELRY TAG')}</div>` : ''}
+            <div class="name">${escapeHtml(displayName)}</div>
+            ${skuLine}${mrpLine}${spLine}
+          </div>
+          <div class="jewelry-code">${codeEl}</div>
+        </div>`
+    } else if (templateStyle === 'saravana_stores') {
+      labelInner = `
+        <div class="saravana">
+          <div class="saravana-main">
+            ${codeEl}
+            <div class="saravana-text">
+              <div class="name">${escapeHtml(displayName)}</div>
+              ${skuLine}${mrpLine}${spLine}
+            </div>
+          </div>
+          ${showShopName ? `<div class="saravana-side">${escapeHtml(orgName || 'DEPARTMENT STORE')}</div>` : ''}
+        </div>`
+    } else if (templateStyle === 'circular_bottle') {
+      labelInner = `
+        <div class="circular">
+          ${showShopName ? `<div class="shop">${escapeHtml(orgName || 'JAR LABEL')}</div>` : ''}
+          <div class="name">${escapeHtml(displayName)}</div>
+          ${codeEl}
+          ${mrpLine}${spLine}
+        </div>`
+    } else {
+      labelInner = `
         ${orgName ? `<div class="shop">${escapeHtml(orgName)}</div>` : ''}
-        ${showName ? `<div class="name">${escapeHtml(displayName)}</div>` : ''}
-        ${item.barcode_value ? `<svg data-barcode="${escapeHtml(item.barcode_value)}" id="bc_${Math.random().toString(36).slice(2)}"></svg>` : ''}
-        ${showPrice ? `<div class="price">&#8377;${item.price.toFixed(2)}</div>` : ''}
-      </div>
-    `)
+        ${showShopName ? '' : ''}
+        <div class="name">${escapeHtml(displayName)}</div>
+        ${skuLine}
+        ${codeEl}
+        ${codeValueLine}
+        ${mrpLine}${spLine}`
+    }
+
+    return Array.from({ length: copies }, () => `<div class="label label-${templateStyle}">${labelInner}</div>`)
   }).join('')
 
   return `<!DOCTYPE html>
@@ -272,23 +418,27 @@ function buildLabelHtml(
 <meta charset="utf-8">
 <title>Barcode Label</title>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"><\/script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #fff; font-family: Arial, sans-serif; }
   .labels { display: flex; flex-wrap: wrap; padding: 4mm; gap: 2mm; }
-  .label {
-    width: 58mm;
-    border: 0.5pt solid #ccc;
-    padding: 2mm;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    page-break-inside: avoid;
-  }
-  .shop { font-size: 7pt; font-weight: 600; text-align: center; margin-bottom: 1mm; }
+  .label { width: 58mm; border: 0.5pt solid #ccc; padding: 2mm; page-break-inside: avoid; }
+  .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .label-saravana_stores { display: flex; flex-direction: column; }
+  .shop { font-size: 7pt; font-weight: 700; text-align: center; margin-bottom: 1mm; text-transform: uppercase; }
   .name { font-size: 8pt; font-weight: bold; text-align: center; margin-bottom: 1mm; word-break: break-word; }
-  .price { font-size: 11pt; font-weight: bold; margin-top: 1mm; }
-  svg { max-width: 100%; }
+  .sku { font-size: 6.5pt; color: #666; font-family: monospace; margin-bottom: 1mm; }
+  .codevalue { font-size: 7pt; font-family: monospace; font-weight: bold; margin: 1mm 0; }
+  .mrp { font-size: 7pt; color: #666; margin-top: 1mm; }
+  .sp { font-size: 10pt; font-weight: 900; margin-top: 0.5mm; }
+  svg, canvas.qr-canvas, img { max-width: 100%; }
+  .jewelry { display: flex; align-items: center; justify-content: space-between; gap: 2mm; }
+  .jewelry-text { text-align: left; }
+  .saravana-main { display: flex; align-items: center; gap: 2mm; flex: 1; }
+  .saravana-text { text-align: left; }
+  .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: 6pt; font-weight: bold; text-align: center; text-transform: uppercase; padding: 1mm; margin-top: 1mm; }
+  .circular { border-radius: 50%; }
   @media print {
     @page { margin: 4mm; size: A4; }
     body { margin: 0; }
@@ -300,7 +450,7 @@ function buildLabelHtml(
 <script>
   document.querySelectorAll('svg[data-barcode]').forEach(function(el) {
     JsBarcode(el, el.getAttribute('data-barcode'), {
-      format: 'CODE128',
+      format: el.getAttribute('data-format') || 'CODE128',
       width: 1.5,
       height: 40,
       displayValue: true,
@@ -309,6 +459,9 @@ function buildLabelHtml(
       background: '#ffffff',
       lineColor: '#000000'
     });
+  });
+  document.querySelectorAll('canvas[data-qr]').forEach(function(el) {
+    QRCode.toCanvas(el, el.getAttribute('data-qr'), { width: 60, margin: 1 });
   });
 <\/script>
 </body>
