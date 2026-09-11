@@ -1367,14 +1367,14 @@ export function SettingsPage() {
   // Barcode settings
   const [barcodeType, setBarcodeType] = useState<string>(org?.branding?.barcode_type ?? 'code128')
   const [barcodeLabelSize, setBarcodeLabelSize] = useState<string>(org?.branding?.barcode_label_size ?? '5x3cm')
-  const [barcodeTemplateStyle, setBarcodeTemplateStyle] = useState<'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'>((org?.branding as any)?.barcode_template_style ?? 'standard')
+  const [barcodeTemplateStyle, setBarcodeTemplateStyle] = useState<'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'>(org?.branding?.barcode_template_style ?? 'standard')
   const [autoPrintBarcodeOnPurchase, setAutoPrintBarcodeOnPurchase] = useState<boolean>(org?.branding?.auto_print_barcode_on_purchase ?? false)
-  const [barcodeShowShopName, setBarcodeShowShopName] = useState<boolean>((org?.branding as any)?.barcode_show_shop_name ?? true)
-  const [barcodeShowSku, setBarcodeShowSku] = useState<boolean>((org?.branding as any)?.barcode_show_sku ?? true)
-  const [barcodeShowCodeValue, setBarcodeShowCodeValue] = useState<boolean>((org?.branding as any)?.barcode_show_code_value ?? true)
-  const [barcodeShowMrp, setBarcodeShowMrp] = useState<boolean>((org?.branding as any)?.barcode_show_mrp ?? true)
-  const [barcodeShowSp, setBarcodeShowSp] = useState<boolean>((org?.branding as any)?.barcode_show_sp ?? true)
-  const [barcodeStrikethroughMrp, setBarcodeStrikethroughMrp] = useState<boolean>((org?.branding as any)?.barcode_strikethrough_mrp ?? true)
+  const [barcodeShowShopName, setBarcodeShowShopName] = useState<boolean>(org?.branding?.barcode_show_shop_name ?? true)
+  const [barcodeShowSku, setBarcodeShowSku] = useState<boolean>(org?.branding?.barcode_show_sku ?? true)
+  const [barcodeShowCodeValue, setBarcodeShowCodeValue] = useState<boolean>(org?.branding?.barcode_show_code_value ?? true)
+  const [barcodeShowMrp, setBarcodeShowMrp] = useState<boolean>(org?.branding?.barcode_show_mrp ?? true)
+  const [barcodeShowSp, setBarcodeShowSp] = useState<boolean>(org?.branding?.barcode_show_sp ?? true)
+  const [barcodeStrikethroughMrp, setBarcodeStrikethroughMrp] = useState<boolean>(org?.branding?.barcode_strikethrough_mrp ?? true)
 
   // Invoice UPI / payment
   const [upiId, setUpiId] = useState<string>(org?.branding?.upi_id ?? '')

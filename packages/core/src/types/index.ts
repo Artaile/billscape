@@ -41,6 +41,13 @@ export interface OrgBranding {
   // Barcode
   barcode_type?: string
   barcode_label_size?: string
+  barcode_template_style?: 'standard' | 'saravana_stores' | 'circular_bottle' | 'compact_jewelry'
+  barcode_show_shop_name?: boolean
+  barcode_show_sku?: boolean
+  barcode_show_code_value?: boolean
+  barcode_show_mrp?: boolean
+  barcode_show_sp?: boolean
+  barcode_strikethrough_mrp?: boolean
   auto_print_barcode_on_purchase?: boolean
   // UPI / Payments
   upi_id?: string
