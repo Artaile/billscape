@@ -967,6 +967,9 @@ export function PurchaseFormPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory', orgId] })
       queryClient.invalidateQueries({ queryKey: ['purchase_payment_summaries', orgId] })
       setSavedPurchase({ purchaseNo: data.purchase.purchase_no, newProducts: rows.filter((r) => r.is_new_product) })
+      if (org?.branding?.auto_print_barcode_on_purchase && rows.some((r) => r.is_new_product)) {
+        setPrintLabelsOpen(true)
+      }
     },
     onError: (err: Error) => toast.error('Failed to save purchase', err.message),
   })
