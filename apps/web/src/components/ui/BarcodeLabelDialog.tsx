@@ -58,6 +58,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   const showMrp = branding?.barcode_show_mrp ?? true
   const showSp = branding?.barcode_show_sp ?? true
   const strikethroughMrp = branding?.barcode_strikethrough_mrp ?? true
+  const labelSize = branding?.barcode_label_size ?? '5x3cm'
 
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [copiesByKey, setCopiesByKey] = useState<Record<string, number>>({})
@@ -160,7 +161,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
 
   const handlePrint = () => {
     const labelHtml = buildLabelHtml(
-      checkedItems, copiesByKey, orgName, templateStyle, barcodeType,
+      checkedItems, copiesByKey, orgName, templateStyle, labelSize, barcodeType,
       showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp,
     )
     const win = window.open('', '_blank', 'width=600,height=400')
@@ -194,7 +195,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
             )}
           </div>
           <div className="text-xs text-zinc-500">
-            Print Mode: <span className="font-medium text-zinc-300">Thermal (58mm)</span>{' '}
+            Print Mode: <span className="font-medium text-zinc-300">Thermal ({labelSize})</span>{' '}
             <span className="text-zinc-600">(Change in Settings → Barcode)</span>
           </div>
 
@@ -369,6 +370,7 @@ function buildLabelHtml(
   copiesByKey: Record<string, number>,
   orgName: string | undefined,
   templateStyle: string,
+  labelSize: string,
   barcodeType: string,
   showShopName: boolean,
   showSku: boolean,
@@ -379,6 +381,13 @@ function buildLabelHtml(
 ): string {
   const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
   const isQr = barcodeType === 'qr'
+  // Replicates the exact (quirky) transform the old deleted printBarcodeLabel.ts helper used:
+  // replace() only hits the LAST "cm", so '5x3cm' -> '5x30mm' (i.e. 50mm x 30mm, textually).
+  // Preserved as-is for behavioral consistency — not "fixed" to something more sensible.
+  const pageSize = labelSize === 'A4 Sheet' ? 'A4' : labelSize.replace('cm', '0mm')
+  // '58mm' is kept ONLY as the A4-sheet-default fallback (A4 tiles multiple labels per sheet
+  // rather than being one big label, so there's no single "label size" to derive a width from).
+  const labelWidthMm = pageSize === 'A4' ? '58mm' : `${pageSize.split('x')[0]}mm`
 
   const rows = items.flatMap((item) => {
     const copies = copiesByKey[item.key] ?? 1
@@ -432,8 +441,7 @@ function buildLabelHtml(
         </div>`
     } else {
       labelInner = `
-        ${orgName ? `<div class="shop">${escapeHtml(orgName)}</div>` : ''}
-        ${showShopName ? '' : ''}
+        ${showShopName ? `<div class="shop">${escapeHtml(orgName || displayName)}</div>` : ''}
         <div class="name">${escapeHtml(displayName)}</div>
         ${skuLine}
         ${codeEl}
@@ -455,7 +463,7 @@ function buildLabelHtml(
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #fff; font-family: Arial, sans-serif; }
   .labels { display: flex; flex-wrap: wrap; padding: 4mm; gap: 2mm; }
-  .label { width: 58mm; border: 0.5pt solid #ccc; padding: 2mm; page-break-inside: avoid; }
+  .label { width: ${labelWidthMm}; border: 0.5pt solid #ccc; padding: 2mm; page-break-inside: avoid; }
   .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; text-align: center; }
   .label-saravana_stores { display: flex; flex-direction: column; }
   .shop { font-size: 7pt; font-weight: 700; text-align: center; margin-bottom: 1mm; text-transform: uppercase; }
@@ -472,7 +480,7 @@ function buildLabelHtml(
   .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: 6pt; font-weight: bold; text-align: center; text-transform: uppercase; padding: 1mm; margin-top: 1mm; }
   .circular { border-radius: 50%; }
   @media print {
-    @page { margin: 4mm; size: A4; }
+    @page { margin: 4mm; size: ${pageSize}; }
     body { margin: 0; }
   }
 </style>
