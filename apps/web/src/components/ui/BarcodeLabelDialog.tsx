@@ -81,23 +81,37 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
 
   const svgRefs = useRef<Record<string, SVGSVGElement | null>>({})
   const PREVIEW_CAP = 6
-  // previewItemsKey is a stable primitive (joined item keys) — every call site passes an inline
-  // `items` array literal with an unstable reference on every render (same reasoning as the
+  // previewItemsKey is a stable PRIMITIVE STRING — every call site passes an inline `items`
+  // array literal with an unstable reference on every render (same reasoning as the
   // `checked`/`copiesByKey` seed effect above), and `checkedItems`/`.slice()` here derive a new
-  // array from it on every render too. Memoizing previewItems on this joined-key string (not on
-  // `checkedItems` itself) means the two effects below that depend on it only actually re-run
-  // when the SET of checked items changes, not on every parent re-render. Without this, the QR
-  // effect's setQrDataUrls(...) at the end of every run produces a new object reference, which
-  // triggers another render, which produces a new previewItems array, which re-triggers the
-  // effect — a real synchronous infinite loop for any org with barcode_type: 'qr' (100% CPU,
-  // browser tab wedged, reproduced live from PurchaseFormPage's post-save "Print Barcode
-  // Labels" button — the JsBarcode effect has the same unstable-dependency shape but happens to
-  // not self-perpetuate since it never calls a state setter).
-  const previewItemsKey = checkedItems.slice(0, PREVIEW_CAP).map((i) => i.key).join('|')
+  // array from it on every render too. Memoizing previewItems on this string (not on
+  // `checkedItems` itself, which is a fresh array every render) means the two effects below
+  // that depend on it only actually re-run when something the preview/QR/barcode rendering
+  // actually consumes has changed, not on every parent re-render. Without this, the QR effect's
+  // setQrDataUrls(...) at the end of every run produces a new object reference, which triggers
+  // another render, which produces a new previewItems array, which re-triggers the effect — a
+  // real synchronous infinite loop for any org with barcode_type: 'qr' (100% CPU, browser tab
+  // wedged, reproduced live from PurchaseFormPage's post-save "Print Barcode Labels" button —
+  // the JsBarcode effect has the same unstable-dependency shape but happens to not
+  // self-perpetuate since it never calls a state setter).
+  //
+  // The key must capture BOTH the checked-key membership AND the actual field values the
+  // preview reads (barcode_value/price/mrp/sku/name/variantLabel) — not just `.key`. A call
+  // site backed by live React Query data (ProductsPage.tsx, ProductViewPage.tsx) can have a
+  // background refetch change e.g. barcode_value or sale_price on an item that's already
+  // checked, with the checked-key SET staying identical — keying on `.key` alone would return
+  // the stale cached previewItems array forever in that case, silently showing an outdated
+  // barcode/QR/price in the preview panel (a real bug caught in code review, though it never
+  // affects the actual print output since handlePrint reads checkedItems directly, unmemoized).
+  const previewItemsKey = checkedItems
+    .slice(0, PREVIEW_CAP)
+    .map((i) => `${i.key}:${i.barcode_value}:${i.price}:${i.mrp}:${i.sku}:${i.name}:${i.variantLabel}`)
+    .join('|')
   const previewItems = useMemo(
     () => checkedItems.slice(0, PREVIEW_CAP),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on previewItemsKey (a stable
-    // primitive derived from checkedItems), not checkedItems itself, by design — see comment above.
+    // primitive string derived from checkedItems' relevant fields), not checkedItems itself, by
+    // design — see comment above.
     [previewItemsKey],
   )
 
