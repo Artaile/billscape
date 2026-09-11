@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import JsBarcode from 'jsbarcode'
 import QRCode from 'qrcode'
 import {
@@ -81,7 +81,25 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
 
   const svgRefs = useRef<Record<string, SVGSVGElement | null>>({})
   const PREVIEW_CAP = 6
-  const previewItems = checkedItems.slice(0, PREVIEW_CAP)
+  // previewItemsKey is a stable primitive (joined item keys) — every call site passes an inline
+  // `items` array literal with an unstable reference on every render (same reasoning as the
+  // `checked`/`copiesByKey` seed effect above), and `checkedItems`/`.slice()` here derive a new
+  // array from it on every render too. Memoizing previewItems on this joined-key string (not on
+  // `checkedItems` itself) means the two effects below that depend on it only actually re-run
+  // when the SET of checked items changes, not on every parent re-render. Without this, the QR
+  // effect's setQrDataUrls(...) at the end of every run produces a new object reference, which
+  // triggers another render, which produces a new previewItems array, which re-triggers the
+  // effect — a real synchronous infinite loop for any org with barcode_type: 'qr' (100% CPU,
+  // browser tab wedged, reproduced live from PurchaseFormPage's post-save "Print Barcode
+  // Labels" button — the JsBarcode effect has the same unstable-dependency shape but happens to
+  // not self-perpetuate since it never calls a state setter).
+  const previewItemsKey = checkedItems.slice(0, PREVIEW_CAP).map((i) => i.key).join('|')
+  const previewItems = useMemo(
+    () => checkedItems.slice(0, PREVIEW_CAP),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on previewItemsKey (a stable
+    // primitive derived from checkedItems), not checkedItems itself, by design — see comment above.
+    [previewItemsKey],
+  )
 
   useEffect(() => {
     if (!open || barcodeType === 'qr') return

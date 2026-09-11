@@ -10,7 +10,7 @@ import {
   type GSTRate, type InvoiceTotals,
 } from '@billscape/core'
 import { createPurchase, updatePurchase, generatePurchaseNo, generateProductCode, getPurchaseWithItems, recordPurchasePayment, createCategory, type PurchaseLineInput } from '@billscape/api'
-import { printBarcodeLabel } from '@/lib/printBarcodeLabel'
+import { BarcodeLabelDialog, type LabelItem } from '@/components/ui/BarcodeLabelDialog'
 import { SupplierFormDialog, type SupplierOption } from '@/components/suppliers/SupplierFormDialog'
 import { useNavigationGuard, useRegisterNavigationGuard } from '@/contexts/NavigationGuardContext'
 import { getPurchaseDrafts, savePurchaseDrafts, type PurchaseDraft } from '@/lib/purchaseDrafts'
@@ -286,6 +286,35 @@ export function PurchaseFormPage() {
   const [paidAmount, setPaidAmount] = useState('')
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [savedPurchase, setSavedPurchase] = useState<{ purchaseNo: string; newProducts: PurchaseRow[] } | null>(null)
+  const [printLabelsOpen, setPrintLabelsOpen] = useState(false)
+
+  // Expands each new product into one LabelItem per variant (or a single LabelItem for a
+  // non-variant product) so "Print Barcode Labels" in the post-save dialog can print every
+  // variant's own barcode, not just the parent row's (blank, for a has_variants product)
+  // barcode_value. Recomputes on every render — acceptable since savedPurchase only changes on save.
+  const newProductLabelItems: LabelItem[] = (savedPurchase?.newProducts ?? []).flatMap((r) => {
+    if (r.has_variants && r.variants.length > 0) {
+      return r.variants
+        .filter((v) => v.variant_name.trim())
+        .map((v) => ({
+          key: `${r.sku}-${v.variant_name}`,
+          name: r.product_name,
+          variantLabel: v.variant_name,
+          barcode_value: v.barcode_value || null,
+          price: parseNum(v.sale_price),
+          mrp: v.mrp ? parseNum(v.mrp) : null,
+          sku: v.sku || null,
+        }))
+    }
+    return [{
+      key: r.sku,
+      name: r.product_name,
+      barcode_value: r.barcode_value || null,
+      price: parseNum(r.price),
+      mrp: r.mrp ? parseNum(r.mrp) : null,
+      sku: r.sku || null,
+    }]
+  })
 
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const productNameRef = useRef<HTMLInputElement | null>(null)
@@ -944,9 +973,18 @@ export function PurchaseFormPage() {
 
   function handlePrintNewProductLabels() {
     if (!savedPurchase) return
-    for (const r of savedPurchase.newProducts) {
-      printBarcodeLabel(r.product_name, r.barcode_value, parseNum(r.price))
+    // Blur whatever still holds focus (typically the Add Item form's Product Name input, left
+    // focused from before the purchase was saved, via addToList()'s
+    // productNameRef.current?.focus()) before opening BarcodeLabelDialog. Defense-in-depth
+    // alongside the "Purchase Saved" Dialog being fully unmounted below while printLabelsOpen
+    // is true — neither of these two changes turned out to be the actual root cause of the
+    // render-loop bug found while QC'ing this button (that was a stale-dependency bug inside
+    // BarcodeLabelDialog.tsx itself, fixed there), but both are still worth keeping as cheap,
+    // harmless hardening against the two dialogs coexisting/fighting over focus.
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
     }
+    setPrintLabelsOpen(true)
   }
 
   // Clears every field back to a brand-new-purchase state, without leaving the page — used when
@@ -1901,7 +1939,21 @@ export function PurchaseFormPage() {
           preventDefault) since the purchase is already committed and this popup is the only place
           the merchant sees the reference number and gets to print labels; an accidental dismiss
           would lose that chance. "New Purchase" resets the page in place rather than navigating,
-          so the next bill can start immediately. */}
+          so the next bill can start immediately.
+          This whole block is skipped (not just passed open=false) while printLabelsOpen is
+          true — see the closing `}` after BarcodeLabelDialog below. This was tried, along with
+          blurring document.activeElement in handlePrintNewProductLabels, while chasing a real
+          synchronous render-loop bug found live while QC'ing this button (100,000+ renders, no
+          console error beyond one benign "aria-hidden on a focused descendant" warning, no
+          network activity, 100% CPU, tab wedged). Neither change actually fixed it — the true
+          root cause turned out to be inside BarcodeLabelDialog.tsx itself (an effect
+          re-deriving a new `previewItems` array on every render, whose dependent QR-generation
+          effect then called a state setter every time, guaranteeing another render — fixed
+          there with a useMemo keyed on a stable joined-keys string, see that file). Both
+          left in here anyway as cheap, harmless hardening against two Dialogs coexisting and
+          fighting over focus, which is a real (if not, in this case, load-bearing) risk
+          whenever a second Dialog can open from inside a still-mounted first one. */}
+      {!printLabelsOpen && (
       <Dialog open={!!savedPurchase} onOpenChange={() => { /* only closable via the buttons below */ }}>
         <DialogContent
           className="max-w-md outline-none ring-0 focus:ring-0"
@@ -1948,6 +2000,14 @@ export function PurchaseFormPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      )}
+
+      <BarcodeLabelDialog
+        open={printLabelsOpen}
+        onOpenChange={setPrintLabelsOpen}
+        items={newProductLabelItems}
+        orgName={org?.name}
+      />
     </div>
   )
 }
