@@ -159,17 +159,65 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
     return () => { cancelled = true }
   }, [open, barcodeType, previewItems])
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    // Pre-render every barcode/QR to a data URI in the host page BEFORE opening the print
+    // popup — the previous approach loaded JsBarcode/QRCode from a CDN inside the popup and
+    // printed after a blind 400ms setTimeout, which lost the race against script download +
+    // execution on anything but a warm cache, producing a print with missing barcodes/QR and
+    // a broken/unmeasured flex layout (each label its own near-empty page). Rendering to plain
+    // <img> tags up front removes both the network dependency and the timing race entirely.
+    const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
+    const codeDataUris: Record<string, string> = {}
+    for (const item of checkedItems) {
+      if (!item.barcode_value) continue
+      try {
+        if (barcodeType === 'qr') {
+          codeDataUris[item.key] = await QRCode.toDataURL(item.barcode_value, { width: 120, margin: 1 })
+        } else {
+          const canvas = document.createElement('canvas')
+          JsBarcode(canvas, item.barcode_value, {
+            format,
+            width: 1.5,
+            height: 40,
+            displayValue: true,
+            fontSize: 9,
+            margin: 2,
+            background: '#ffffff',
+            lineColor: '#000000',
+          })
+          codeDataUris[item.key] = canvas.toDataURL('image/png')
+        }
+      } catch {
+        // invalid barcode value — leave this item's code blank in the printout
+      }
+    }
+
     const labelHtml = buildLabelHtml(
       checkedItems, copiesByKey, orgName, templateStyle, labelSize, barcodeType,
-      showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp,
+      showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp, codeDataUris,
     )
     const win = window.open('', '_blank', 'width=600,height=400')
     if (!win) return
     win.document.write(labelHtml)
     win.document.close()
     win.focus()
-    setTimeout(() => { win.print(); win.close() }, 400)
+    // Wait for the popup's own document (images included) to finish loading before printing,
+    // rather than guessing a fixed delay. The 1500ms setTimeout is a fallback in case 'load'
+    // never fires — guarded so a slow-but-eventually-successful load doesn't also fire the
+    // fallback and print/close an already-closed window a second time.
+    let printed = false
+    const triggerPrint = () => {
+      if (printed) return
+      printed = true
+      win.print()
+      win.close()
+    }
+    if (win.document.readyState === 'complete') {
+      triggerPrint()
+    } else {
+      win.addEventListener('load', triggerPrint)
+      setTimeout(triggerPrint, 1500)
+    }
   }
 
   return (
@@ -409,9 +457,8 @@ function buildLabelHtml(
   showMrp: boolean,
   showSp: boolean,
   strikethroughMrp: boolean,
+  codeDataUris: Record<string, string>,
 ): string {
-  const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
-  const isQr = barcodeType === 'qr'
   const { widthMm, heightMm } = getLabelDimensionsMm(labelSize)
   // A4 tiles multiple labels per sheet rather than being one big label, so the printed page
   // itself is A4 — there's no single "label size" @page value to derive.
@@ -427,13 +474,9 @@ function buildLabelHtml(
       : ''
     const spLine = showSp ? `<div class="sp">SP &#8377;${item.price.toFixed(2)}</div>` : ''
     const skuLine = showSku && item.sku ? `<div class="sku">${escapeHtml(item.sku)}</div>` : ''
-    const codeId = `bc_${Math.random().toString(36).slice(2)}`
-    const codeEl = !item.barcode_value
-      ? ''
-      : isQr
-        ? `<canvas class="qr-canvas" data-qr="${escapeHtml(item.barcode_value)}" id="${codeId}"></canvas>`
-        : `<svg data-barcode="${escapeHtml(item.barcode_value)}" data-format="${format}" id="${codeId}"></svg>`
-    const codeValueLine = showCodeValue && !isQr && item.barcode_value
+    const codeDataUri = codeDataUris[item.key]
+    const codeEl = codeDataUri ? `<img class="code-img" src="${codeDataUri}" alt="">` : ''
+    const codeValueLine = showCodeValue && barcodeType !== 'qr' && item.barcode_value
       ? `<div class="codevalue">${escapeHtml(item.barcode_value)}</div>`
       : ''
 
@@ -486,8 +529,6 @@ function buildLabelHtml(
 <head>
 <meta charset="utf-8">
 <title>Barcode Label</title>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"><\/script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #fff; font-family: Arial, sans-serif; }
@@ -501,7 +542,7 @@ function buildLabelHtml(
   .codevalue { font-size: 7pt; font-family: monospace; font-weight: bold; margin: 1mm 0; }
   .mrp { font-size: 7pt; color: #666; margin-top: 1mm; }
   .sp { font-size: 10pt; font-weight: 900; margin-top: 0.5mm; }
-  svg, canvas.qr-canvas, img { max-width: 100%; }
+  .code-img { max-width: 100%; display: block; }
   .jewelry { display: flex; align-items: center; justify-content: space-between; gap: 2mm; }
   .jewelry-text { text-align: left; }
   .saravana-main { display: flex; align-items: center; gap: 2mm; flex: 1; }
@@ -516,23 +557,6 @@ function buildLabelHtml(
 </head>
 <body>
 <div class="labels">${rows}</div>
-<script>
-  document.querySelectorAll('svg[data-barcode]').forEach(function(el) {
-    JsBarcode(el, el.getAttribute('data-barcode'), {
-      format: el.getAttribute('data-format') || 'CODE128',
-      width: 1.5,
-      height: 40,
-      displayValue: true,
-      fontSize: 9,
-      margin: 2,
-      background: '#ffffff',
-      lineColor: '#000000'
-    });
-  });
-  document.querySelectorAll('canvas[data-qr]').forEach(function(el) {
-    QRCode.toCanvas(el, el.getAttribute('data-qr'), { width: 60, margin: 1 });
-  });
-<\/script>
 </body>
 </html>`
 }
