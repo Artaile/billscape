@@ -315,7 +315,6 @@ function LiveBarcodePreview({
   showSp = true,
   strikethroughMrp = true,
   shopName,
-  shopAddress,
 }: {
   type: string
   labelSize: string
@@ -327,8 +326,6 @@ function LiveBarcodePreview({
   showSp?: boolean
   strikethroughMrp?: boolean
   shopName?: string
-  showAddress?: string
-  shopAddress?: string
 }) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('')
   const svgRef = React.useRef<SVGSVGElement | null>(null)
@@ -581,49 +578,39 @@ function LiveBarcodePreview({
 
         {/* Template 2: Saravana Stores / Department Store Side-Ribbon Style */}
         {templateStyle === 'saravana_stores' && (
-          <div className={cn('flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden transition-all duration-300 select-none', labelSize === '3x2cm' ? 'w-[250px] min-h-[110px]' : labelSize === '4x2.5cm' ? 'w-[290px] min-h-[125px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-[370px] min-h-[165px]' : 'w-[330px] min-h-[145px]')}>
-            <div className="flex-1 p-3 flex flex-col justify-between">
-              <div className="flex justify-between items-start text-[8px] font-mono text-zinc-500">
-                <span className="font-bold">15675</span>
-                <span className="font-bold">F6</span>
-              </div>
-
-              <div className="flex items-center gap-3 my-1">
-                <div className="shrink-0">
-                  {type === 'qr' ? (
-                    qrDataUrl ? (
-                      <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} />
-                    ) : (
-                      <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
-                    )
+          <div className={cn('flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden transition-all duration-300 select-none', labelSize === '3x2cm' ? 'w-[250px] min-h-[100px]' : labelSize === '4x2.5cm' ? 'w-[290px] min-h-[110px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-[370px] min-h-[140px]' : 'w-[330px] min-h-[125px]')}>
+            <div className="flex-1 p-3 flex items-center gap-3">
+              <div className="shrink-0">
+                {type === 'qr' ? (
+                  qrDataUrl ? (
+                    <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} />
                   ) : (
-                    <div className="max-w-[130px] overflow-hidden">
-                      <svg ref={svgRef} className="max-w-full h-auto" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col min-w-0">
-                  <p className="text-[11px] font-black tracking-tight uppercase text-zinc-950 truncate">TIA BUCKET 511</p>
-                  {showCodeValue && <p className="text-[9px] font-mono text-zinc-600">198411</p>}
-                  {showMrp && <p className="text-[8px] text-zinc-500">MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
-                  {showSp && <p className="text-sm font-black text-zinc-950 tracking-tight">SP Rs.232.00</p>}
-                </div>
+                    <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
+                  )
+                ) : (
+                  <div className="max-w-[130px] overflow-hidden">
+                    <svg ref={svgRef} className="max-w-full h-auto" />
+                  </div>
+                )}
               </div>
 
-              <div className="flex justify-between items-center text-[7.5px] font-mono text-zinc-500 border-t border-zinc-200 pt-1">
-                <span>BJ:PAA7233/6</span>
-                <span>MAMATMTI</span>
+              <div className="flex flex-col min-w-0">
+                <p className="text-[11px] font-black tracking-tight uppercase text-zinc-950 truncate">TIA BUCKET 511</p>
+                {showSku && <p className="text-[9px] text-zinc-500 font-mono">SKU: BUCKET-511</p>}
+                {showCodeValue && type !== 'qr' && <p className="text-[9px] font-mono text-zinc-600">1003432492</p>}
+                {showMrp && <p className="text-[8px] text-zinc-500">MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
+                {showSp && <p className="text-sm font-black text-zinc-950 tracking-tight">SP Rs.232.00</p>}
               </div>
             </div>
 
             {/* Vertical Orange Ribbon */}
-            <div className="w-14 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
-              <div className="writing-vertical transform -rotate-90 whitespace-nowrap text-center">
-                {showShopName && <span className="text-[9px] font-black uppercase tracking-wider block">{shopName || 'SARAVANA STORES'}</span>}
-                <span className="text-[7px] text-amber-100 tracking-tight block max-w-[120px] truncate">{shopAddress || '129, Usman Road, T.Nagar, Chennai-17'}</span>
+            {showShopName && (
+              <div className="w-8 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
+                <span className="text-[9px] font-black uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                  {shopName || 'DEPARTMENT STORE'}
+                </span>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -4304,7 +4291,6 @@ export function SettingsPage() {
                 showSp={barcodeShowSp}
                 strikethroughMrp={barcodeStrikethroughMrp}
                 shopName={shopForm.watch('name')}
-                shopAddress={[shopForm.watch('address'), shopForm.watch('city')].filter(Boolean).join(', ')}
               />
 
               <div className="flex items-start justify-between gap-4 py-3">
