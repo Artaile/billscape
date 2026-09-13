@@ -615,8 +615,8 @@ function buildLabelHtml(
   }
   .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
   .label-saravana_stores { display: flex; flex-direction: column; justify-content: center; }
-  .shop { font-size: ${pt(7)}; font-weight: 700; text-align: center; margin-bottom: ${mm(1)}; text-transform: uppercase; }
-  .name { font-size: ${pt(8)}; font-weight: bold; text-align: center; margin-bottom: ${mm(1)}; word-break: break-word; }
+  .shop { font-size: ${pt(7)}; font-weight: 700; margin-bottom: ${mm(1)}; text-transform: uppercase; }
+  .name { font-size: ${pt(8)}; font-weight: bold; margin-bottom: ${mm(1)}; word-break: break-word; }
   .sku { font-size: ${pt(6.5)}; color: #666; font-family: monospace; margin-bottom: ${mm(1)}; }
   .codevalue { font-size: ${pt(7)}; font-family: monospace; font-weight: bold; margin: ${mm(1)} 0; }
   .mrp { font-size: ${pt(7)}; color: #666; margin-top: ${mm(1)}; }
