@@ -63,11 +63,13 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [copiesByKey, setCopiesByKey] = useState<Record<string, number>>({})
   const [qrDataUrls, setQrDataUrls] = useState<Record<string, string>>({})
+  const [printing, setPrinting] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setChecked(new Set(items.filter((i) => i.barcode_value).map((i) => i.key)))
     setCopiesByKey(Object.fromEntries(items.map((i) => [i.key, 1])))
+    setPrinting(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `items` is intentionally excluded:
     // every call site passes an inline array literal with an unstable reference on every render,
     // so including it here would reset checked/copies on every parent re-render (e.g. a
@@ -159,17 +161,109 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
     return () => { cancelled = true }
   }, [open, barcodeType, previewItems])
 
-  const handlePrint = () => {
-    const labelHtml = buildLabelHtml(
-      checkedItems, copiesByKey, orgName, templateStyle, labelSize, barcodeType,
-      showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp,
-    )
-    const win = window.open('', '_blank', 'width=600,height=400')
-    if (!win) return
-    win.document.write(labelHtml)
-    win.document.close()
-    win.focus()
-    setTimeout(() => { win.print(); win.close() }, 400)
+  const handlePrint = async () => {
+    // Guards against rapid double-clicks opening multiple hidden print iframes at once (each
+    // would independently call window.print(), stacking duplicate print dialogs). Cleared
+    // either after the iframe's own onload -> print -> self-remove sequence has had time to
+    // finish (see setTimeout below) or immediately if setup itself throws.
+    if (printing) return
+    setPrinting(true)
+
+    try {
+      // Pre-render every barcode/QR to a data URI in the host page before building the print
+      // document — an earlier version loaded JsBarcode/QRCode from a CDN inside a
+      // window.open() popup and generated the code images there, which raced the CDN
+      // download/execution against a blind setTimeout. Rendering to plain <img> tags up front
+      // removes that network dependency and timing race entirely, regardless of how the
+      // document is printed.
+      const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
+      const { widthMm: printWidthMm, heightMm: printHeightMm } = getLabelDimensionsMm(labelSize)
+      const scale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(printWidthMm, printHeightMm)
+      const codeDataUris: Record<string, string> = {}
+      for (const item of checkedItems) {
+        if (!item.barcode_value) continue
+        try {
+          if (barcodeType === 'qr') {
+            codeDataUris[item.key] = await QRCode.toDataURL(item.barcode_value, { width: Math.round(120 * scale), margin: 1 })
+          } else {
+            const canvas = document.createElement('canvas')
+            JsBarcode(canvas, item.barcode_value, {
+              format,
+              width: 1.5 * scale,
+              height: Math.round(40 * scale),
+              displayValue: true,
+              fontSize: Math.round(9 * scale),
+              margin: 2,
+              background: '#ffffff',
+              lineColor: '#000000',
+            })
+            codeDataUris[item.key] = canvas.toDataURL('image/png')
+          }
+        } catch {
+          // invalid barcode value — leave this item's code blank in the printout
+        }
+      }
+
+      const labelHtml = buildLabelHtml(
+        checkedItems, copiesByKey, orgName, templateStyle, labelSize, barcodeType,
+        showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp, codeDataUris,
+      )
+
+      // Print via a hidden same-page <iframe> rather than a window.open() popup — this is the
+      // app's own established, proven pattern (see InvoicePrint.tsx's handlePrint). A popup
+      // window fed via document.write() has a real, confirmed Chrome quirk: win.print() can
+      // fire before the print COMPOSITOR (a separate pipeline from normal screen paint) has
+      // finished rasterizing a data: URI <img> that was just written into the document,
+      // silently printing a blank space where the QR/barcode belongs — reproduced live via a
+      // real macOS print dialog even though the same image renders correctly on screen and
+      // `img.complete`/`img.decode()` both report success. An iframe's `contentWindow`
+      // document is a genuine fresh navigation (via doc.open()/write()/close()), so its own
+      // 'load' event reliably waits for image resources the same way a normally-loaded page
+      // would, avoiding this class of bug entirely instead of guessing another timeout.
+      // A genuinely 0x0 iframe (the InvoicePrint.tsx pattern this is otherwise copied from
+      // uses exactly that) collapses its inner viewport to 0, which breaks layout for content
+      // that relies on flex space distribution — confirmed live: with a 0-width iframe, a
+      // `justify-content: space-between` row (the compact_jewelry/saravana_stores templates'
+      // code-plus-text layout) squeezed the barcode/QR <img> down to a genuine computed 0x0
+      // box, printing a blank space where the code belongs even though the image itself had
+      // finished loading. InvoicePrint.tsx never hits this because its layout is a
+      // single-column block flow, not a space-between flex row. Sizing the iframe off-screen
+      // (not zero) instead gives every label template a real viewport to lay out against; the
+      // print pipeline still paginates to the configured @page size regardless of this
+      // on-screen iframe size.
+      const iframe = document.createElement('iframe')
+      iframe.style.position = 'fixed'
+      iframe.style.left = '-9999px'
+      iframe.style.top = '0'
+      iframe.style.width = '300px'
+      iframe.style.height = '300px'
+      iframe.style.border = '0'
+      document.body.appendChild(iframe)
+
+      const doc = iframe.contentWindow?.document
+      if (!doc) { iframe.remove(); setPrinting(false); return }
+
+      doc.open()
+      doc.write(labelHtml.replace(
+        '</body>',
+        `<script>
+          window.onload = () => {
+            setTimeout(() => {
+              window.focus();
+              window.print();
+              setTimeout(() => { window.frameElement && window.frameElement.remove(); }, 1000);
+            }, 250);
+          };
+        <\/script></body>`,
+      ))
+      doc.close()
+      // Re-enable the Print button once the iframe's own onload -> print -> self-remove
+      // sequence (250ms + 1000ms, see above) has had time to complete, rather than
+      // immediately — matches how long a single print actually takes end-to-end.
+      setTimeout(() => setPrinting(false), 1300)
+    } catch {
+      setPrinting(false)
+    }
   }
 
   return (
@@ -259,6 +353,8 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                 {previewItems.map((item) => {
                   const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
                   const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
+                  const previewSize = getPreviewSizePx(labelSize)
+                  const previewStyle = { width: previewSize.widthPx, minHeight: previewSize.minHeightPx }
                   const code = (
                     <ItemCode
                       item={item}
@@ -270,7 +366,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   )
                   if (templateStyle === 'compact_jewelry') {
                     return (
-                      <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2">
+                      <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2 mx-auto" style={previewStyle}>
                         <div className="text-left">
                           {showShopName && <p className="text-[9px] font-bold uppercase">{orgName || 'JEWELRY TAG'}</p>}
                           <p className="text-[9px] font-bold mt-0.5">{displayName}</p>
@@ -286,7 +382,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   }
                   if (templateStyle === 'saravana_stores') {
                     return (
-                      <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden">
+                      <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden mx-auto" style={previewStyle}>
                         <div className="flex-1 p-3 flex items-center gap-2 text-left">
                           {code}
                           <div>
@@ -308,7 +404,11 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   }
                   if (templateStyle === 'circular_bottle') {
                     return (
-                      <div key={item.key} className="rounded-full border-2 border-gray-300 bg-white text-black w-36 h-36 mx-auto flex flex-col items-center justify-center text-center p-2">
+                      <div
+                        key={item.key}
+                        className="rounded-full border-2 border-gray-300 bg-white text-black mx-auto flex flex-col items-center justify-center text-center p-2"
+                        style={{ width: previewSize.widthPx, height: previewSize.widthPx }}
+                      >
                         {showShopName && <p className="text-[8px] font-bold uppercase">{orgName || 'JAR LABEL'}</p>}
                         <p className="text-[8px] mt-0.5">{displayName}</p>
                         {code}
@@ -321,7 +421,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   }
                   // standard
                   return (
-                    <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black">
+                    <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black mx-auto" style={previewStyle}>
                       {showShopName && <p className="text-xs font-bold text-center leading-tight uppercase">{orgName || displayName}</p>}
                       <p className="text-[10px] text-gray-500 mt-0.5">{displayName}</p>
                       {showSku && item.sku && <p className="text-[9px] text-gray-500 font-mono mt-0.5">SKU: {item.sku}</p>}
@@ -346,7 +446,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Back</Button>
-          <Button onClick={handlePrint} disabled={checkedItems.length === 0}>
+          <Button onClick={handlePrint} disabled={checkedItems.length === 0 || printing}>
             <Printer className="h-4 w-4" />
             {isMulti ? `Print ${checkedItems.length} variant${checkedItems.length !== 1 ? 's' : ''} · ${totalLabels} labels` : `Print ${totalLabels > 1 ? `${totalLabels} Labels` : '1 Label'}`}
           </Button>
@@ -354,6 +454,48 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * Parses a Settings → Barcode `labelSize` value (e.g. "5x3cm") into physical mm dimensions.
+ * "A4 Sheet" has no single label size (A4 tiles multiple labels per sheet) — callers handle it
+ * separately. Falls back to the "5x3cm" default's dimensions for any unrecognized value.
+ */
+function getLabelDimensionsMm(labelSize: string): { widthMm: number; heightMm: number } {
+  const match = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)cm$/.exec(labelSize)
+  if (!match) return { widthMm: 50, heightMm: 30 }
+  return { widthMm: parseFloat(match[1]) * 10, heightMm: parseFloat(match[2]) * 10 }
+}
+
+/**
+ * A unitless scale factor relative to the "5x3cm" (50x30mm) baseline every font-size/padding/
+ * QR-pixel-size value in the generated print HTML was originally tuned for. Without this, a
+ * 3x2cm label prints with the exact same fixed 7-10pt text and a 120px QR as a 6x4cm label —
+ * the small label's content physically overflows its own tiny @page box and spills onto a
+ * second, near-empty printed page (confirmed live via a user screenshot). Scaling every size
+ * down/up together keeps each label internally proportional and keeps content within one page.
+ * Clamped to [0.6, 1.6] so a very small label doesn't shrink text below legibility and a very
+ * large one (e.g. 6x4cm) doesn't look comically oversized relative to its own content.
+ */
+function getLabelScale(widthMm: number, heightMm: number): number {
+  const BASELINE_WIDTH_MM = 50
+  const BASELINE_HEIGHT_MM = 30
+  const rawScale = Math.min(widthMm / BASELINE_WIDTH_MM, heightMm / BASELINE_HEIGHT_MM)
+  return Math.min(1.6, Math.max(0.6, rawScale))
+}
+
+/** Preview-panel box size (px) roughly proportional to the label's real aspect ratio, capped
+ * within the dialog's available width. A4 Sheet has no single label — shown at a fixed
+ * "generic sheet label" size like the standalone Settings preview does. */
+function getPreviewSizePx(labelSize: string): { widthPx: number; minHeightPx: number } {
+  if (labelSize === 'A4 Sheet') return { widthPx: 180, minHeightPx: 100 }
+  const { widthMm, heightMm } = getLabelDimensionsMm(labelSize)
+  const PX_PER_MM = 3.6
+  const MIN_WIDTH_PX = 130
+  const MAX_WIDTH_PX = 260
+  const widthPx = Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, widthMm * PX_PER_MM))
+  const minHeightPx = widthPx * (heightMm / widthMm)
+  return { widthPx, minHeightPx }
 }
 
 function escapeHtml(value: string): string {
@@ -378,23 +520,20 @@ function buildLabelHtml(
   showMrp: boolean,
   showSp: boolean,
   strikethroughMrp: boolean,
+  codeDataUris: Record<string, string>,
 ): string {
-  const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
-  const isQr = barcodeType === 'qr'
-  let pageSize = '50mm 25mm'
-  let labelWidthMm = '50mm'
-  if (labelSize === 'A4 Sheet') {
-    pageSize = 'A4'
-    labelWidthMm = '58mm'
-  } else {
-    const match = labelSize.match(/^([\d.]+)x([\d.]+)cm$/i)
-    if (match) {
-      const widthMm = Number(match[1]) * 10
-      const heightMm = Number(match[2]) * 10
-      pageSize = `${widthMm}mm ${heightMm}mm`
-      labelWidthMm = `${widthMm}mm`
-    }
-  }
+  const { widthMm, heightMm } = getLabelDimensionsMm(labelSize)
+  // A4 tiles multiple labels per sheet rather than being one big label, so the printed page
+  // itself is A4 — there's no single "label size" @page value to derive.
+  const pageSizeCss = labelSize === 'A4 Sheet' ? 'A4' : `${widthMm}mm ${heightMm}mm`
+  const labelWidthMm = labelSize === 'A4 Sheet' ? '58mm' : `${widthMm}mm`
+  const labelHeightMm = labelSize === 'A4 Sheet' ? undefined : `${heightMm}mm`
+  // Every font-size/padding/gap value below was originally tuned for the "5x3cm" baseline —
+  // scaling them together keeps a small label's content from physically overflowing its own
+  // tiny @page box and spilling onto a second, near-empty printed page (see getLabelScale doc).
+  const scale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(widthMm, heightMm)
+  const pt = (basePt: number) => `${(basePt * scale).toFixed(1)}pt`
+  const mm = (baseMm: number) => `${(baseMm * scale).toFixed(2)}mm`
 
   const rows = items.flatMap((item) => {
     const copies = copiesByKey[item.key] ?? 1
@@ -405,13 +544,9 @@ function buildLabelHtml(
       : ''
     const spLine = showSp ? `<div class="sp">SP &#8377;${item.price.toFixed(2)}</div>` : ''
     const skuLine = showSku && item.sku ? `<div class="sku">${escapeHtml(item.sku)}</div>` : ''
-    const codeId = `bc_${Math.random().toString(36).slice(2)}`
-    const codeEl = !item.barcode_value
-      ? ''
-      : isQr
-        ? `<canvas class="qr-canvas" data-qr="${escapeHtml(item.barcode_value)}" id="${codeId}"></canvas>`
-        : `<svg data-barcode="${escapeHtml(item.barcode_value)}" data-format="${format}" id="${codeId}"></svg>`
-    const codeValueLine = showCodeValue && !isQr && item.barcode_value
+    const codeDataUri = codeDataUris[item.key]
+    const codeEl = codeDataUri ? `<img class="code-img" src="${codeDataUri}" alt="">` : ''
+    const codeValueLine = showCodeValue && barcodeType !== 'qr' && item.barcode_value
       ? `<div class="codevalue">${escapeHtml(item.barcode_value)}</div>`
       : ''
 
@@ -464,53 +599,43 @@ function buildLabelHtml(
 <head>
 <meta charset="utf-8">
 <title>Barcode Label</title>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"><\/script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #fff; font-family: Arial, sans-serif; }
-  .labels { display: flex; flex-wrap: wrap; padding: 4mm; gap: 2mm; }
-  .label { width: ${labelWidthMm}; border: 0.5pt solid #ccc; padding: 2mm; page-break-inside: avoid; }
-  .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; text-align: center; }
-  .label-saravana_stores { display: flex; flex-direction: column; }
-  .shop { font-size: 7pt; font-weight: 700; text-align: center; margin-bottom: 1mm; text-transform: uppercase; }
-  .name { font-size: 8pt; font-weight: bold; text-align: center; margin-bottom: 1mm; word-break: break-word; }
-  .sku { font-size: 6.5pt; color: #666; font-family: monospace; margin-bottom: 1mm; }
-  .codevalue { font-size: 7pt; font-family: monospace; font-weight: bold; margin: 1mm 0; }
-  .mrp { font-size: 7pt; color: #666; margin-top: 1mm; }
-  .sp { font-size: 10pt; font-weight: 900; margin-top: 0.5mm; }
-  svg, canvas.qr-canvas, img { max-width: 100%; }
-  .jewelry { display: flex; align-items: center; justify-content: space-between; gap: 2mm; }
+  .labels { display: flex; flex-wrap: wrap; padding: ${labelHeightMm ? '0' : mm(4)}; gap: ${mm(2)}; }
+  .label {
+    width: ${labelWidthMm};
+    ${labelHeightMm ? `height: ${labelHeightMm};` : ''}
+    box-sizing: border-box;
+    border: 0.5pt solid #ccc;
+    padding: ${mm(2)};
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .label-saravana_stores { display: flex; flex-direction: column; justify-content: center; }
+  .shop { font-size: ${pt(7)}; font-weight: 700; margin-bottom: ${mm(1)}; text-transform: uppercase; }
+  .name { font-size: ${pt(8)}; font-weight: bold; margin-bottom: ${mm(1)}; word-break: break-word; }
+  .sku { font-size: ${pt(6.5)}; color: #666; font-family: monospace; margin-bottom: ${mm(1)}; }
+  .codevalue { font-size: ${pt(7)}; font-family: monospace; font-weight: bold; margin: ${mm(1)} 0; }
+  .mrp { font-size: ${pt(7)}; color: #666; margin-top: ${mm(1)}; }
+  .sp { font-size: ${pt(10)}; font-weight: 900; margin-top: ${mm(0.5)}; }
+  .code-img { max-width: 100%; max-height: ${mm(labelSize === 'A4 Sheet' ? 20 : heightMm * 0.55)}; display: block; }
+  .jewelry { display: flex; align-items: center; justify-content: space-between; gap: ${mm(2)}; width: 100%; }
   .jewelry-text { text-align: left; }
-  .saravana-main { display: flex; align-items: center; gap: 2mm; flex: 1; }
+  .saravana-main { display: flex; align-items: center; gap: ${mm(2)}; flex: 1; }
   .saravana-text { text-align: left; }
-  .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: 6pt; font-weight: bold; text-align: center; text-transform: uppercase; padding: 1mm; margin-top: 1mm; }
+  .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: ${pt(6)}; font-weight: bold; text-align: center; text-transform: uppercase; padding: ${mm(1)}; margin-top: ${mm(1)}; }
   .circular { border-radius: 50%; }
   @media print {
-    @page { margin: 4mm; size: ${pageSize}; }
+    @page { margin: ${labelSize === 'A4 Sheet' ? '4mm' : '0mm'}; size: ${pageSizeCss}; }
     body { margin: 0; }
   }
 </style>
 </head>
 <body>
 <div class="labels">${rows}</div>
-<script>
-  document.querySelectorAll('svg[data-barcode]').forEach(function(el) {
-    JsBarcode(el, el.getAttribute('data-barcode'), {
-      format: el.getAttribute('data-format') || 'CODE128',
-      width: 1.5,
-      height: 40,
-      displayValue: true,
-      fontSize: 9,
-      margin: 2,
-      background: '#ffffff',
-      lineColor: '#000000'
-    });
-  });
-  document.querySelectorAll('canvas[data-qr]').forEach(function(el) {
-    QRCode.toCanvas(el, el.getAttribute('data-qr'), { width: 60, margin: 1 });
-  });
-<\/script>
 </body>
 </html>`
 }

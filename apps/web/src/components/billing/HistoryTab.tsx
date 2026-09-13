@@ -202,7 +202,7 @@ export function HistoryTab() {
                 </style>
               </head>
               <body>
-                ${elem.innerHTML}
+                ${elem.outerHTML}
                 <script>
                   window.onload = () => {
                     setTimeout(() => {

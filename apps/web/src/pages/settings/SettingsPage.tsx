@@ -315,7 +315,6 @@ function LiveBarcodePreview({
   showSp = true,
   strikethroughMrp = true,
   shopName,
-  shopAddress,
 }: {
   type: string
   labelSize: string
@@ -327,16 +326,42 @@ function LiveBarcodePreview({
   showSp?: boolean
   strikethroughMrp?: boolean
   shopName?: string
-  showAddress?: string
-  shopAddress?: string
 }) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('')
   const svgRef = React.useRef<SVGSVGElement | null>(null)
 
+  // Parses a "5x3cm"-style labelSize into physical mm dimensions — mirrors
+  // BarcodeLabelDialog.tsx's own getLabelDimensionsMm. Not imported from there: this preview is
+  // deliberately kept a separate, independent component from the real print pipeline (see
+  // CLAUDE.md's "Invoice visual parity" section for the same convention already established for
+  // the invoice preview vs. InvoicePrint.tsx), so it carries its own tiny copy rather than
+  // creating a new cross-file dependency between two components meant to stay decoupled.
+  // Falls back to the "5x3cm" default's dimensions for "A4 Sheet" or any unrecognized value —
+  // A4 Sheet has no single physical label size of its own (it tiles multiple labels per sheet),
+  // so it's treated as this same 50x30mm default rather than its own distinct size.
+  const getLabelSizeMm = (size: string): { widthMm: number; heightMm: number } => {
+    const match = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)cm$/.exec(size)
+    if (!match) return { widthMm: 50, heightMm: 30 }
+    return { widthMm: parseFloat(match[1]) * 10, heightMm: parseFloat(match[2]) * 10 }
+  }
+
+  // A single continuous scale factor (relative to the "5x3cm"/50x30mm baseline every px value
+  // below was originally tuned for) that every template's card width/height, font sizes, and
+  // QR/barcode dimensions are derived from — replacing the old per-template hardcoded 4-bucket
+  // ternary chains (one hand-picked pixel width per labelSize, with most font sizes not
+  // scaling at all) with one proportional system, so a merchant sees the preview genuinely
+  // resize continuously as they pick a label size, matching how BarcodeLabelDialog.tsx's own
+  // real print output already scales via its getLabelScale(). Clamped to [0.6, 1.6] for the
+  // same reason that fix uses the same range: keep small labels legible and large ones from
+  // looking comically oversized relative to their own content.
+  const { widthMm: previewWidthMm, heightMm: previewHeightMm } = getLabelSizeMm(labelSize)
+  const scale = Math.min(1.6, Math.max(0.6, Math.min(previewWidthMm / 50, previewHeightMm / 30)))
+  const px = (base: number) => Math.round(base * scale)
+
   React.useEffect(() => {
     if (type === 'qr') {
       QRCode.toDataURL('https://billscape.app/item/8901234567890', {
-        width: 140,
+        width: px(140),
         margin: 1,
         color: { dark: '#09090b', light: '#ffffff' },
         errorCorrectionLevel: 'M',
@@ -360,10 +385,10 @@ function LiveBarcodePreview({
 
         JsBarcode(svgRef.current, value, {
           format: format,
-          width: type === 'code39' ? 1.3 : templateStyle === 'circular_bottle' ? 1.4 : 1.6,
-          height: templateStyle === 'circular_bottle' ? 32 : 36,
+          width: (type === 'code39' ? 1.3 : templateStyle === 'circular_bottle' ? 1.4 : 1.6) * scale,
+          height: px(templateStyle === 'circular_bottle' ? 32 : 36),
           displayValue: showCodeValue && templateStyle !== 'circular_bottle',
-          fontSize: 10,
+          fontSize: px(10),
           font: 'monospace',
           textMargin: 2,
           margin: 0,
@@ -374,25 +399,148 @@ function LiveBarcodePreview({
         console.error('Barcode render error:', err)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scale`/`px` are derived purely
+    // from `labelSize` (already a dep) each render, not their own independent state; including
+    // them would just be redundant re-triggers on every render for no behavioral difference.
   }, [type, labelSize, templateStyle, showCodeValue])
 
-  // Dynamic label styling based on labelSize
-  const getLabelDimensions = () => {
-    switch (labelSize) {
-      case '3x2cm':
-        return 'w-[220px] min-h-[120px] p-2.5 text-[9px]'
-      case '4x2.5cm':
-        return 'w-[260px] min-h-[140px] p-3 text-[10px]'
-      case '5x2.5cm':
-      case '5x3cm':
-        return 'w-[300px] min-h-[150px] p-3.5 text-xs'
-      case '6x4cm':
-        return 'w-[340px] min-h-[180px] p-4 text-xs'
-      case 'A4 Sheet':
-        return 'w-[380px] min-h-[200px] p-4 text-xs border-dashed'
-      default:
-        return 'w-[300px] min-h-[160px] p-3.5 text-xs'
+  // Prints exactly what this preview currently shows — including any toggle changed on this
+  // page but not yet saved — by cloning the live preview DOM node itself, the same pattern
+  // LivePrintBillPreview's own handleTestPrint uses (see that function below). This deliberately
+  // does NOT go through BarcodeLabelDialog/org.branding: that component's whole design is "no
+  // per-print override, only the last SAVED settings print" (see CLAUDE.md), which is correct
+  // for real product labels but wrong for a "preview what I'm about to save" test button — this
+  // print is scoped to the Settings page's own live preview, matching Print & Layout's existing
+  // precedent for the same situation.
+  const handleTestPrint = () => {
+    const elem = document.getElementById('live-barcode-label')
+    if (!elem) {
+      window.print()
+      return
     }
+
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.left = '-9999px'
+    iframe.style.top = '0'
+    iframe.style.width = '300px'
+    iframe.style.height = '300px'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document
+    if (!doc) {
+      iframe.remove()
+      window.print()
+      return
+    }
+
+    let styles = ''
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+      styles += node.outerHTML
+    })
+
+    // The preview card's on-screen pixel size (from px() in the component body) is tuned for
+    // legibility in the dark settings UI, not the label's real physical size — printing the
+    // card at that on-screen pixel width crammed it into a tiny box in the corner of a full A4
+    // page (no @page size at all). Fixed by giving @page the correct physical size AND scaling
+    // the whole card down/up (via CSS transform, not by overriding each element's own
+    // width/height) so it renders at exactly its true mm dimensions.
+    //
+    // Forcing ONLY the outer card's width/height to the physical mm size (an earlier version
+    // of this fix) while leaving every child's font-size/padding at their on-screen pixel
+    // values caused a second, more subtle bug: text sized for the WIDER on-screen design (e.g.
+    // saravana_stores' 280px-wide on-screen layout) visibly overflowed and truncated
+    // ("TIA BUC...") once squeezed into a NARROWER physical box (5x3cm's 50mm ≈ 189px) — the
+    // font sizes never shrank to match. `transform: scale()` scales every descendant (text,
+    // QR/barcode image, padding, borders) together in one operation, so the printed card is a
+    // uniformly-shrunk/enlarged copy of the exact on-screen design, never a re-flowed one that
+    // can truncate differently.
+    const pageSizeCss = labelSize === 'A4 Sheet' ? 'A4' : (() => {
+      const { widthMm, heightMm } = getLabelSizeMm(labelSize)
+      return `${widthMm}mm ${heightMm}mm`
+    })()
+    // On-screen design width (the base value each template's own root <div> passes to px() for
+    // its own width) that `printScale` below is relative to — must stay in sync with the
+    // px(...) call on each template's outer div in the JSX below.
+    const onScreenCardWidthPx = {
+      circular_bottle: 190,
+      saravana_stores: 280,
+      compact_jewelry: 270,
+      standard: 300,
+    }[templateStyle] * scale
+    const cardTransformCss = labelSize === 'A4 Sheet' ? '' : (() => {
+      const { widthMm, heightMm } = getLabelSizeMm(labelSize)
+      // circular_bottle is a true circle on screen (equal width/height) — targeting
+      // widthMm x heightMm independently would stretch it into an ellipse whenever the
+      // configured label isn't square (e.g. 5x3cm), so it targets the larger of the two
+      // physical dimensions for both sides instead, same convention BarcodeLabelDialog.tsx's
+      // own preview panel already uses for this template.
+      const side = templateStyle === 'circular_bottle' ? Math.max(widthMm, heightMm) : null
+      const targetWidthMm = side ?? widthMm
+      const targetHeightMm = side ?? heightMm
+      const MM_TO_PX = 3.7795
+      const printScale = (targetWidthMm * MM_TO_PX) / onScreenCardWidthPx
+      return `
+        transform: scale(${printScale.toFixed(4)}) !important;
+        transform-origin: top left !important;
+        width: ${(targetWidthMm / printScale).toFixed(3)}mm !important;
+        height: ${(targetHeightMm / printScale).toFixed(3)}mm !important;
+        min-height: 0 !important;
+        min-width: 0 !important;
+      `
+    })()
+
+    doc.open()
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Barcode Label Test Print</title>
+          ${styles}
+          <style>
+            @page { margin: ${labelSize === 'A4 Sheet' ? '4mm' : '0mm'}; size: ${pageSizeCss}; }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+            }
+            /* The preview's own on-screen wrapper uses a dark background for contrast against
+               the white label card — force it back to plain white/no-padding for print, same
+               idea as LivePrintBillPreview's own #print-container override above. */
+            #live-barcode-label {
+              background: #ffffff !important;
+              padding: 0 !important;
+              border-radius: 0 !important;
+              display: block !important;
+            }
+            /* Scale the card itself (the template's own root div, always the sole direct child
+               of #live-barcode-label) down/up to its real physical mm size — see comment above. */
+            #live-barcode-label > * {
+              ${cardTransformCss}
+              box-sizing: border-box !important;
+              overflow: visible !important;
+              margin: 0 !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${elem.outerHTML}
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.frameElement && window.frameElement.remove();
+                }, 1000);
+              }, 250);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    doc.close()
   }
 
   return (
@@ -406,26 +554,41 @@ function LiveBarcodePreview({
             </Badge>
           )}
         </span>
-        <Badge variant="outline" className="text-[11px] font-mono">{labelSize}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-[11px] font-mono">{labelSize}</Badge>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={handleTestPrint}
+            className="h-7 text-xs gap-1.5 border-primary/40 hover:bg-primary/10 hover:text-primary transition-all cursor-pointer"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Test Print
+          </Button>
+        </div>
       </div>
 
-      <div className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
+      <div id="live-barcode-label" className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
         {/* Template 1: Circular Round Jar / Bottle Sticker */}
         {templateStyle === 'circular_bottle' && (
-          <div className={cn('flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 text-center select-none transition-all duration-300', labelSize === '3x2cm' ? 'w-40 h-40 p-2 text-[8px]' : labelSize === '4x2.5cm' ? 'w-48 h-48 p-3 text-[9px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-60 h-60 p-5 text-xs' : 'w-52 h-52 p-4 text-[10px]')}>
+          <div
+            className="flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 text-center select-none transition-all duration-300"
+            style={{ width: px(190), height: px(190), padding: px(14), fontSize: px(10) }}
+          >
             {showShopName && (
-              <p className="font-bold tracking-tight uppercase leading-tight max-w-[140px]">
+              <p className="font-bold tracking-tight uppercase leading-tight" style={{ maxWidth: px(140) }}>
                 {shopName ? `${shopName} JAR` : 'GL CUBICAL JAR'}<br />
                 <span className="font-semibold text-zinc-600 text-[0.9em]">300 ML [GD]</span>
               </p>
             )}
 
-            <div className="my-1 flex items-center justify-center max-w-[140px] overflow-hidden">
+            <div className="my-1 flex items-center justify-center overflow-hidden" style={{ maxWidth: px(140) }}>
               {type === 'qr' ? (
                 qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} />
+                  <img src={qrDataUrl} alt="QR Code" className="object-contain" style={{ height: px(58), width: px(58) }} />
                 ) : (
-                  <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
+                  <div className="bg-zinc-100 flex items-center justify-center text-zinc-400" style={{ height: px(58), width: px(58), fontSize: px(8) }}>Loading...</div>
                 )
               ) : (
                 <svg ref={svgRef} className="max-w-full h-auto" />
@@ -444,71 +607,67 @@ function LiveBarcodePreview({
 
         {/* Template 2: Saravana Stores / Department Store Side-Ribbon Style */}
         {templateStyle === 'saravana_stores' && (
-          <div className={cn('flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden transition-all duration-300 select-none', labelSize === '3x2cm' ? 'w-[250px] min-h-[110px]' : labelSize === '4x2.5cm' ? 'w-[290px] min-h-[125px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-[370px] min-h-[165px]' : 'w-[330px] min-h-[145px]')}>
-            <div className="flex-1 p-3 flex flex-col justify-between">
-              <div className="flex justify-between items-start text-[8px] font-mono text-zinc-500">
-                <span className="font-bold">15675</span>
-                <span className="font-bold">F6</span>
-              </div>
-
-              <div className="flex items-center gap-3 my-1">
-                <div className="shrink-0">
-                  {type === 'qr' ? (
-                    qrDataUrl ? (
-                      <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} />
-                    ) : (
-                      <div className="h-16 w-16 bg-zinc-100 flex items-center justify-center text-[8px] text-zinc-400">Loading...</div>
-                    )
+          <div
+            className="flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden transition-all duration-300 select-none"
+            style={{ width: px(280), minHeight: px(105) }}
+          >
+            <div className="flex-1 flex items-center" style={{ padding: px(12), gap: px(12) }}>
+              <div className="shrink-0">
+                {type === 'qr' ? (
+                  qrDataUrl ? (
+                    <img src={qrDataUrl} alt="QR Code" className="object-contain" style={{ height: px(58), width: px(58) }} />
                   ) : (
-                    <div className="max-w-[130px] overflow-hidden">
-                      <svg ref={svgRef} className="max-w-full h-auto" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col min-w-0">
-                  <p className="text-[11px] font-black tracking-tight uppercase text-zinc-950 truncate">TIA BUCKET 511</p>
-                  {showCodeValue && <p className="text-[9px] font-mono text-zinc-600">198411</p>}
-                  {showMrp && <p className="text-[8px] text-zinc-500">MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
-                  {showSp && <p className="text-sm font-black text-zinc-950 tracking-tight">SP Rs.232.00</p>}
-                </div>
+                    <div className="bg-zinc-100 flex items-center justify-center text-zinc-400" style={{ height: px(58), width: px(58), fontSize: px(8) }}>Loading...</div>
+                  )
+                ) : (
+                  <div className="overflow-hidden" style={{ maxWidth: px(110) }}>
+                    <svg ref={svgRef} className="max-w-full h-auto" />
+                  </div>
+                )}
               </div>
 
-              <div className="flex justify-between items-center text-[7.5px] font-mono text-zinc-500 border-t border-zinc-200 pt-1">
-                <span>BJ:PAA7233/6</span>
-                <span>MAMATMTI</span>
+              <div className="flex flex-col min-w-0">
+                <p className="font-black tracking-tight uppercase text-zinc-950 truncate" style={{ fontSize: px(11) }}>TIA BUCKET 511</p>
+                {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>SKU: BUCKET-511</p>}
+                {showCodeValue && type !== 'qr' && <p className="font-mono text-zinc-600" style={{ fontSize: px(9) }}>1003432492</p>}
+                {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
+                {showSp && <p className="font-black text-zinc-950 tracking-tight" style={{ fontSize: px(14) }}>SP Rs.232.00</p>}
               </div>
             </div>
 
             {/* Vertical Orange Ribbon */}
-            <div className="w-14 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
-              <div className="writing-vertical transform -rotate-90 whitespace-nowrap text-center">
-                {showShopName && <span className="text-[9px] font-black uppercase tracking-wider block">{shopName || 'SARAVANA STORES'}</span>}
-                <span className="text-[7px] text-amber-100 tracking-tight block max-w-[120px] truncate">{shopAddress || '129, Usman Road, T.Nagar, Chennai-17'}</span>
+            {showShopName && (
+              <div className="bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center border-l border-amber-600" style={{ width: px(32), padding: px(4) }}>
+                <span className="font-black uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 whitespace-nowrap" style={{ fontSize: px(9) }}>
+                  {shopName || 'DEPARTMENT STORE'}
+                </span>
               </div>
-            </div>
+            )}
           </div>
         )}
 
         {/* Template 3: Compact Jewelry / Tag Style */}
         {templateStyle === 'compact_jewelry' && (
-          <div className={cn('flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 transition-all duration-300 select-none', labelSize === '3x2cm' ? 'w-[230px] min-h-[75px] p-2' : labelSize === '4x2.5cm' ? 'w-[260px] min-h-[85px] p-2.5' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-[340px] min-h-[115px] p-4' : 'w-[290px] min-h-[95px] p-3')}>
+          <div
+            className="flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 transition-all duration-300 select-none"
+            style={{ width: px(270), minHeight: px(90), padding: px(12) }}
+          >
             <div className="space-y-0.5 min-w-0 flex-1 pr-2">
-              {showShopName && <p className="text-[10px] font-black truncate uppercase text-zinc-900">{shopName || 'KALYAN JEWELLERS'}</p>}
-              <p className="text-[9px] font-semibold text-zinc-800 truncate">GOLD RING 22KT</p>
-              {showSku && <p className="text-[8px] text-zinc-500 font-mono">WT: 4.250g | 916 HUID</p>}
-              {showMrp && <p className="text-[8px] text-zinc-500">MRP RS {strikethroughMrp ? <span className="line-through">30,000.00</span> : '30,000.00'}</p>}
-              {showSp && <p className="text-[11px] font-black text-zinc-950">SP RS 28,500.00</p>}
+              {showShopName && <p className="font-black truncate uppercase text-zinc-900" style={{ fontSize: px(10) }}>{shopName || 'KALYAN JEWELLERS'}</p>}
+              <p className="font-semibold text-zinc-800 truncate" style={{ fontSize: px(9) }}>GOLD RING 22KT</p>
+              {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(8) }}>WT: 4.250g | 916 HUID</p>}
+              {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP RS {strikethroughMrp ? <span className="line-through">30,000.00</span> : '30,000.00'}</p>}
+              {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(11) }}>SP RS 28,500.00</p>}
             </div>
             <div className="shrink-0">
               {type === 'qr' ? (
                 qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', labelSize === '3x2cm' ? 'h-11 w-11' : 'h-14 w-14')} />
+                  <img src={qrDataUrl} alt="QR Code" className="object-contain" style={{ height: px(52), width: px(52) }} />
                 ) : (
-                  <div className="h-14 w-14 bg-zinc-100" />
+                  <div className="bg-zinc-100" style={{ height: px(52), width: px(52) }} />
                 )
               ) : (
-                <div className="max-w-[110px] overflow-hidden">
+                <div className="overflow-hidden" style={{ maxWidth: px(110) }}>
                   <svg ref={svgRef} className="max-w-full h-auto" />
                 </div>
               )}
@@ -518,16 +677,19 @@ function LiveBarcodePreview({
 
         {/* Template 4: Standard Retail Label */}
         {templateStyle === 'standard' && (
-          <div className={cn('flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300 select-none', getLabelDimensions())}>
-            {showShopName && <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[11px]">{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>}
-            {showSku && <p className="text-[9px] text-zinc-500 font-mono">SKU: SHIRT-COTTON-001</p>}
+          <div
+            className="flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300 select-none"
+            style={{ width: px(300), minHeight: px(160), padding: px(14) }}
+          >
+            {showShopName && <p className="font-bold tracking-wider uppercase text-center truncate w-full" style={{ fontSize: px(11) }}>{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>}
+            {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>SKU: SHIRT-COTTON-001</p>}
 
             {type === 'qr' ? (
               <div className="my-1.5 flex items-center justify-center">
                 {qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className="h-20 w-20 object-contain rounded" />
+                  <img src={qrDataUrl} alt="QR Code" className="object-contain rounded" style={{ height: px(80), width: px(80) }} />
                 ) : (
-                  <div className="h-20 w-20 bg-zinc-100 flex items-center justify-center text-[10px] text-zinc-400">Loading QR...</div>
+                  <div className="bg-zinc-100 flex items-center justify-center text-zinc-400" style={{ height: px(80), width: px(80), fontSize: px(10) }}>Loading QR...</div>
                 )}
               </div>
             ) : (
@@ -536,8 +698,8 @@ function LiveBarcodePreview({
               </div>
             )}
 
-            {showMrp && <p className="text-[8px] text-zinc-500 font-medium">MRP RS {strikethroughMrp ? <span className="line-through">599.00</span> : '599.00'}</p>}
-            {showSp && <p className="text-[10px] font-black text-zinc-950">SP RS 499.00 <span className="text-[8px] font-normal text-zinc-500">(Incl. Taxes)</span></p>}
+            {showMrp && <p className="text-zinc-500 font-medium" style={{ fontSize: px(8) }}>MRP RS {strikethroughMrp ? <span className="line-through">599.00</span> : '599.00'}</p>}
+            {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(10) }}>SP RS 499.00 <span className="font-normal text-zinc-500" style={{ fontSize: px(8) }}>(Incl. Taxes)</span></p>}
           </div>
         )}
       </div>
@@ -4167,7 +4329,6 @@ export function SettingsPage() {
                 showSp={barcodeShowSp}
                 strikethroughMrp={barcodeStrikethroughMrp}
                 shopName={shopForm.watch('name')}
-                shopAddress={[shopForm.watch('address'), shopForm.watch('city')].filter(Boolean).join(', ')}
               />
 
               <div className="flex items-start justify-between gap-4 py-3">
