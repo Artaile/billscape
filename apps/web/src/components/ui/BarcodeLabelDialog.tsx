@@ -63,11 +63,13 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [copiesByKey, setCopiesByKey] = useState<Record<string, number>>({})
   const [qrDataUrls, setQrDataUrls] = useState<Record<string, string>>({})
+  const [printing, setPrinting] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setChecked(new Set(items.filter((i) => i.barcode_value).map((i) => i.key)))
     setCopiesByKey(Object.fromEntries(items.map((i) => [i.key, 1])))
+    setPrinting(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `items` is intentionally excluded:
     // every call site passes an inline array literal with an unstable reference on every render,
     // so including it here would reset checked/copies on every parent re-render (e.g. a
@@ -160,91 +162,108 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   }, [open, barcodeType, previewItems])
 
   const handlePrint = async () => {
-    // Pre-render every barcode/QR to a data URI in the host page before building the print
-    // document — an earlier version loaded JsBarcode/QRCode from a CDN inside a window.open()
-    // popup and generated the code images there, which raced the CDN download/execution
-    // against a blind setTimeout. Rendering to plain <img> tags up front removes that
-    // network dependency and timing race entirely, regardless of how the document is printed.
-    const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
-    const { widthMm: printWidthMm, heightMm: printHeightMm } = getLabelDimensionsMm(labelSize)
-    const scale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(printWidthMm, printHeightMm)
-    const codeDataUris: Record<string, string> = {}
-    for (const item of checkedItems) {
-      if (!item.barcode_value) continue
-      try {
-        if (barcodeType === 'qr') {
-          codeDataUris[item.key] = await QRCode.toDataURL(item.barcode_value, { width: Math.round(120 * scale), margin: 1 })
-        } else {
-          const canvas = document.createElement('canvas')
-          JsBarcode(canvas, item.barcode_value, {
-            format,
-            width: 1.5 * scale,
-            height: Math.round(40 * scale),
-            displayValue: true,
-            fontSize: Math.round(9 * scale),
-            margin: 2,
-            background: '#ffffff',
-            lineColor: '#000000',
-          })
-          codeDataUris[item.key] = canvas.toDataURL('image/png')
+    // Guards against rapid double-clicks opening multiple hidden print iframes at once (each
+    // would independently call window.print(), stacking duplicate print dialogs). Cleared
+    // either after the iframe's own onload -> print -> self-remove sequence has had time to
+    // finish (see setTimeout below) or immediately if setup itself throws.
+    if (printing) return
+    setPrinting(true)
+
+    try {
+      // Pre-render every barcode/QR to a data URI in the host page before building the print
+      // document — an earlier version loaded JsBarcode/QRCode from a CDN inside a
+      // window.open() popup and generated the code images there, which raced the CDN
+      // download/execution against a blind setTimeout. Rendering to plain <img> tags up front
+      // removes that network dependency and timing race entirely, regardless of how the
+      // document is printed.
+      const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
+      const { widthMm: printWidthMm, heightMm: printHeightMm } = getLabelDimensionsMm(labelSize)
+      const scale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(printWidthMm, printHeightMm)
+      const codeDataUris: Record<string, string> = {}
+      for (const item of checkedItems) {
+        if (!item.barcode_value) continue
+        try {
+          if (barcodeType === 'qr') {
+            codeDataUris[item.key] = await QRCode.toDataURL(item.barcode_value, { width: Math.round(120 * scale), margin: 1 })
+          } else {
+            const canvas = document.createElement('canvas')
+            JsBarcode(canvas, item.barcode_value, {
+              format,
+              width: 1.5 * scale,
+              height: Math.round(40 * scale),
+              displayValue: true,
+              fontSize: Math.round(9 * scale),
+              margin: 2,
+              background: '#ffffff',
+              lineColor: '#000000',
+            })
+            codeDataUris[item.key] = canvas.toDataURL('image/png')
+          }
+        } catch {
+          // invalid barcode value — leave this item's code blank in the printout
         }
-      } catch {
-        // invalid barcode value — leave this item's code blank in the printout
       }
+
+      const labelHtml = buildLabelHtml(
+        checkedItems, copiesByKey, orgName, templateStyle, labelSize, barcodeType,
+        showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp, codeDataUris,
+      )
+
+      // Print via a hidden same-page <iframe> rather than a window.open() popup — this is the
+      // app's own established, proven pattern (see InvoicePrint.tsx's handlePrint). A popup
+      // window fed via document.write() has a real, confirmed Chrome quirk: win.print() can
+      // fire before the print COMPOSITOR (a separate pipeline from normal screen paint) has
+      // finished rasterizing a data: URI <img> that was just written into the document,
+      // silently printing a blank space where the QR/barcode belongs — reproduced live via a
+      // real macOS print dialog even though the same image renders correctly on screen and
+      // `img.complete`/`img.decode()` both report success. An iframe's `contentWindow`
+      // document is a genuine fresh navigation (via doc.open()/write()/close()), so its own
+      // 'load' event reliably waits for image resources the same way a normally-loaded page
+      // would, avoiding this class of bug entirely instead of guessing another timeout.
+      // A genuinely 0x0 iframe (the InvoicePrint.tsx pattern this is otherwise copied from
+      // uses exactly that) collapses its inner viewport to 0, which breaks layout for content
+      // that relies on flex space distribution — confirmed live: with a 0-width iframe, a
+      // `justify-content: space-between` row (the compact_jewelry/saravana_stores templates'
+      // code-plus-text layout) squeezed the barcode/QR <img> down to a genuine computed 0x0
+      // box, printing a blank space where the code belongs even though the image itself had
+      // finished loading. InvoicePrint.tsx never hits this because its layout is a
+      // single-column block flow, not a space-between flex row. Sizing the iframe off-screen
+      // (not zero) instead gives every label template a real viewport to lay out against; the
+      // print pipeline still paginates to the configured @page size regardless of this
+      // on-screen iframe size.
+      const iframe = document.createElement('iframe')
+      iframe.style.position = 'fixed'
+      iframe.style.left = '-9999px'
+      iframe.style.top = '0'
+      iframe.style.width = '300px'
+      iframe.style.height = '300px'
+      iframe.style.border = '0'
+      document.body.appendChild(iframe)
+
+      const doc = iframe.contentWindow?.document
+      if (!doc) { iframe.remove(); setPrinting(false); return }
+
+      doc.open()
+      doc.write(labelHtml.replace(
+        '</body>',
+        `<script>
+          window.onload = () => {
+            setTimeout(() => {
+              window.focus();
+              window.print();
+              setTimeout(() => { window.frameElement && window.frameElement.remove(); }, 1000);
+            }, 250);
+          };
+        <\/script></body>`,
+      ))
+      doc.close()
+      // Re-enable the Print button once the iframe's own onload -> print -> self-remove
+      // sequence (250ms + 1000ms, see above) has had time to complete, rather than
+      // immediately — matches how long a single print actually takes end-to-end.
+      setTimeout(() => setPrinting(false), 1300)
+    } catch {
+      setPrinting(false)
     }
-
-    const labelHtml = buildLabelHtml(
-      checkedItems, copiesByKey, orgName, templateStyle, labelSize, barcodeType,
-      showShopName, showSku, showCodeValue, showMrp, showSp, strikethroughMrp, codeDataUris,
-    )
-
-    // Print via a hidden same-page <iframe> rather than a window.open() popup — this is the
-    // app's own established, proven pattern (see InvoicePrint.tsx's handlePrint). A popup
-    // window fed via document.write() has a real, confirmed Chrome quirk: win.print() can fire
-    // before the print COMPOSITOR (a separate pipeline from normal screen paint) has finished
-    // rasterizing a data: URI <img> that was just written into the document, silently printing
-    // a blank space where the QR/barcode belongs — reproduced live via a real macOS print
-    // dialog even though the same image renders correctly on screen and `img.complete`/
-    // `img.decode()` both report success. An iframe's `contentWindow` document is a genuine
-    // fresh navigation (via doc.open()/write()/close()), so its own 'load' event reliably
-    // waits for image resources the same way a normally-loaded page would, avoiding this
-    // class of bug entirely instead of guessing another timeout.
-    // A genuinely 0x0 iframe (the InvoicePrint.tsx pattern this is otherwise copied from uses
-    // exactly that) collapses its inner viewport to 0, which breaks layout for content that
-    // relies on flex space distribution — confirmed live: with a 0-width iframe, a
-    // `justify-content: space-between` row (the compact_jewelry/saravana_stores templates'
-    // code-plus-text layout) squeezed the barcode/QR <img> down to a genuine computed 0x0 box,
-    // printing a blank space where the code belongs even though the image itself had finished
-    // loading. InvoicePrint.tsx never hits this because its layout is a single-column block
-    // flow, not a space-between flex row. Sizing the iframe off-screen (not zero) instead
-    // gives every label template a real viewport to lay out against; the print pipeline still
-    // paginates to the configured @page size regardless of this on-screen iframe size.
-    const iframe = document.createElement('iframe')
-    iframe.style.position = 'fixed'
-    iframe.style.left = '-9999px'
-    iframe.style.top = '0'
-    iframe.style.width = '300px'
-    iframe.style.height = '300px'
-    iframe.style.border = '0'
-    document.body.appendChild(iframe)
-
-    const doc = iframe.contentWindow?.document
-    if (!doc) { iframe.remove(); return }
-
-    doc.open()
-    doc.write(labelHtml.replace(
-      '</body>',
-      `<script>
-        window.onload = () => {
-          setTimeout(() => {
-            window.focus();
-            window.print();
-            setTimeout(() => { window.frameElement && window.frameElement.remove(); }, 1000);
-          }, 250);
-        };
-      <\/script></body>`,
-    ))
-    doc.close()
   }
 
   return (
@@ -427,7 +446,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Back</Button>
-          <Button onClick={handlePrint} disabled={checkedItems.length === 0}>
+          <Button onClick={handlePrint} disabled={checkedItems.length === 0 || printing}>
             <Printer className="h-4 w-4" />
             {isMulti ? `Print ${checkedItems.length} variant${checkedItems.length !== 1 ? 's' : ''} · ${totalLabels} labels` : `Print ${totalLabels > 1 ? `${totalLabels} Labels` : '1 Label'}`}
           </Button>
