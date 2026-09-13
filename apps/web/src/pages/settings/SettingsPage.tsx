@@ -394,6 +394,21 @@ function LiveBarcodePreview({
     }
   }
 
+  // Parses a "5x3cm"-style labelSize into physical mm dimensions for the print @page size —
+  // mirrors BarcodeLabelDialog.tsx's own getLabelDimensionsMm. Not imported from there: this
+  // preview is deliberately kept a separate, independent component from the real print
+  // pipeline (see CLAUDE.md's "Invoice visual parity" section for the same convention already
+  // established for the invoice preview vs. InvoicePrint.tsx), so it carries its own tiny copy
+  // rather than creating a new cross-file dependency between two components meant to stay
+  // decoupled. Falls back to the "5x3cm" default's dimensions for "A4 Sheet" or any
+  // unrecognized value — A4 Sheet's own @page uses the "A4" keyword instead, handled separately
+  // below, so this fallback is never actually exercised for it.
+  const getLabelSizeMm = (size: string): { widthMm: number; heightMm: number } => {
+    const match = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)cm$/.exec(size)
+    if (!match) return { widthMm: 50, heightMm: 30 }
+    return { widthMm: parseFloat(match[1]) * 10, heightMm: parseFloat(match[2]) * 10 }
+  }
+
   // Prints exactly what this preview currently shows — including any toggle changed on this
   // page but not yet saved — by cloning the live preview DOM node itself, the same pattern
   // LivePrintBillPreview's own handleTestPrint uses (see that function below). This deliberately
@@ -430,6 +445,29 @@ function LiveBarcodePreview({
       styles += node.outerHTML
     })
 
+    // The preview card's Tailwind width/height classes (e.g. "w-[300px] min-h-[160px]" from
+    // getLabelDimensions()) are on-screen pixel sizes tuned for legibility in the dark settings
+    // UI, not the label's real physical size — printing them as-is produced a tiny label
+    // crammed in the corner of a full A4 page (no @page size at all previously, so it fell
+    // back to the print dialog's default paper size). Resize the card to its true mm
+    // dimensions for print, mirroring BarcodeLabelDialog.tsx's own real-print sizing fix.
+    const pageSizeCss = labelSize === 'A4 Sheet' ? 'A4' : (() => {
+      const { widthMm, heightMm } = getLabelSizeMm(labelSize)
+      return `${widthMm}mm ${heightMm}mm`
+    })()
+    const cardSizeCss = labelSize === 'A4 Sheet' ? '' : (() => {
+      const { widthMm, heightMm } = getLabelSizeMm(labelSize)
+      // circular_bottle is a true circle on screen (equal width/height) — sizing it to
+      // widthMm x heightMm independently would stretch it into an ellipse whenever the
+      // configured label isn't square (e.g. 5x3cm), so it uses the larger of the two
+      // dimensions for both sides instead, same convention BarcodeLabelDialog.tsx's own
+      // preview panel already uses for this template.
+      const side = templateStyle === 'circular_bottle' ? Math.max(widthMm, heightMm) : null
+      const w = side ?? widthMm
+      const h = side ?? heightMm
+      return `width: ${w}mm !important; height: ${h}mm !important; min-height: 0 !important; min-width: 0 !important;`
+    })()
+
     doc.open()
     doc.write(`
       <!DOCTYPE html>
@@ -438,7 +476,7 @@ function LiveBarcodePreview({
           <title>Barcode Label Test Print</title>
           ${styles}
           <style>
-            @page { margin: 4mm; }
+            @page { margin: ${labelSize === 'A4 Sheet' ? '4mm' : '0mm'}; size: ${pageSizeCss}; }
             html, body {
               margin: 0 !important;
               padding: 0 !important;
@@ -451,6 +489,15 @@ function LiveBarcodePreview({
               background: #ffffff !important;
               padding: 0 !important;
               border-radius: 0 !important;
+              display: block !important;
+            }
+            /* Resize the card itself (the template's own root div, always the sole direct
+               child of #live-barcode-label) to its real physical mm size — see comment above. */
+            #live-barcode-label > * {
+              ${cardSizeCss}
+              box-sizing: border-box !important;
+              overflow: hidden !important;
+              margin: 0 !important;
             }
           </style>
         </head>
