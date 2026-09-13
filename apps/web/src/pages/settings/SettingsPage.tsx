@@ -394,6 +394,85 @@ function LiveBarcodePreview({
     }
   }
 
+  // Prints exactly what this preview currently shows — including any toggle changed on this
+  // page but not yet saved — by cloning the live preview DOM node itself, the same pattern
+  // LivePrintBillPreview's own handleTestPrint uses (see that function below). This deliberately
+  // does NOT go through BarcodeLabelDialog/org.branding: that component's whole design is "no
+  // per-print override, only the last SAVED settings print" (see CLAUDE.md), which is correct
+  // for real product labels but wrong for a "preview what I'm about to save" test button — this
+  // print is scoped to the Settings page's own live preview, matching Print & Layout's existing
+  // precedent for the same situation.
+  const handleTestPrint = () => {
+    const elem = document.getElementById('live-barcode-label')
+    if (!elem) {
+      window.print()
+      return
+    }
+
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.left = '-9999px'
+    iframe.style.top = '0'
+    iframe.style.width = '300px'
+    iframe.style.height = '300px'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document
+    if (!doc) {
+      iframe.remove()
+      window.print()
+      return
+    }
+
+    let styles = ''
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+      styles += node.outerHTML
+    })
+
+    doc.open()
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Barcode Label Test Print</title>
+          ${styles}
+          <style>
+            @page { margin: 4mm; }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+            }
+            /* The preview's own on-screen wrapper uses a dark background for contrast against
+               the white label card — force it back to plain white/no-padding for print, same
+               idea as LivePrintBillPreview's own #print-container override above. */
+            #live-barcode-label {
+              background: #ffffff !important;
+              padding: 0 !important;
+              border-radius: 0 !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${elem.outerHTML}
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.focus();
+                window.print();
+                setTimeout(() => {
+                  window.frameElement && window.frameElement.remove();
+                }, 1000);
+              }, 250);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    doc.close()
+  }
+
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       <div className="flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
@@ -405,10 +484,22 @@ function LiveBarcodePreview({
             </Badge>
           )}
         </span>
-        <Badge variant="outline" className="text-[11px] font-mono">{labelSize}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-[11px] font-mono">{labelSize}</Badge>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={handleTestPrint}
+            className="h-7 text-xs gap-1.5 border-primary/40 hover:bg-primary/10 hover:text-primary transition-all cursor-pointer"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Test Print
+          </Button>
+        </div>
       </div>
 
-      <div className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
+      <div id="live-barcode-label" className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
         {/* Template 1: Circular Round Jar / Bottle Sticker */}
         {templateStyle === 'circular_bottle' && (
           <div className={cn('flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 text-center select-none transition-all duration-300', labelSize === '3x2cm' ? 'w-40 h-40 p-2 text-[8px]' : labelSize === '4x2.5cm' ? 'w-48 h-48 p-3 text-[9px]' : labelSize === '6x4cm' || labelSize === 'A4 Sheet' ? 'w-60 h-60 p-5 text-xs' : 'w-52 h-52 p-4 text-[10px]')}>
