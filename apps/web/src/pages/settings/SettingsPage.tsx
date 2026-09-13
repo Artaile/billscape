@@ -440,27 +440,55 @@ function LiveBarcodePreview({
       styles += node.outerHTML
     })
 
-    // The preview card's Tailwind width/height classes (e.g. "w-[300px] min-h-[160px]" from
-    // getLabelDimensions()) are on-screen pixel sizes tuned for legibility in the dark settings
-    // UI, not the label's real physical size — printing them as-is produced a tiny label
-    // crammed in the corner of a full A4 page (no @page size at all previously, so it fell
-    // back to the print dialog's default paper size). Resize the card to its true mm
-    // dimensions for print, mirroring BarcodeLabelDialog.tsx's own real-print sizing fix.
+    // The preview card's on-screen pixel size (from px() in the component body) is tuned for
+    // legibility in the dark settings UI, not the label's real physical size — printing the
+    // card at that on-screen pixel width crammed it into a tiny box in the corner of a full A4
+    // page (no @page size at all). Fixed by giving @page the correct physical size AND scaling
+    // the whole card down/up (via CSS transform, not by overriding each element's own
+    // width/height) so it renders at exactly its true mm dimensions.
+    //
+    // Forcing ONLY the outer card's width/height to the physical mm size (an earlier version
+    // of this fix) while leaving every child's font-size/padding at their on-screen pixel
+    // values caused a second, more subtle bug: text sized for the WIDER on-screen design (e.g.
+    // saravana_stores' 280px-wide on-screen layout) visibly overflowed and truncated
+    // ("TIA BUC...") once squeezed into a NARROWER physical box (5x3cm's 50mm ≈ 189px) — the
+    // font sizes never shrank to match. `transform: scale()` scales every descendant (text,
+    // QR/barcode image, padding, borders) together in one operation, so the printed card is a
+    // uniformly-shrunk/enlarged copy of the exact on-screen design, never a re-flowed one that
+    // can truncate differently.
     const pageSizeCss = labelSize === 'A4 Sheet' ? 'A4' : (() => {
       const { widthMm, heightMm } = getLabelSizeMm(labelSize)
       return `${widthMm}mm ${heightMm}mm`
     })()
-    const cardSizeCss = labelSize === 'A4 Sheet' ? '' : (() => {
+    // On-screen design width (the base value each template's own root <div> passes to px() for
+    // its own width) that `printScale` below is relative to — must stay in sync with the
+    // px(...) call on each template's outer div in the JSX below.
+    const onScreenCardWidthPx = {
+      circular_bottle: 190,
+      saravana_stores: 280,
+      compact_jewelry: 270,
+      standard: 300,
+    }[templateStyle] * scale
+    const cardTransformCss = labelSize === 'A4 Sheet' ? '' : (() => {
       const { widthMm, heightMm } = getLabelSizeMm(labelSize)
-      // circular_bottle is a true circle on screen (equal width/height) — sizing it to
+      // circular_bottle is a true circle on screen (equal width/height) — targeting
       // widthMm x heightMm independently would stretch it into an ellipse whenever the
-      // configured label isn't square (e.g. 5x3cm), so it uses the larger of the two
-      // dimensions for both sides instead, same convention BarcodeLabelDialog.tsx's own
-      // preview panel already uses for this template.
+      // configured label isn't square (e.g. 5x3cm), so it targets the larger of the two
+      // physical dimensions for both sides instead, same convention BarcodeLabelDialog.tsx's
+      // own preview panel already uses for this template.
       const side = templateStyle === 'circular_bottle' ? Math.max(widthMm, heightMm) : null
-      const w = side ?? widthMm
-      const h = side ?? heightMm
-      return `width: ${w}mm !important; height: ${h}mm !important; min-height: 0 !important; min-width: 0 !important;`
+      const targetWidthMm = side ?? widthMm
+      const targetHeightMm = side ?? heightMm
+      const MM_TO_PX = 3.7795
+      const printScale = (targetWidthMm * MM_TO_PX) / onScreenCardWidthPx
+      return `
+        transform: scale(${printScale.toFixed(4)}) !important;
+        transform-origin: top left !important;
+        width: ${(targetWidthMm / printScale).toFixed(3)}mm !important;
+        height: ${(targetHeightMm / printScale).toFixed(3)}mm !important;
+        min-height: 0 !important;
+        min-width: 0 !important;
+      `
     })()
 
     doc.open()
@@ -486,12 +514,12 @@ function LiveBarcodePreview({
               border-radius: 0 !important;
               display: block !important;
             }
-            /* Resize the card itself (the template's own root div, always the sole direct
-               child of #live-barcode-label) to its real physical mm size — see comment above. */
+            /* Scale the card itself (the template's own root div, always the sole direct child
+               of #live-barcode-label) down/up to its real physical mm size — see comment above. */
             #live-barcode-label > * {
-              ${cardSizeCss}
+              ${cardTransformCss}
               box-sizing: border-box !important;
-              overflow: hidden !important;
+              overflow: visible !important;
               margin: 0 !important;
             }
           </style>
