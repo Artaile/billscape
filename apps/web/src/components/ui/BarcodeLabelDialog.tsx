@@ -167,20 +167,22 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
     // a broken/unmeasured flex layout (each label its own near-empty page). Rendering to plain
     // <img> tags up front removes both the network dependency and the timing race entirely.
     const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
+    const { widthMm: printWidthMm, heightMm: printHeightMm } = getLabelDimensionsMm(labelSize)
+    const scale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(printWidthMm, printHeightMm)
     const codeDataUris: Record<string, string> = {}
     for (const item of checkedItems) {
       if (!item.barcode_value) continue
       try {
         if (barcodeType === 'qr') {
-          codeDataUris[item.key] = await QRCode.toDataURL(item.barcode_value, { width: 120, margin: 1 })
+          codeDataUris[item.key] = await QRCode.toDataURL(item.barcode_value, { width: Math.round(120 * scale), margin: 1 })
         } else {
           const canvas = document.createElement('canvas')
           JsBarcode(canvas, item.barcode_value, {
             format,
-            width: 1.5,
-            height: 40,
+            width: 1.5 * scale,
+            height: Math.round(40 * scale),
             displayValue: true,
-            fontSize: 9,
+            fontSize: Math.round(9 * scale),
             margin: 2,
             background: '#ffffff',
             lineColor: '#000000',
@@ -421,6 +423,23 @@ function getLabelDimensionsMm(labelSize: string): { widthMm: number; heightMm: n
   return { widthMm: parseFloat(match[1]) * 10, heightMm: parseFloat(match[2]) * 10 }
 }
 
+/**
+ * A unitless scale factor relative to the "5x3cm" (50x30mm) baseline every font-size/padding/
+ * QR-pixel-size value in the generated print HTML was originally tuned for. Without this, a
+ * 3x2cm label prints with the exact same fixed 7-10pt text and a 120px QR as a 6x4cm label —
+ * the small label's content physically overflows its own tiny @page box and spills onto a
+ * second, near-empty printed page (confirmed live via a user screenshot). Scaling every size
+ * down/up together keeps each label internally proportional and keeps content within one page.
+ * Clamped to [0.6, 1.6] so a very small label doesn't shrink text below legibility and a very
+ * large one (e.g. 6x4cm) doesn't look comically oversized relative to its own content.
+ */
+function getLabelScale(widthMm: number, heightMm: number): number {
+  const BASELINE_WIDTH_MM = 50
+  const BASELINE_HEIGHT_MM = 30
+  const rawScale = Math.min(widthMm / BASELINE_WIDTH_MM, heightMm / BASELINE_HEIGHT_MM)
+  return Math.min(1.6, Math.max(0.6, rawScale))
+}
+
 /** Preview-panel box size (px) roughly proportional to the label's real aspect ratio, capped
  * within the dialog's available width. A4 Sheet has no single label — shown at a fixed
  * "generic sheet label" size like the standalone Settings preview does. */
@@ -464,6 +483,13 @@ function buildLabelHtml(
   // itself is A4 — there's no single "label size" @page value to derive.
   const pageSizeCss = labelSize === 'A4 Sheet' ? 'A4' : `${widthMm}mm ${heightMm}mm`
   const labelWidthMm = labelSize === 'A4 Sheet' ? '58mm' : `${widthMm}mm`
+  const labelHeightMm = labelSize === 'A4 Sheet' ? undefined : `${heightMm}mm`
+  // Every font-size/padding/gap value below was originally tuned for the "5x3cm" baseline —
+  // scaling them together keeps a small label's content from physically overflowing its own
+  // tiny @page box and spilling onto a second, near-empty printed page (see getLabelScale doc).
+  const scale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(widthMm, heightMm)
+  const pt = (basePt: number) => `${(basePt * scale).toFixed(1)}pt`
+  const mm = (baseMm: number) => `${(baseMm * scale).toFixed(2)}mm`
 
   const rows = items.flatMap((item) => {
     const copies = copiesByKey[item.key] ?? 1
@@ -532,25 +558,34 @@ function buildLabelHtml(
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #fff; font-family: Arial, sans-serif; }
-  .labels { display: flex; flex-wrap: wrap; padding: 4mm; gap: 2mm; }
-  .label { width: ${labelWidthMm}; border: 0.5pt solid #ccc; padding: 2mm; page-break-inside: avoid; }
-  .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; text-align: center; }
-  .label-saravana_stores { display: flex; flex-direction: column; }
-  .shop { font-size: 7pt; font-weight: 700; text-align: center; margin-bottom: 1mm; text-transform: uppercase; }
-  .name { font-size: 8pt; font-weight: bold; text-align: center; margin-bottom: 1mm; word-break: break-word; }
-  .sku { font-size: 6.5pt; color: #666; font-family: monospace; margin-bottom: 1mm; }
-  .codevalue { font-size: 7pt; font-family: monospace; font-weight: bold; margin: 1mm 0; }
-  .mrp { font-size: 7pt; color: #666; margin-top: 1mm; }
-  .sp { font-size: 10pt; font-weight: 900; margin-top: 0.5mm; }
-  .code-img { max-width: 100%; display: block; }
-  .jewelry { display: flex; align-items: center; justify-content: space-between; gap: 2mm; }
+  .labels { display: flex; flex-wrap: wrap; padding: ${labelHeightMm ? '0' : mm(4)}; gap: ${mm(2)}; }
+  .label {
+    width: ${labelWidthMm};
+    ${labelHeightMm ? `height: ${labelHeightMm};` : ''}
+    box-sizing: border-box;
+    border: 0.5pt solid #ccc;
+    padding: ${mm(2)};
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .label-saravana_stores { display: flex; flex-direction: column; justify-content: center; }
+  .shop { font-size: ${pt(7)}; font-weight: 700; text-align: center; margin-bottom: ${mm(1)}; text-transform: uppercase; }
+  .name { font-size: ${pt(8)}; font-weight: bold; text-align: center; margin-bottom: ${mm(1)}; word-break: break-word; }
+  .sku { font-size: ${pt(6.5)}; color: #666; font-family: monospace; margin-bottom: ${mm(1)}; }
+  .codevalue { font-size: ${pt(7)}; font-family: monospace; font-weight: bold; margin: ${mm(1)} 0; }
+  .mrp { font-size: ${pt(7)}; color: #666; margin-top: ${mm(1)}; }
+  .sp { font-size: ${pt(10)}; font-weight: 900; margin-top: ${mm(0.5)}; }
+  .code-img { max-width: 100%; max-height: ${mm(labelSize === 'A4 Sheet' ? 20 : heightMm * 0.55)}; display: block; }
+  .jewelry { display: flex; align-items: center; justify-content: space-between; gap: ${mm(2)}; width: 100%; }
   .jewelry-text { text-align: left; }
-  .saravana-main { display: flex; align-items: center; gap: 2mm; flex: 1; }
+  .saravana-main { display: flex; align-items: center; gap: ${mm(2)}; flex: 1; }
   .saravana-text { text-align: left; }
-  .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: 6pt; font-weight: bold; text-align: center; text-transform: uppercase; padding: 1mm; margin-top: 1mm; }
+  .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: ${pt(6)}; font-weight: bold; text-align: center; text-transform: uppercase; padding: ${mm(1)}; margin-top: ${mm(1)}; }
   .circular { border-radius: 50%; }
   @media print {
-    @page { margin: 4mm; size: ${pageSizeCss}; }
+    @page { margin: ${labelSize === 'A4 Sheet' ? '4mm' : '0mm'}; size: ${pageSizeCss}; }
     body { margin: 0; }
   }
 </style>

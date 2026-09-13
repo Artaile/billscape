@@ -394,7 +394,7 @@ export function ProductsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from('product_variants')
-        .select('id, variant_name, barcode_value, sale_price')
+        .select('id, variant_name, barcode_value, sale_price, sku, mrp')
         .eq('product_id', printTarget!.id)
         .order('variant_name')
       return data ?? []
@@ -710,8 +710,10 @@ export function ProductsPage() {
                   variantLabel: v.variant_name,
                   barcode_value: v.barcode_value,
                   price: v.sale_price ?? 0,
+                  sku: v.sku,
+                  mrp: v.mrp,
                 }))
-              : [{ key: printTarget.id, name: printTarget.name, barcode_value: printTarget.barcode_value, price: printTarget.price }]
+              : [{ key: printTarget.id, name: printTarget.name, barcode_value: printTarget.barcode_value, price: printTarget.price, sku: (printTarget as any).sku, mrp: (printTarget as any).mrp }]
           }
           orgName={org?.name}
         />

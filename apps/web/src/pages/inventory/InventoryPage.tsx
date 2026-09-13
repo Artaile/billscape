@@ -84,7 +84,7 @@ export function InventoryPage() {
   const [adjustNote, setAdjustNote] = useState('')
   const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set())
   const [variantAdjustTarget, setVariantAdjustTarget] = useState<{ id: string; name: string; stock: number; unitSymbol?: string | null } | null>(null)
-  const [variantPrintTarget, setVariantPrintTarget] = useState<{ id: string; variant_name: string; barcode_value: string | null; sale_price: number | null; productName: string } | null>(null)
+  const [variantPrintTarget, setVariantPrintTarget] = useState<{ id: string; variant_name: string; barcode_value: string | null; sale_price: number | null; productName: string; sku?: string | null; mrp?: number | null } | null>(null)
 
   // Expiring within 30 days
   const { data: expiringBatches } = useQuery({
@@ -151,16 +151,16 @@ export function InventoryPage() {
     queryFn: async () => {
       const { data: variants } = await supabase
         .from('product_variants')
-        .select('id, product_id, variant_name, barcode_value, sale_price')
+        .select('id, product_id, variant_name, barcode_value, sale_price, sku, mrp')
         .eq('organization_id', orgId!)
-      if (!variants || variants.length === 0) return new Map<string, { id: string; variant_name: string; stock: number; barcode_value: string | null; sale_price: number | null }[]>()
+      if (!variants || variants.length === 0) return new Map<string, { id: string; variant_name: string; stock: number; barcode_value: string | null; sale_price: number | null; sku: string | null; mrp: number | null }[]>()
 
       const stockMap = await getVariantStockMap(supabase, orgId!, variants.map((v) => v.id))
 
-      const map = new Map<string, { id: string; variant_name: string; stock: number; barcode_value: string | null; sale_price: number | null }[]>()
+      const map = new Map<string, { id: string; variant_name: string; stock: number; barcode_value: string | null; sale_price: number | null; sku: string | null; mrp: number | null }[]>()
       for (const v of variants) {
         const list = map.get(v.product_id) ?? []
-        list.push({ id: v.id, variant_name: v.variant_name, stock: stockMap.data.get(v.id) ?? 0, barcode_value: v.barcode_value ?? null, sale_price: v.sale_price ?? null })
+        list.push({ id: v.id, variant_name: v.variant_name, stock: stockMap.data.get(v.id) ?? 0, barcode_value: v.barcode_value ?? null, sale_price: v.sale_price ?? null, sku: (v as any).sku ?? null, mrp: (v as any).mrp ?? null })
         map.set(v.product_id, list)
       }
       return map
@@ -557,7 +557,7 @@ export function InventoryPage() {
                                 <button
                                   type="button"
                                   title="Print label"
-                                  onClick={() => setVariantPrintTarget({ id: variant.id, variant_name: variant.variant_name, barcode_value: variant.barcode_value ?? null, sale_price: variant.sale_price ?? null, productName: item.products!.name })}
+                                  onClick={() => setVariantPrintTarget({ id: variant.id, variant_name: variant.variant_name, barcode_value: variant.barcode_value ?? null, sale_price: variant.sale_price ?? null, productName: item.products!.name, sku: variant.sku, mrp: variant.mrp })}
                                   className="p-1 rounded text-zinc-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
                                 >
                                   <Printer className="h-3.5 w-3.5" />
@@ -902,6 +902,8 @@ export function InventoryPage() {
             variantLabel: variantPrintTarget.variant_name,
             barcode_value: variantPrintTarget.barcode_value,
             price: variantPrintTarget.sale_price ?? 0,
+            sku: variantPrintTarget.sku,
+            mrp: variantPrintTarget.mrp,
           }]}
           orgName={org?.name}
         />

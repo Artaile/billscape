@@ -33,7 +33,7 @@ export function ProductViewPage() {
   const queryClient = useQueryClient()
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [printOpen, setPrintOpen] = useState(false)
-  const [singleVariantPrint, setSingleVariantPrint] = useState<{ id: string; variant_name: string; barcode_value: string | null; sale_price: number | null } | null>(null)
+  const [singleVariantPrint, setSingleVariantPrint] = useState<{ id: string; variant_name: string; barcode_value: string | null; sale_price: number | null; sku?: string | null; mrp?: number | null } | null>(null)
 
   const { data: product, isLoading } = useQuery({
     queryKey: ['product-detail', orgId, id],
@@ -58,7 +58,7 @@ export function ProductViewPage() {
     queryFn: async () => {
       const { data: rows } = await supabase
         .from('product_variants')
-        .select('id, variant_name, barcode_value, tax_rate, mrp, sale_price, purchase_price')
+        .select('id, variant_name, barcode_value, tax_rate, mrp, sale_price, purchase_price, sku')
         .eq('product_id', id!)
         .eq('organization_id', orgId!)
         .order('variant_name')
@@ -432,8 +432,10 @@ export function ProductViewPage() {
                   variantLabel: v.variant_name,
                   barcode_value: v.barcode_value,
                   price: v.sale_price ?? 0,
+                  sku: v.sku,
+                  mrp: v.mrp,
                 }))
-              : [{ key: product.id, name: product.name, barcode_value: product.barcode_value, price: product.price }]
+              : [{ key: product.id, name: product.name, barcode_value: product.barcode_value, price: product.price, sku: product.sku, mrp: (product as any).mrp }]
           }
           orgName={org?.name}
         />
@@ -449,6 +451,8 @@ export function ProductViewPage() {
             variantLabel: singleVariantPrint.variant_name,
             barcode_value: singleVariantPrint.barcode_value,
             price: singleVariantPrint.sale_price ?? 0,
+            sku: singleVariantPrint.sku,
+            mrp: singleVariantPrint.mrp,
           }]}
           orgName={org?.name}
         />
