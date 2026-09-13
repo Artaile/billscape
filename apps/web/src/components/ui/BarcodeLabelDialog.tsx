@@ -259,6 +259,8 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                 {previewItems.map((item) => {
                   const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
                   const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
+                  const previewSize = getPreviewSizePx(labelSize)
+                  const previewStyle = { width: previewSize.widthPx, minHeight: previewSize.minHeightPx }
                   const code = (
                     <ItemCode
                       item={item}
@@ -270,7 +272,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   )
                   if (templateStyle === 'compact_jewelry') {
                     return (
-                      <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2">
+                      <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2 mx-auto" style={previewStyle}>
                         <div className="text-left">
                           {showShopName && <p className="text-[9px] font-bold uppercase">{orgName || 'JEWELRY TAG'}</p>}
                           <p className="text-[9px] font-bold mt-0.5">{displayName}</p>
@@ -286,7 +288,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   }
                   if (templateStyle === 'saravana_stores') {
                     return (
-                      <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden">
+                      <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden mx-auto" style={previewStyle}>
                         <div className="flex-1 p-3 flex items-center gap-2 text-left">
                           {code}
                           <div>
@@ -308,7 +310,11 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   }
                   if (templateStyle === 'circular_bottle') {
                     return (
-                      <div key={item.key} className="rounded-full border-2 border-gray-300 bg-white text-black w-36 h-36 mx-auto flex flex-col items-center justify-center text-center p-2">
+                      <div
+                        key={item.key}
+                        className="rounded-full border-2 border-gray-300 bg-white text-black mx-auto flex flex-col items-center justify-center text-center p-2"
+                        style={{ width: previewSize.widthPx, height: previewSize.widthPx }}
+                      >
                         {showShopName && <p className="text-[8px] font-bold uppercase">{orgName || 'JAR LABEL'}</p>}
                         <p className="text-[8px] mt-0.5">{displayName}</p>
                         {code}
@@ -321,7 +327,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   }
                   // standard
                   return (
-                    <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black">
+                    <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black mx-auto" style={previewStyle}>
                       {showShopName && <p className="text-xs font-bold text-center leading-tight uppercase">{orgName || displayName}</p>}
                       <p className="text-[10px] text-gray-500 mt-0.5">{displayName}</p>
                       {showSku && item.sku && <p className="text-[9px] text-gray-500 font-mono mt-0.5">SKU: {item.sku}</p>}
@@ -356,6 +362,31 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
   )
 }
 
+/**
+ * Parses a Settings → Barcode `labelSize` value (e.g. "5x3cm") into physical mm dimensions.
+ * "A4 Sheet" has no single label size (A4 tiles multiple labels per sheet) — callers handle it
+ * separately. Falls back to the "5x3cm" default's dimensions for any unrecognized value.
+ */
+function getLabelDimensionsMm(labelSize: string): { widthMm: number; heightMm: number } {
+  const match = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)cm$/.exec(labelSize)
+  if (!match) return { widthMm: 50, heightMm: 30 }
+  return { widthMm: parseFloat(match[1]) * 10, heightMm: parseFloat(match[2]) * 10 }
+}
+
+/** Preview-panel box size (px) roughly proportional to the label's real aspect ratio, capped
+ * within the dialog's available width. A4 Sheet has no single label — shown at a fixed
+ * "generic sheet label" size like the standalone Settings preview does. */
+function getPreviewSizePx(labelSize: string): { widthPx: number; minHeightPx: number } {
+  if (labelSize === 'A4 Sheet') return { widthPx: 180, minHeightPx: 100 }
+  const { widthMm, heightMm } = getLabelDimensionsMm(labelSize)
+  const PX_PER_MM = 3.6
+  const MIN_WIDTH_PX = 130
+  const MAX_WIDTH_PX = 260
+  const widthPx = Math.min(MAX_WIDTH_PX, Math.max(MIN_WIDTH_PX, widthMm * PX_PER_MM))
+  const minHeightPx = widthPx * (heightMm / widthMm)
+  return { widthPx, minHeightPx }
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -381,13 +412,11 @@ function buildLabelHtml(
 ): string {
   const format = barcodeType === 'ean13' ? 'EAN13' : barcodeType === 'code39' ? 'CODE39' : 'CODE128'
   const isQr = barcodeType === 'qr'
-  // Replicates the exact (quirky) transform the old deleted printBarcodeLabel.ts helper used:
-  // replace() only hits the LAST "cm", so '5x3cm' -> '5x30mm' (i.e. 50mm x 30mm, textually).
-  // Preserved as-is for behavioral consistency — not "fixed" to something more sensible.
-  const pageSize = labelSize === 'A4 Sheet' ? 'A4' : labelSize.replace('cm', '0mm')
-  // '58mm' is kept ONLY as the A4-sheet-default fallback (A4 tiles multiple labels per sheet
-  // rather than being one big label, so there's no single "label size" to derive a width from).
-  const labelWidthMm = pageSize === 'A4' ? '58mm' : `${pageSize.split('x')[0]}mm`
+  const { widthMm, heightMm } = getLabelDimensionsMm(labelSize)
+  // A4 tiles multiple labels per sheet rather than being one big label, so the printed page
+  // itself is A4 — there's no single "label size" @page value to derive.
+  const pageSizeCss = labelSize === 'A4 Sheet' ? 'A4' : `${widthMm}mm ${heightMm}mm`
+  const labelWidthMm = labelSize === 'A4 Sheet' ? '58mm' : `${widthMm}mm`
 
   const rows = items.flatMap((item) => {
     const copies = copiesByKey[item.key] ?? 1
@@ -480,7 +509,7 @@ function buildLabelHtml(
   .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: 6pt; font-weight: bold; text-align: center; text-transform: uppercase; padding: 1mm; margin-top: 1mm; }
   .circular { border-radius: 50%; }
   @media print {
-    @page { margin: 4mm; size: ${pageSize}; }
+    @page { margin: 4mm; size: ${pageSizeCss}; }
     body { margin: 0; }
   }
 </style>

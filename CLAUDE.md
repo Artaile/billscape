@@ -731,15 +731,20 @@ All tenant tables use: organization_id IN (SELECT organization_id FROM membershi
 - Multi-item selection (checkboxes + per-item copies count, footer reads "Print N variants · M
   labels") is unchanged mechanics from a prior plan — this pass only changed what determines the
   VISUAL layout, not the selection/quantity UX.
-- `barcode_label_size` (Settings' 5 options: `3x2cm`/`4x2.5cm`/`5x3cm`/`6x4cm`/`A4 Sheet`) is read
-  and shown in the dialog's own "Print Mode" text, and threaded into the generated print HTML's
-  CSS — but the CSS `@page { size: ... }` value for the 4 non-A4 sizes is a direct port of the
-  deleted helper's own `labelSize.replace('cm', '0mm')` string transform (e.g. `5x3cm` → `5x30mm`),
-  which is **not valid CSS `@page size` syntax** (real syntax wants two space-separated length
-  values, not a joined `WxHmm` token) — browsers typically ignore/fall back to the print dialog's
-  own paper-size control when this happens. This is a known, deliberately-deferred pre-existing
-  quirk carried over as-is, not something introduced fresh — a future fix should compute valid
-  `size: 50mm 30mm`-style values instead of replicating the old string transform.
+- **Label-size CSS bug fixed (2026-09-13)**: `barcode_label_size` (Settings' options, e.g.
+  `3x2cm`/`4x2.5cm`/`5x3cm`/`6x4cm`/`5x2.5cm`/`A4 Sheet`) is read and shown in the dialog's own
+  "Print Mode" text, and threaded into the generated print HTML's CSS. The previous implementation
+  derived the `@page { size: ... }` value and `.label` width via a direct port of the deleted
+  helper's own `labelSize.replace('cm', '0mm')` string transform (e.g. `5x3cm` → `5x30mm`, then
+  `.split('x')[0]` → `'5mm'`) — this produced both invalid CSS `@page size` syntax AND a label
+  width off by ~10x (5mm instead of 50mm), which is why real prints showed a tiny label crammed
+  in the corner of a full A4 page. Fixed by `getLabelDimensionsMm(labelSize)` in
+  `BarcodeLabelDialog.tsx`, which regex-parses any `NxMcm` label size into real `{ widthMm,
+  heightMm }` values (e.g. `5x3cm` → `{ widthMm: 50, heightMm: 30 }`) and emits valid two-value
+  CSS (`size: 50mm 30mm`). The on-screen Preview panel was also previously a fixed size regardless
+  of `barcode_label_size` — a second helper, `getPreviewSizePx(labelSize)`, now scales every
+  preview card's width/min-height proportionally (clamped 130–260px) so switching the Settings →
+  Barcode label size visibly resizes the Preview panel too, across all 4 template styles.
 - **`getPurchaseWithItems` (`packages/api/src/purchases.ts`) now also joins `product_variants`**
   (`sku, barcode_value, sale_price, mrp, purchase_price`) alongside its existing `products` join —
   a `has_variants` purchase line's real identifying data lives on its own variant row, never on
