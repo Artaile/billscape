@@ -200,19 +200,30 @@ export function CustomersPage() {
       }
 
       let importedCount = 0
+      let skippedDuplicates = 0
+      const existingPhones = new Set(
+        rawCustomers.filter((c) => c.phone).map((c) => c.phone!.replace(/\D/g, ''))
+      )
+
       for (const row of records) {
         const name = row['name'] || row['customer name'] || row['party name'] || ''
         if (!name.trim()) continue
 
         const rawPhone = row['phone'] || row['mobile'] || row['phone number'] || ''
         const phoneDigits = rawPhone.replace(/\D/g, '').slice(0, 10)
+        
+        if (phoneDigits && existingPhones.has(phoneDigits)) {
+          skippedDuplicates++
+          continue
+        }
+
         const email = row['email'] || row['email address'] || ''
         const gstin = row['gstin'] || row['gst'] || ''
         const stateCode = row['state code'] || row['state'] || ''
         const address = row['address'] || ''
         const balance = parseFloat(row['current balance'] || row['opening balance'] || row['balance'] || '0') || 0
 
-        await supabase.from('customers').insert({
+        const { error } = await supabase.from('customers').insert({
           organization_id: orgId,
           name: name.trim(),
           phone: phoneDigits || null,
@@ -222,6 +233,17 @@ export function CustomersPage() {
           address: address.trim() || null,
           balance: balance,
         })
+        if (error) {
+          if (error.code === '23505') {
+            skippedDuplicates++
+            continue
+          }
+          throw error
+        }
+
+        if (phoneDigits) {
+          existingPhones.add(phoneDigits)
+        }
         importedCount++
       }
 
@@ -230,9 +252,13 @@ export function CustomersPage() {
         organizationId: orgId,
         action: 'imported',
         entity: 'customer',
-        metadata: { count: importedCount, filename: file.name },
+        metadata: { count: importedCount, skipped: skippedDuplicates, filename: file.name },
       })
-      toast.success(`Import Complete`, `Successfully imported ${importedCount} customers!`)
+      if (skippedDuplicates > 0) {
+        toast.success(`Import Complete`, `Imported ${importedCount} customers (${skippedDuplicates} duplicates skipped).`)
+      } else {
+        toast.success(`Import Complete`, `Successfully imported ${importedCount} customers!`)
+      }
     } catch (err: any) {
       toast.error('Import Failed', err.message || 'Failed to parse CSV file')
     } finally {
@@ -269,17 +295,25 @@ export function CustomersPage() {
       const { allowed } = await checkQuota('customers')
       if (!allowed) throw new Error('Quota exceeded')
 
+      const rawPhone = values.phone ? values.phone.replace(/\D/g, '') : null
+      if (rawPhone) {
+        const existing = rawCustomers.find((c) => c.phone && c.phone.replace(/\D/g, '') === rawPhone)
+        if (existing) {
+          throw new Error(`A customer with phone number ${values.phone} already exists (${existing.name}).`)
+        }
+      }
+
       const openBal = Number(values.opening_balance) || 0
       const initialBalance = values.opening_balance_type === 'to_pay' ? -openBal : openBal
 
       const { data: customer, error } = await supabase.from('customers').insert({
         organization_id: orgId!,
-        name: values.name,
-        phone: values.phone || null,
-        email: values.email || null,
-        gstin: values.gstin || null,
+        name: values.name.trim(),
+        phone: rawPhone || null,
+        email: values.email?.trim() || null,
+        gstin: values.gstin?.trim().toUpperCase() || null,
         state_code: values.state_code || null,
-        address: values.address || null,
+        address: values.address?.trim() || null,
         balance: initialBalance,
       }).select().single()
       if (error) throw error
@@ -291,7 +325,7 @@ export function CustomersPage() {
         entityId: customer?.id,
         metadata: {
           name: values.name,
-          phone: values.phone,
+          phone: rawPhone,
           email: values.email,
           opening_balance: openBal,
           balance_type: values.opening_balance_type,
@@ -308,7 +342,11 @@ export function CustomersPage() {
     onError: (err: any) => {
       const handled = handleInsertError(err)
       if (!handled && err.message !== 'Quota exceeded') {
-        toast.error('Failed to add customer', err.message)
+        if (err?.code === '23505' || err?.message?.toLowerCase().includes('unique') || err?.message?.toLowerCase().includes('phone')) {
+          toast.error('Customer already exists', 'A customer with this phone number already exists.')
+        } else {
+          toast.error('Failed to add customer', err.message)
+        }
       }
     },
   })

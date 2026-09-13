@@ -274,6 +274,8 @@ export function PurchaseFormPage() {
 
   const [entrySearch, setEntrySearch] = useState('')
   const [entryDropdownOpen, setEntryDropdownOpen] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const [rows, setRows] = useState<PurchaseRow[]>([])
 
   const [billDiscountType, setBillDiscountType] = useState<'flat' | 'percent'>('flat')
@@ -662,11 +664,13 @@ export function PurchaseFormPage() {
       conversion_factor: p.conversion_factor, entry_unit_id: p.unit_id,
     })
     setEntrySearch(p.name)
+    setHighlightedIndex(0)
     setEntryDropdownOpen(false)
   }
 
   function handleEntryNameChange(val: string) {
     setEntrySearch(val)
+    setHighlightedIndex(0)
     setEntryDropdownOpen(true)
     const exactMatch = products?.find((p) => p.name.toLowerCase() === val.toLowerCase())
     if (exactMatch) {
@@ -1015,6 +1019,39 @@ export function PurchaseFormPage() {
 
   const filtered = getFiltered(entrySearch)
 
+  useEffect(() => {
+    if (entryDropdownOpen && itemRefs.current[highlightedIndex]) {
+      itemRefs.current[highlightedIndex]?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [highlightedIndex, entryDropdownOpen])
+
+  function handleProductKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!entryDropdownOpen || filtered.length === 0) {
+      if (e.key === 'ArrowDown' && filtered.length > 0) {
+        e.preventDefault()
+        setEntryDropdownOpen(true)
+        setHighlightedIndex(0)
+      }
+      return
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex((prev) => (prev + 1) % filtered.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex((prev) => (prev - 1 + filtered.length) % filtered.length)
+    } else if (e.key === 'Enter') {
+      if (filtered[highlightedIndex]) {
+        e.preventDefault()
+        selectExistingProduct(filtered[highlightedIndex])
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setEntryDropdownOpen(false)
+    }
+  }
+
   // Row 2's field count varies with the gear settings (Qty/Purchase Price/MRP/Retail
   // Price/Category/Unit always render, Expiry Date and HSN Code are conditional) — the lg
   // breakpoint's column count must match exactly how many are visible right now, or the
@@ -1218,7 +1255,8 @@ export function PurchaseFormPage() {
                         placeholder="Search or type new product"
                         value={entrySearch}
                         onChange={(e) => handleEntryNameChange(e.target.value)}
-                        onFocus={() => setEntryDropdownOpen(true)}
+                        onFocus={() => { setEntryDropdownOpen(true); setHighlightedIndex(0) }}
+                        onKeyDown={handleProductKeyDown}
                         className={cn('h-9 text-sm', fieldErrors.has('product_name') && 'border-red-500 focus-visible:ring-red-500')}
                       />
                       {entry.product_name && (
@@ -1228,13 +1266,21 @@ export function PurchaseFormPage() {
                         </span>
                       )}
                       {entryDropdownOpen && filtered.length > 0 && (
-                        <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                          {filtered.map((p) => (
-                            <button key={p.id} type="button"
-                              className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                              onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                        <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto py-1">
+                          {filtered.map((p, i) => (
+                            <button
+                              key={p.id}
+                              ref={(el) => { itemRefs.current[i] = el }}
+                              type="button"
+                              className={cn(
+                                'flex w-full items-center justify-between px-3 py-2 text-sm transition-colors text-left',
+                                highlightedIndex === i ? 'bg-indigo-600 text-white font-medium' : 'text-zinc-200 hover:bg-zinc-800'
+                              )}
+                              onMouseEnter={() => setHighlightedIndex(i)}
+                              onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}
+                            >
                               <span>{p.name}</span>
-                              <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                              <span className={cn('text-xs', highlightedIndex === i ? 'text-indigo-100' : 'text-zinc-500')}>{formatINR(p.price)}</span>
                             </button>
                           ))}
                         </div>
@@ -1307,7 +1353,8 @@ export function PurchaseFormPage() {
                         placeholder="Search or type new product"
                         value={entrySearch}
                         onChange={(e) => handleEntryNameChange(e.target.value)}
-                        onFocus={() => setEntryDropdownOpen(true)}
+                        onFocus={() => { setEntryDropdownOpen(true); setHighlightedIndex(0) }}
+                        onKeyDown={handleProductKeyDown}
                         className={cn('h-9 text-sm', fieldErrors.has('product_name') && 'border-red-500 focus-visible:ring-red-500')}
                       />
                       {entry.product_name && (
@@ -1317,13 +1364,21 @@ export function PurchaseFormPage() {
                         </span>
                       )}
                       {entryDropdownOpen && filtered.length > 0 && (
-                        <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto">
-                          {filtered.map((p) => (
-                            <button key={p.id} type="button"
-                              className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-zinc-800 text-zinc-200"
-                              onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}>
+                        <div className="absolute top-full left-0 z-50 mt-0.5 w-full rounded-md border border-zinc-700 bg-zinc-900 shadow-xl max-h-48 overflow-y-auto py-1">
+                          {filtered.map((p, i) => (
+                            <button
+                              key={p.id}
+                              ref={(el) => { itemRefs.current[i] = el }}
+                              type="button"
+                              className={cn(
+                                'flex w-full items-center justify-between px-3 py-2 text-sm transition-colors text-left',
+                                highlightedIndex === i ? 'bg-indigo-600 text-white font-medium' : 'text-zinc-200 hover:bg-zinc-800'
+                              )}
+                              onMouseEnter={() => setHighlightedIndex(i)}
+                              onMouseDown={(e) => { e.preventDefault(); selectExistingProduct(p) }}
+                            >
                               <span>{p.name}</span>
-                              <span className="text-zinc-500 text-xs">{formatINR(p.price)}</span>
+                              <span className={cn('text-xs', highlightedIndex === i ? 'text-indigo-100' : 'text-zinc-500')}>{formatINR(p.price)}</span>
                             </button>
                           ))}
                         </div>

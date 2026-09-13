@@ -60,6 +60,22 @@ export function QuickAddCustomerDialog({
       return
     }
     setSaving(true)
+
+    if (rawDigits) {
+      const { data: existing } = await supabase
+        .from('customers')
+        .select('id, name, phone, gstin')
+        .eq('organization_id', orgId)
+        .eq('phone', rawDigits)
+        .maybeSingle()
+
+      if (existing) {
+        setSaving(false)
+        toast.error('Customer already exists', `A customer named "${existing.name}" already has this mobile number.`)
+        return
+      }
+    }
+
     const { data, error } = await supabase
       .from('customers')
       .insert({ organization_id: orgId, name: name.trim(), phone: rawDigits || null })
@@ -68,7 +84,11 @@ export function QuickAddCustomerDialog({
     setSaving(false)
 
     if (error || !data) {
-      toast.error('Failed to add customer', error?.message)
+      if (error?.code === '23505' || error?.message?.toLowerCase().includes('unique') || error?.message?.toLowerCase().includes('phone')) {
+        toast.error('Customer already exists', 'A customer with this phone number already exists.')
+      } else {
+        toast.error('Failed to add customer', error?.message)
+      }
       return
     }
 
