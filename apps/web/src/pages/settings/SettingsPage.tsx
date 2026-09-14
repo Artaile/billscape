@@ -620,7 +620,7 @@ function LiveBarcodePreview({
                 MRP RS {strikethroughMrp ? <span className="line-through">70.00</span> : '70.00'} (Incl. all taxes)
               </p>
             )}
-            {showSp && <p className="font-black text-zinc-950 tracking-tight text-[1.1em]">SP RS 49.00</p>}
+            {showSp && <p className="font-black text-zinc-950 tracking-tight text-[1.1em]">Retail RS 49.00</p>}
           </div>
         )}
 
@@ -650,7 +650,7 @@ function LiveBarcodePreview({
                 {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>Code: BUCKET-511</p>}
                 {showCodeValue && type !== 'qr' && <p className="font-mono text-zinc-600" style={{ fontSize: px(9) }}>1003432492</p>}
                 {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
-                {showSp && <p className="font-black text-zinc-950 tracking-tight" style={{ fontSize: px(14) }}>SP Rs.232.00</p>}
+                {showSp && <p className="font-black text-zinc-950 tracking-tight" style={{ fontSize: px(14) }}>Retail Rs.232.00</p>}
               </div>
             </div>
 
@@ -676,7 +676,7 @@ function LiveBarcodePreview({
               <p className="font-semibold text-zinc-800 truncate" style={{ fontSize: px(9) }}>GOLD RING 22KT</p>
               {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(8) }}>WT: 4.250g | 916 HUID</p>}
               {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP RS {strikethroughMrp ? <span className="line-through">30,000.00</span> : '30,000.00'}</p>}
-              {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(11) }}>SP RS 28,500.00</p>}
+              {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(11) }}>Retail RS 28,500.00</p>}
             </div>
             <div className="shrink-0">
               {type === 'qr' ? (
@@ -718,7 +718,7 @@ function LiveBarcodePreview({
             )}
 
             {showMrp && <p className="text-zinc-500 font-medium" style={{ fontSize: px(8) }}>MRP RS {strikethroughMrp ? <span className="line-through">599.00</span> : '599.00'}</p>}
-            {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(10) }}>SP RS 499.00 <span className="font-normal text-zinc-500" style={{ fontSize: px(8) }}>(Incl. Taxes)</span></p>}
+            {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(10) }}>Retail RS 499.00 <span className="font-normal text-zinc-500" style={{ fontSize: px(8) }}>(Incl. Taxes)</span></p>}
           </div>
         )}
       </div>
@@ -4309,8 +4309,8 @@ export function SettingsPage() {
                     { id: 'show_sku', label: 'Product Code', desc: 'Include product code on label', value: barcodeShowSku, setter: setBarcodeShowSku },
                     { id: 'show_code_value', label: 'Barcode Text Value', desc: 'Display code digits below barcode', value: barcodeShowCodeValue, setter: setBarcodeShowCodeValue },
                     { id: 'show_mrp', label: 'Show MRP', desc: 'Display Maximum Retail Price', value: barcodeShowMrp, setter: setBarcodeShowMrp },
-                    { id: 'show_sp', label: 'Show Selling Price (SP)', desc: 'Display Selling Price / Offer Price', value: barcodeShowSp, setter: setBarcodeShowSp },
-                    { id: 'strikethrough_mrp', label: 'Strike-through MRP', desc: 'Cross out MRP when SP is lower', value: barcodeStrikethroughMrp, setter: setBarcodeStrikethroughMrp },
+                    { id: 'show_sp', label: 'Show Retail Price', desc: 'Display the item\'s retail / selling price', value: barcodeShowSp, setter: setBarcodeShowSp },
+                    { id: 'strikethrough_mrp', label: 'Strike-through MRP', desc: 'Cross out MRP when Retail Price is lower', value: barcodeStrikethroughMrp, setter: setBarcodeStrikethroughMrp },
                   ].map(({ id, label, desc, value, setter }) => (
                     <div key={id} className="flex items-center justify-between p-3 rounded-xl border border-border bg-secondary/20">
                       <div>

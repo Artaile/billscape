@@ -386,7 +386,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                           {showMrp && item.mrp != null && (
                             <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                           )}
-                          {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>SP ₹{item.price.toFixed(2)}</p>}
+                          {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>Retail ₹{item.price.toFixed(2)}</p>}
                         </div>
                         <div className="shrink-0">{code}</div>
                       </div>
@@ -403,7 +403,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                             {showMrp && item.mrp != null && (
                               <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                             )}
-                            {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>SP ₹{item.price.toFixed(2)}</p>}
+                            {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>Retail ₹{item.price.toFixed(2)}</p>}
                           </div>
                         </div>
                         {showShopName && (
@@ -427,7 +427,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                         {showMrp && item.mrp != null && (
                           <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(7.5) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                         )}
-                        {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(9) }}>SP ₹{item.price.toFixed(2)}</p>}
+                        {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(9) }}>Retail ₹{item.price.toFixed(2)}</p>}
                       </div>
                     )
                   }
@@ -444,7 +444,7 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                       {showMrp && item.mrp != null && (
                         <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(9) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                       )}
-                      {showSp && <p className="font-bold mt-0.5" style={{ fontSize: previewPx(14) }}>SP ₹{item.price.toFixed(2)}</p>}
+                      {showSp && <p className="font-bold mt-0.5" style={{ fontSize: previewPx(14) }}>Retail ₹{item.price.toFixed(2)}</p>}
                     </div>
                   )
                 })}
@@ -554,7 +554,7 @@ function buildLabelHtml(
     const mrpLine = showMrp && item.mrp != null
       ? `<div class="mrp">MRP &#8377;${mrpStrike ? `<span style="text-decoration:line-through">${item.mrp.toFixed(2)}</span>` : item.mrp.toFixed(2)}</div>`
       : ''
-    const spLine = showSp ? `<div class="sp">SP &#8377;${item.price.toFixed(2)}</div>` : ''
+    const spLine = showSp ? `<div class="sp">Retail &#8377;${item.price.toFixed(2)}</div>` : ''
     const skuLine = showSku && item.sku ? `<div class="sku">${escapeHtml(item.sku)}</div>` : ''
     const codeDataUri = codeDataUris[item.key]
     const codeEl = codeDataUri ? `<img class="code-img" src="${codeDataUri}" alt="">` : ''
