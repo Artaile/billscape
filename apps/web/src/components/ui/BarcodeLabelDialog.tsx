@@ -47,6 +47,157 @@ function ItemCode({ item, barcodeType, qrDataUrl, svgRef, sizeClass }: {
   return <svg ref={svgRef} className={sizeClass} />
 }
 
+export interface LabelPreviewSettings {
+  templateStyle: string
+  barcodeType: string
+  showShopName: boolean
+  showSku: boolean
+  showCodeValue: boolean
+  showMrp: boolean
+  showSp: boolean
+  strikethroughMrp: boolean
+  labelSize: string
+  orgName?: string
+}
+
+/**
+ * The SINGLE shared definition of what each of the 4 label templates looks like on screen —
+ * used by BarcodeLabelDialog's own Preview panel below, AND imported directly by
+ * SettingsPage.tsx's LiveBarcodePreview and ProductFormPage.tsx's own barcode preview, so all
+ * three on-screen previews render byte-for-byte the same JSX for the same inputs. Before this,
+ * each of those 3 call sites hand-maintained its own copy of these 4 templates, and they
+ * drifted apart in actual layout structure over several rounds of edits — confirmed live via a
+ * user screenshot showing Settings' "saravana_stores" preview and the real product print
+ * dialog's own preview rendering visibly different layouts for the supposedly-same template.
+ * `buildLabelHtml` (the actual print HTML generator, further down this file) is a separate,
+ * necessarily-duplicated implementation since it emits an HTML string rather than JSX — but it
+ * is the one remaining place a template's real layout is defined a second time, and it should
+ * be kept in sync with this component by hand whenever either is edited.
+ */
+export function LabelPreviewCard({
+  item,
+  settings,
+  qrDataUrl,
+  svgRef,
+}: {
+  item: LabelItem
+  settings: LabelPreviewSettings
+  qrDataUrl: string | undefined
+  svgRef: (el: SVGSVGElement | null) => void
+}) {
+  const {
+    templateStyle, barcodeType, showShopName, showSku, showCodeValue, showMrp, showSp,
+    strikethroughMrp, labelSize, orgName,
+  } = settings
+  const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
+  const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
+  const previewSize = getPreviewSizePx(labelSize)
+  const previewStyle = { width: previewSize.widthPx, minHeight: previewSize.minHeightPx }
+  // Scales every text/spacing value in the preview card together with the card's own size,
+  // mirroring the print HTML's own getLabelScale-driven scaling — without this, a small label
+  // size (e.g. 5x2.5cm's 180px-wide preview) crammed the SAME fixed text-[9px] name text +
+  // fixed-width side-ribbon into a narrower box than they were sized for, wrapping the product
+  // name across 2-3 lines and squeezing the saravana_stores ribbon down to where it looked
+  // broken/missing. Only the TEXT/SPACING scale down here; the print HTML's own physical sizing
+  // is unaffected (this only touches on-screen previews).
+  const { widthMm: previewWidthMm, heightMm: previewHeightMm } = getLabelDimensionsMm(labelSize)
+  const previewScale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(previewWidthMm, previewHeightMm)
+  const previewPx = (base: number) => Math.round(base * previewScale)
+  const code = (
+    <ItemCode
+      item={item}
+      barcodeType={barcodeType}
+      qrDataUrl={qrDataUrl}
+      svgRef={svgRef}
+      sizeClass="max-w-[110px] max-h-[60px]"
+    />
+  )
+
+  if (templateStyle === 'compact_jewelry') {
+    return (
+      <div className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2 mx-auto" style={previewStyle}>
+        <div className="text-left">
+          {showShopName && <p className="font-bold uppercase" style={{ fontSize: previewPx(9) }}>{orgName || 'JEWELRY TAG'}</p>}
+          <p className="font-bold mt-0.5" style={{ fontSize: previewPx(9) }}>{displayName}</p>
+          {showSku && item.sku && <p className="text-gray-500 font-mono" style={{ fontSize: previewPx(8) }}>{item.sku}</p>}
+          {showMrp && item.mrp != null && (
+            <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+          )}
+          {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>Retail ₹{item.price.toFixed(2)}</p>}
+        </div>
+        <div className="shrink-0 flex flex-col items-center">
+          {code}
+          {showCodeValue && item.barcode_value && (
+            <p className="font-mono font-bold mt-0.5" style={{ fontSize: previewPx(7) }}>{item.barcode_value}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+  if (templateStyle === 'saravana_stores') {
+    return (
+      <div className="rounded-lg border border-border bg-white text-black flex overflow-hidden mx-auto" style={previewStyle}>
+        <div className="flex-1 flex items-center text-left" style={{ padding: previewPx(12), gap: previewPx(8) }}>
+          <div className="flex flex-col items-center">
+            {code}
+            {showCodeValue && item.barcode_value && (
+              <p className="font-mono font-bold" style={{ fontSize: previewPx(7) }}>{item.barcode_value}</p>
+            )}
+          </div>
+          <div>
+            <p className="font-bold uppercase" style={{ fontSize: previewPx(9) }}>{displayName}</p>
+            {showSku && item.sku && <p className="text-gray-500 font-mono" style={{ fontSize: previewPx(8) }}>Code: {item.sku}</p>}
+            {showMrp && item.mrp != null && (
+              <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+            )}
+            {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>Retail ₹{item.price.toFixed(2)}</p>}
+          </div>
+        </div>
+        {showShopName && (
+          <div className="bg-gradient-to-b from-amber-500 to-orange-600 text-white font-bold flex items-center justify-center uppercase [writing-mode:vertical-rl] rotate-180" style={{ width: previewPx(24), padding: previewPx(4), fontSize: previewPx(7) }}>
+            {orgName || 'DEPARTMENT STORE'}
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (templateStyle === 'circular_bottle') {
+    return (
+      <div
+        className="rounded-full border-2 border-gray-300 bg-white text-black mx-auto flex flex-col items-center justify-center text-center p-2"
+        style={{ width: previewSize.widthPx, height: previewSize.widthPx }}
+      >
+        {showShopName && <p className="font-bold uppercase" style={{ fontSize: previewPx(8) }}>{orgName || 'JAR LABEL'}</p>}
+        <p className="mt-0.5" style={{ fontSize: previewPx(8) }}>{displayName}</p>
+        {code}
+        {showCodeValue && item.barcode_value && (
+          <p className="font-mono font-bold" style={{ fontSize: previewPx(6.5) }}>{item.barcode_value}</p>
+        )}
+        {showMrp && item.mrp != null && (
+          <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(7.5) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+        )}
+        {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(9) }}>Retail ₹{item.price.toFixed(2)}</p>}
+      </div>
+    )
+  }
+  // standard
+  return (
+    <div className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black mx-auto" style={previewStyle}>
+      {showShopName && <p className="font-bold text-center leading-tight uppercase" style={{ fontSize: previewPx(12) }}>{orgName || displayName}</p>}
+      <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(10) }}>{displayName}</p>
+      {showSku && item.sku && <p className="text-gray-500 font-mono mt-0.5" style={{ fontSize: previewPx(9) }}>Code: {item.sku}</p>}
+      <div className="my-1">{code}</div>
+      {showCodeValue && item.barcode_value && (
+        <p className="font-mono font-bold" style={{ fontSize: previewPx(9) }}>{item.barcode_value}</p>
+      )}
+      {showMrp && item.mrp != null && (
+        <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(9) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+      )}
+      {showSp && <p className="font-bold mt-0.5" style={{ fontSize: previewPx(14) }}>Retail ₹{item.price.toFixed(2)}</p>}
+    </div>
+  )
+}
+
 export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props) {
   const { org } = useAuth()
   const branding = org?.branding
@@ -350,104 +501,18 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
               </div>
             ) : (
               <div className={cn('space-y-2', isMulti && 'max-h-48 overflow-y-auto pr-1')}>
-                {previewItems.map((item) => {
-                  const displayName = item.variantLabel ? `${item.name} — ${item.variantLabel}` : item.name
-                  const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
-                  const previewSize = getPreviewSizePx(labelSize)
-                  const previewStyle = { width: previewSize.widthPx, minHeight: previewSize.minHeightPx }
-                  // Scales every text/spacing value in the preview card together with the card's
-                  // own size, mirroring the print HTML's own getLabelScale-driven scaling — without
-                  // this, a small label size (e.g. 5x2.5cm's 180px-wide preview) crammed the SAME
-                  // fixed text-[9px] name text + fixed-width side-ribbon into a narrower box than
-                  // they were sized for, wrapping the product name across 2-3 lines and squeezing
-                  // the ribbon down to where it looked broken/missing — confirmed live via a real
-                  // print dialog screenshot showing exactly this crowding on the saravana_stores
-                  // template. Only the TEXT/SPACING scale down here; the print HTML's own physical
-                  // sizing is unaffected (this only touches the on-screen preview panel).
-                  const { widthMm: previewWidthMm, heightMm: previewHeightMm } = getLabelDimensionsMm(labelSize)
-                  const previewScale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(previewWidthMm, previewHeightMm)
-                  const previewPx = (base: number) => Math.round(base * previewScale)
-                  const code = (
-                    <ItemCode
-                      item={item}
-                      barcodeType={barcodeType}
-                      qrDataUrl={qrDataUrls[item.key]}
-                      svgRef={(el) => { svgRefs.current[item.key] = el }}
-                      sizeClass="max-w-[110px] max-h-[60px]"
-                    />
-                  )
-                  if (templateStyle === 'compact_jewelry') {
-                    return (
-                      <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2 mx-auto" style={previewStyle}>
-                        <div className="text-left">
-                          {showShopName && <p className="font-bold uppercase" style={{ fontSize: previewPx(9) }}>{orgName || 'JEWELRY TAG'}</p>}
-                          <p className="font-bold mt-0.5" style={{ fontSize: previewPx(9) }}>{displayName}</p>
-                          {showSku && item.sku && <p className="text-gray-500 font-mono" style={{ fontSize: previewPx(8) }}>{item.sku}</p>}
-                          {showMrp && item.mrp != null && (
-                            <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
-                          )}
-                          {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>Retail ₹{item.price.toFixed(2)}</p>}
-                        </div>
-                        <div className="shrink-0">{code}</div>
-                      </div>
-                    )
-                  }
-                  if (templateStyle === 'saravana_stores') {
-                    return (
-                      <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden mx-auto" style={previewStyle}>
-                        <div className="flex-1 flex items-center text-left" style={{ padding: previewPx(12), gap: previewPx(8) }}>
-                          {code}
-                          <div>
-                            <p className="font-bold uppercase" style={{ fontSize: previewPx(9) }}>{displayName}</p>
-                            {showSku && item.sku && <p className="text-gray-500 font-mono" style={{ fontSize: previewPx(8) }}>{item.sku}</p>}
-                            {showMrp && item.mrp != null && (
-                              <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
-                            )}
-                            {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>Retail ₹{item.price.toFixed(2)}</p>}
-                          </div>
-                        </div>
-                        {showShopName && (
-                          <div className="bg-gradient-to-b from-amber-500 to-orange-600 text-white font-bold flex items-center justify-center uppercase [writing-mode:vertical-rl] rotate-180" style={{ width: previewPx(24), padding: previewPx(4), fontSize: previewPx(7) }}>
-                            {orgName || 'DEPARTMENT STORE'}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  }
-                  if (templateStyle === 'circular_bottle') {
-                    return (
-                      <div
-                        key={item.key}
-                        className="rounded-full border-2 border-gray-300 bg-white text-black mx-auto flex flex-col items-center justify-center text-center p-2"
-                        style={{ width: previewSize.widthPx, height: previewSize.widthPx }}
-                      >
-                        {showShopName && <p className="font-bold uppercase" style={{ fontSize: previewPx(8) }}>{orgName || 'JAR LABEL'}</p>}
-                        <p className="mt-0.5" style={{ fontSize: previewPx(8) }}>{displayName}</p>
-                        {code}
-                        {showMrp && item.mrp != null && (
-                          <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(7.5) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
-                        )}
-                        {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(9) }}>Retail ₹{item.price.toFixed(2)}</p>}
-                      </div>
-                    )
-                  }
-                  // standard
-                  return (
-                    <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black mx-auto" style={previewStyle}>
-                      {showShopName && <p className="font-bold text-center leading-tight uppercase" style={{ fontSize: previewPx(12) }}>{orgName || displayName}</p>}
-                      <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(10) }}>{displayName}</p>
-                      {showSku && item.sku && <p className="text-gray-500 font-mono mt-0.5" style={{ fontSize: previewPx(9) }}>Code: {item.sku}</p>}
-                      <div className="my-1">{code}</div>
-                      {showCodeValue && barcodeType !== 'qr' && item.barcode_value && (
-                        <p className="font-mono font-bold" style={{ fontSize: previewPx(9) }}>{item.barcode_value}</p>
-                      )}
-                      {showMrp && item.mrp != null && (
-                        <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(9) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
-                      )}
-                      {showSp && <p className="font-bold mt-0.5" style={{ fontSize: previewPx(14) }}>Retail ₹{item.price.toFixed(2)}</p>}
-                    </div>
-                  )
-                })}
+                {previewItems.map((item) => (
+                  <LabelPreviewCard
+                    key={item.key}
+                    item={item}
+                    settings={{
+                      templateStyle, barcodeType, showShopName, showSku, showCodeValue, showMrp,
+                      showSp, strikethroughMrp, labelSize, orgName,
+                    }}
+                    qrDataUrl={qrDataUrls[item.key]}
+                    svgRef={(el) => { svgRefs.current[item.key] = el }}
+                  />
+                ))}
                 {checkedItems.length > PREVIEW_CAP && (
                   <p className="text-[11px] text-zinc-500 text-center">+{checkedItems.length - PREVIEW_CAP} more</p>
                 )}
@@ -499,7 +564,7 @@ function getLabelScale(widthMm: number, heightMm: number): number {
 /** Preview-panel box size (px) roughly proportional to the label's real aspect ratio, capped
  * within the dialog's available width. A4 Sheet has no single label — shown at a fixed
  * "generic sheet label" size like the standalone Settings preview does. */
-function getPreviewSizePx(labelSize: string): { widthPx: number; minHeightPx: number } {
+export function getPreviewSizePx(labelSize: string): { widthPx: number; minHeightPx: number } {
   if (labelSize === 'A4 Sheet') return { widthPx: 180, minHeightPx: 100 }
   const { widthMm, heightMm } = getLabelDimensionsMm(labelSize)
   const PX_PER_MM = 3.6
@@ -555,10 +620,13 @@ function buildLabelHtml(
       ? `<div class="mrp">MRP &#8377;${mrpStrike ? `<span style="text-decoration:line-through">${item.mrp.toFixed(2)}</span>` : item.mrp.toFixed(2)}</div>`
       : ''
     const spLine = showSp ? `<div class="sp">Retail &#8377;${item.price.toFixed(2)}</div>` : ''
-    const skuLine = showSku && item.sku ? `<div class="sku">${escapeHtml(item.sku)}</div>` : ''
+    // "Code: " prefix mirrors LabelPreviewCard: standard/saravana_stores show a real
+    // product code, compact_jewelry reuses this field for weight/purity text (no prefix).
+    const skuPrefix = (templateStyle === 'standard' || templateStyle === 'saravana_stores') ? 'Code: ' : ''
+    const skuLine = showSku && item.sku ? `<div class="sku">${skuPrefix}${escapeHtml(item.sku)}</div>` : ''
     const codeDataUri = codeDataUris[item.key]
     const codeEl = codeDataUri ? `<img class="code-img" src="${codeDataUri}" alt="">` : ''
-    const codeValueLine = showCodeValue && barcodeType !== 'qr' && item.barcode_value
+    const codeValueLine = showCodeValue && item.barcode_value
       ? `<div class="codevalue">${escapeHtml(item.barcode_value)}</div>`
       : ''
 
@@ -571,19 +639,19 @@ function buildLabelHtml(
             <div class="name">${escapeHtml(displayName)}</div>
             ${skuLine}${mrpLine}${spLine}
           </div>
-          <div class="jewelry-code">${codeEl}</div>
+          <div class="jewelry-code">${codeEl}${codeValueLine}</div>
         </div>`
     } else if (templateStyle === 'saravana_stores') {
       labelInner = `
         <div class="saravana">
           <div class="saravana-main">
-            ${codeEl}
+            <div class="saravana-code">${codeEl}${codeValueLine}</div>
             <div class="saravana-text">
               <div class="name">${escapeHtml(displayName)}</div>
               ${skuLine}${mrpLine}${spLine}
             </div>
           </div>
-          ${showShopName ? `<div class="saravana-side">${escapeHtml(orgName || 'DEPARTMENT STORE')}</div>` : ''}
+          ${showShopName ? `<div class="saravana-side"><span>${escapeHtml(orgName || 'DEPARTMENT STORE')}</span></div>` : ''}
         </div>`
     } else if (templateStyle === 'circular_bottle') {
       labelInner = `
@@ -591,6 +659,7 @@ function buildLabelHtml(
           ${showShopName ? `<div class="shop">${escapeHtml(orgName || 'JAR LABEL')}</div>` : ''}
           <div class="name">${escapeHtml(displayName)}</div>
           ${codeEl}
+          ${codeValueLine}
           ${mrpLine}${spLine}
         </div>`
     } else {
@@ -626,7 +695,8 @@ function buildLabelHtml(
     break-inside: avoid;
   }
   .label-standard, .label-compact_jewelry, .label-circular_bottle { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-  .label-saravana_stores { display: flex; flex-direction: column; justify-content: center; }
+  .label-saravana_stores { display: flex; flex-direction: row; align-items: stretch; justify-content: center; padding: 0; }
+  .saravana { display: flex; flex-direction: row; align-items: stretch; width: 100%; height: 100%; }
   .shop { font-size: ${pt(7)}; font-weight: 700; margin-bottom: ${mm(1)}; text-transform: uppercase; }
   .name { font-size: ${pt(8)}; font-weight: bold; margin-bottom: ${mm(1)}; word-break: break-word; }
   .sku { font-size: ${pt(6.5)}; color: #666; font-family: monospace; margin-bottom: ${mm(1)}; }
@@ -636,9 +706,26 @@ function buildLabelHtml(
   .code-img { max-width: 100%; max-height: ${mm(labelSize === 'A4 Sheet' ? 20 : heightMm * 0.55)}; display: block; }
   .jewelry { display: flex; align-items: center; justify-content: space-between; gap: ${mm(2)}; width: 100%; }
   .jewelry-text { text-align: left; }
-  .saravana-main { display: flex; align-items: center; gap: ${mm(2)}; flex: 1; }
-  .saravana-text { text-align: left; }
-  .saravana-side { background: linear-gradient(to bottom, #f59e0b, #ea580c); color: #fff; font-size: ${pt(6)}; font-weight: bold; text-align: center; text-transform: uppercase; padding: ${mm(1)}; margin-top: ${mm(1)}; }
+  .jewelry-code { display: flex; flex-direction: column; align-items: center; text-align: center; flex-shrink: 0; }
+  .saravana-main { display: flex; align-items: center; gap: ${mm(2)}; flex: 1; min-width: 0; padding: ${mm(2)}; }
+  .saravana-code { display: flex; flex-direction: column; align-items: center; text-align: center; flex-shrink: 0; }
+  .saravana-text { text-align: left; min-width: 0; }
+  .saravana-side {
+    background: linear-gradient(to bottom, #f59e0b, #ea580c);
+    color: #fff;
+    font-size: ${pt(6)};
+    font-weight: bold;
+    text-align: center;
+    text-transform: uppercase;
+    padding: ${mm(1)};
+    flex-shrink: 0;
+    width: ${mm(6)};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
   .circular { border-radius: 50%; }
   @media print {
     @page { margin: ${labelSize === 'A4 Sheet' ? '4mm' : '0mm'}; size: ${pageSizeCss}; }

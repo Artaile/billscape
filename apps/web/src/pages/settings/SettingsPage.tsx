@@ -47,6 +47,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { applyBrandColor } from '@/lib/brandColor'
 import { UnitsSettingsPanel } from '@/components/settings/UnitsSettingsPanel'
+import { LabelPreviewCard, getPreviewSizePx, type LabelItem } from '@/components/ui/BarcodeLabelDialog'
 import QRCode from 'qrcode'
 import JsBarcode from 'jsbarcode'
 import * as XLSX from 'xlsx'
@@ -331,11 +332,12 @@ function LiveBarcodePreview({
   const svgRef = React.useRef<SVGSVGElement | null>(null)
 
   // Parses a "5x3cm"-style labelSize into physical mm dimensions — mirrors
-  // BarcodeLabelDialog.tsx's own getLabelDimensionsMm. Not imported from there: this preview is
-  // deliberately kept a separate, independent component from the real print pipeline (see
-  // CLAUDE.md's "Invoice visual parity" section for the same convention already established for
-  // the invoice preview vs. InvoicePrint.tsx), so it carries its own tiny copy rather than
-  // creating a new cross-file dependency between two components meant to stay decoupled.
+  // BarcodeLabelDialog.tsx's own getLabelDimensionsMm. This one small helper still isn't
+  // imported from there (only used for this component's own Test Print sizing math below,
+  // unrelated to what the card itself looks like) — but the actual template rendering IS now
+  // shared via the imported LabelPreviewCard component, so this Settings preview can no longer
+  // visually drift from BarcodeLabelDialog.tsx's own preview or the real print output (see
+  // LabelPreviewCard's own doc comment for the history of why this sharing was added).
   // Falls back to the "5x3cm" default's dimensions for "A4 Sheet" or any unrecognized value —
   // A4 Sheet has no single physical label size of its own (it tiles multiple labels per sheet),
   // so it's treated as this same 50x30mm default rather than its own distinct size.
@@ -358,9 +360,23 @@ function LiveBarcodePreview({
   const scale = Math.min(1.6, Math.max(0.6, Math.min(previewWidthMm / 50, previewHeightMm / 30)))
   const px = (base: number) => Math.round(base * scale)
 
+  // One representative mock LabelItem per template style, rendered through the SAME
+  // LabelPreviewCard component the real BarcodeLabelDialog.tsx preview uses — see that
+  // component's own doc comment for why this sharing exists (previously this preview
+  // hand-duplicated all 4 templates' JSX, and it visibly drifted from the real print dialog's
+  // own preview over several rounds of edits, confirmed live via a user screenshot showing two
+  // different layouts for the supposedly-same "saravana_stores" template).
+  const mockItemByTemplate: Record<string, LabelItem> = {
+    circular_bottle: { key: 'mock', name: shopName ? `${shopName} JAR` : 'GL CUBICAL JAR', barcode_value: '1003432492', price: 49, mrp: 70 },
+    saravana_stores: { key: 'mock', name: 'TIA BUCKET 511', barcode_value: '1003432492', price: 232, mrp: 300, sku: 'BUCKET-511' },
+    compact_jewelry: { key: 'mock', name: 'GOLD RING 22KT', barcode_value: '1003432492', price: 28500, mrp: 30000, sku: 'WT: 4.250g | 916 HUID' },
+    standard: { key: 'mock', name: 'BILLSCAPE SAMPLE ITEM', barcode_value: '8901234567890', price: 499, mrp: 599, sku: 'SHIRT-COTTON-001' },
+  }
+  const mockItem = mockItemByTemplate[templateStyle] ?? mockItemByTemplate.standard
+
   React.useEffect(() => {
     if (type === 'qr') {
-      QRCode.toDataURL('https://billscape.app/item/8901234567890', {
+      QRCode.toDataURL(mockItem.barcode_value || '8901234567890', {
         width: px(140),
         margin: 1,
         color: { dark: '#09090b', light: '#ffffff' },
@@ -372,7 +388,7 @@ function LiveBarcodePreview({
 
     if (svgRef.current && type !== 'qr') {
       try {
-        let value = '8901234567890'
+        let value = mockItem.barcode_value || '8901234567890'
         let format = 'CODE128'
 
         if (type === 'ean13') {
@@ -399,9 +415,10 @@ function LiveBarcodePreview({
         console.error('Barcode render error:', err)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scale`/`px` are derived purely
-    // from `labelSize` (already a dep) each render, not their own independent state; including
-    // them would just be redundant re-triggers on every render for no behavioral difference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scale`/`px`/`mockItem` are derived
+    // purely from `labelSize`/`templateStyle`/`shopName` (already deps or intentionally stable
+    // mock data) each render, not their own independent state; including them would just be
+    // redundant re-triggers on every render for no behavioral difference.
   }, [type, labelSize, templateStyle, showCodeValue])
 
   // Prints exactly what this preview currently shows — including any toggle changed on this
@@ -460,15 +477,17 @@ function LiveBarcodePreview({
       const { widthMm, heightMm } = getLabelSizeMm(labelSize)
       return `${widthMm}mm ${heightMm}mm`
     })()
-    // On-screen design width (the base value each template's own root <div> passes to px() for
-    // its own width) that `printScale` below is relative to — must stay in sync with the
-    // px(...) call on each template's outer div in the JSX below.
-    const onScreenCardWidthPx = {
-      circular_bottle: 190,
-      saravana_stores: 280,
-      compact_jewelry: 270,
-      standard: 300,
-    }[templateStyle] * scale
+    // On-screen design width that `printScale` below is relative to — must stay in sync with
+    // how LabelPreviewCard (imported above) actually sizes the rendered card. That component
+    // sizes every template purely from getPreviewSizePx(labelSize) (its width/minHeight style),
+    // NOT from this component's own local `scale` (that variable only scales font-sizes/padding
+    // inside LabelPreviewCard itself, and the QR/barcode canvas generation above — it does not
+    // change the card's outer pixel width). Multiplying it in here previously made this assume
+    // a narrower on-screen card than what was actually rendered, so `printScale` came out too
+    // large and the real content (e.g. the Retail Price line) got scaled past the wrapper's
+    // physical-size clip and disappeared — caught by comparing the live card's actual
+    // getBoundingClientRect() width against this constant via chrome-devtools.
+    const onScreenCardWidthPx = getPreviewSizePx(labelSize).widthPx
     const cardTransformCss = labelSize === 'A4 Sheet' ? '' : (() => {
       const { widthMm, heightMm } = getLabelSizeMm(labelSize)
       // circular_bottle is a true circle on screen (equal width/height) — targeting
@@ -589,138 +608,23 @@ function LiveBarcodePreview({
       </div>
 
       <div id="live-barcode-label" className="flex justify-center p-4 bg-zinc-950/70 rounded-xl overflow-x-auto">
-        {/* Template 1: Circular Round Jar / Bottle Sticker */}
-        {templateStyle === 'circular_bottle' && (
-          <div
-            className="flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 text-center select-none transition-all duration-300"
-            style={{ width: px(190), height: px(190), padding: px(14), fontSize: px(10) }}
-          >
-            {showShopName && (
-              <p className="font-bold tracking-tight uppercase leading-tight" style={{ maxWidth: px(140) }}>
-                {shopName ? `${shopName} JAR` : 'GL CUBICAL JAR'}<br />
-                <span className="font-semibold text-zinc-600 text-[0.9em]">300 ML [GD]</span>
-              </p>
-            )}
-
-            <div className="my-1 flex items-center justify-center overflow-hidden" style={{ maxWidth: px(140) }}>
-              {type === 'qr' ? (
-                qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className="object-contain" style={{ height: px(58), width: px(58) }} />
-                ) : (
-                  <div className="bg-zinc-100 flex items-center justify-center text-zinc-400" style={{ height: px(58), width: px(58), fontSize: px(8) }}>Loading...</div>
-                )
-              ) : (
-                <svg ref={svgRef} className="max-w-full h-auto" />
-              )}
-            </div>
-
-            {showCodeValue && <p className="font-mono font-bold text-zinc-900 tracking-wider text-[0.9em]">1003432492</p>}
-            {showMrp && (
-              <p className="text-zinc-600 font-medium leading-tight mt-0.5 text-[0.8em]">
-                MRP RS {strikethroughMrp ? <span className="line-through">70.00</span> : '70.00'} (Incl. all taxes)
-              </p>
-            )}
-            {showSp && <p className="font-black text-zinc-950 tracking-tight text-[1.1em]">Retail RS 49.00</p>}
-          </div>
-        )}
-
-        {/* Template 2: Saravana Stores / Department Store Side-Ribbon Style */}
-        {templateStyle === 'saravana_stores' && (
-          <div
-            className="flex rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 overflow-hidden transition-all duration-300 select-none"
-            style={{ width: px(280), minHeight: px(105) }}
-          >
-            <div className="flex-1 flex items-center" style={{ padding: px(12), gap: px(12) }}>
-              <div className="shrink-0">
-                {type === 'qr' ? (
-                  qrDataUrl ? (
-                    <img src={qrDataUrl} alt="QR Code" className="object-contain" style={{ height: px(58), width: px(58) }} />
-                  ) : (
-                    <div className="bg-zinc-100 flex items-center justify-center text-zinc-400" style={{ height: px(58), width: px(58), fontSize: px(8) }}>Loading...</div>
-                  )
-                ) : (
-                  <div className="overflow-hidden" style={{ maxWidth: px(110) }}>
-                    <svg ref={svgRef} className="max-w-full h-auto" />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col min-w-0">
-                <p className="font-black tracking-tight uppercase text-zinc-950 truncate" style={{ fontSize: px(11) }}>TIA BUCKET 511</p>
-                {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>Code: BUCKET-511</p>}
-                {showCodeValue && type !== 'qr' && <p className="font-mono text-zinc-600" style={{ fontSize: px(9) }}>1003432492</p>}
-                {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
-                {showSp && <p className="font-black text-zinc-950 tracking-tight" style={{ fontSize: px(14) }}>Retail Rs.232.00</p>}
-              </div>
-            </div>
-
-            {/* Vertical Orange Ribbon */}
-            {showShopName && (
-              <div className="bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center border-l border-amber-600" style={{ width: px(32), padding: px(4) }}>
-                <span className="font-black uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 whitespace-nowrap" style={{ fontSize: px(9) }}>
-                  {shopName || 'DEPARTMENT STORE'}
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Template 3: Compact Jewelry / Tag Style */}
-        {templateStyle === 'compact_jewelry' && (
-          <div
-            className="flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-lg border border-zinc-300 transition-all duration-300 select-none"
-            style={{ width: px(270), minHeight: px(90), padding: px(12) }}
-          >
-            <div className="space-y-0.5 min-w-0 flex-1 pr-2">
-              {showShopName && <p className="font-black truncate uppercase text-zinc-900" style={{ fontSize: px(10) }}>{shopName || 'KALYAN JEWELLERS'}</p>}
-              <p className="font-semibold text-zinc-800 truncate" style={{ fontSize: px(9) }}>GOLD RING 22KT</p>
-              {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(8) }}>WT: 4.250g | 916 HUID</p>}
-              {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP RS {strikethroughMrp ? <span className="line-through">30,000.00</span> : '30,000.00'}</p>}
-              {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(11) }}>Retail RS 28,500.00</p>}
-            </div>
-            <div className="shrink-0">
-              {type === 'qr' ? (
-                qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className="object-contain" style={{ height: px(52), width: px(52) }} />
-                ) : (
-                  <div className="bg-zinc-100" style={{ height: px(52), width: px(52) }} />
-                )
-              ) : (
-                <div className="overflow-hidden" style={{ maxWidth: px(110) }}>
-                  <svg ref={svgRef} className="max-w-full h-auto" />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Template 4: Standard Retail Label */}
-        {templateStyle === 'standard' && (
-          <div
-            className="flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 transition-all duration-300 select-none"
-            style={{ width: px(300), minHeight: px(160), padding: px(14) }}
-          >
-            {showShopName && <p className="font-bold tracking-wider uppercase text-center truncate w-full" style={{ fontSize: px(11) }}>{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>}
-            {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>Code: SHIRT-COTTON-001</p>}
-
-            {type === 'qr' ? (
-              <div className="my-1.5 flex items-center justify-center">
-                {qrDataUrl ? (
-                  <img src={qrDataUrl} alt="QR Code" className="object-contain rounded" style={{ height: px(80), width: px(80) }} />
-                ) : (
-                  <div className="bg-zinc-100 flex items-center justify-center text-zinc-400" style={{ height: px(80), width: px(80), fontSize: px(10) }}>Loading QR...</div>
-                )}
-              </div>
-            ) : (
-              <div className="my-1 flex items-center justify-center overflow-hidden max-w-full">
-                <svg ref={svgRef} className="max-w-full h-auto" />
-              </div>
-            )}
-
-            {showMrp && <p className="text-zinc-500 font-medium" style={{ fontSize: px(8) }}>MRP RS {strikethroughMrp ? <span className="line-through">599.00</span> : '599.00'}</p>}
-            {showSp && <p className="font-black text-zinc-950" style={{ fontSize: px(10) }}>Retail RS 499.00 <span className="font-normal text-zinc-500" style={{ fontSize: px(8) }}>(Incl. Taxes)</span></p>}
-          </div>
-        )}
+        <LabelPreviewCard
+          item={mockItem}
+          settings={{
+            templateStyle,
+            barcodeType: type,
+            showShopName,
+            showSku,
+            showCodeValue,
+            showMrp,
+            showSp,
+            strikethroughMrp,
+            labelSize,
+            orgName: shopName,
+          }}
+          qrDataUrl={qrDataUrl || undefined}
+          svgRef={(el) => { svgRef.current = el }}
+        />
       </div>
     </div>
   )

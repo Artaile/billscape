@@ -29,7 +29,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { ProductSchema, type ProductInput, type GSTRate, formatINR, splitInclusiveGST } from '@billscape/core'
 import { getUnits } from '@billscape/api'
 import { generateBarcode } from '@/lib/utils'
-import { BarcodeLabelDialog, type LabelItem } from '@/components/ui/BarcodeLabelDialog'
+import { BarcodeLabelDialog, LabelPreviewCard, type LabelItem } from '@/components/ui/BarcodeLabelDialog'
 import { logActivity } from '@/lib/activityLog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -61,7 +61,7 @@ export function ProductFormPage() {
   const [categoryId, setCategoryId] = useState<string>('')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
-  const barcodeRef = useRef<SVGSVGElement>(null)
+  const barcodeRef = useRef<SVGSVGElement | null>(null)
   const [scanOpen, setScanOpen] = useState(false)
   const [printLabelOpen, setPrintLabelOpen] = useState(false)
 
@@ -1165,139 +1165,36 @@ export function ProductFormPage() {
 
               {barcodeValue && (
                 <div className="inline-flex flex-col items-center gap-3 p-4 rounded-xl bg-secondary border border-border w-full max-w-md">
-                  {/* Real-time Label Template Preview matching Settings */}
+                  {/* Real-time Label Template Preview — rendered via the SAME LabelPreviewCard
+                      component BarcodeLabelDialog.tsx's own preview and Settings' preview use,
+                      so this can no longer visually drift from either (previously this was a
+                      third hand-duplicated copy of all 4 templates, and it drifted from the
+                      other two over several rounds of edits). */}
                   <div className="p-3 bg-zinc-950/80 rounded-lg w-full flex justify-center overflow-x-auto">
-                    {/* Template 1: Circular Bottle / Jar */}
-                    {((org?.branding as any)?.barcode_template_style) === 'circular_bottle' && (
-                      <div className={cn('flex flex-col items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg border-2 border-zinc-300 p-3 text-center select-none transition-all duration-300', (org?.branding?.barcode_label_size) === '3x2cm' ? 'w-36 h-36' : (org?.branding?.barcode_label_size) === '4x2.5cm' ? 'w-44 h-44' : (org?.branding?.barcode_label_size) === '6x4cm' || (org?.branding?.barcode_label_size) === 'A4 Sheet' ? 'w-56 h-56' : 'w-48 h-48')}>
-                        {((org?.branding as any)?.barcode_show_shop_name ?? true) && (
-                          <p className="font-bold tracking-tight uppercase text-[9px] leading-tight max-w-[130px] truncate">
-                            {org?.name ? `${org.name}` : 'SHOP NAME'}
-                          </p>
-                        )}
-                        <p className="font-semibold text-[8px] text-zinc-600 truncate max-w-[120px]">
-                          {watch('name') || 'Product Name'}
-                        </p>
-                        <div className="my-1 flex items-center justify-center">
-                          {barcodeType === 'qr' ? (
-                            qrDataUrl ? <img src={qrDataUrl} alt="QR" className="h-12 w-12 object-contain" /> : <div className="h-12 w-12 bg-zinc-100" />
-                          ) : (
-                            <svg ref={barcodeRef} className="max-w-[130px]" />
-                          )}
-                        </div>
-                        {((org?.branding as any)?.barcode_show_code_value ?? true) && barcodeValue && (
-                          <p className="font-mono font-bold text-zinc-900 tracking-wider text-[8px]">{barcodeValue}</p>
-                        )}
-                        {((org?.branding as any)?.barcode_show_mrp ?? true) && watch('mrp') && (
-                          <p className="text-[8px] text-zinc-500 font-medium leading-none">
-                            MRP RS {((org?.branding as any)?.barcode_strikethrough_mrp ?? true) && Number(watch('mrp')) > Number(watch('price') || 0) && Number(watch('price') || 0) > 0 ? <span className="line-through">{watch('mrp')}</span> : watch('mrp')}
-                          </p>
-                        )}
-                        {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                          <p className="text-[10px] font-black text-zinc-950">Retail RS {watch('price') || 0}</p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Template 2: Department Store / Saravana Stores */}
-                    {((org?.branding as any)?.barcode_template_style) === 'saravana_stores' && (
-                      <div className={cn('flex rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 overflow-hidden select-none transition-all duration-300', (org?.branding?.barcode_label_size) === '3x2cm' ? 'w-[250px] min-h-[110px]' : (org?.branding?.barcode_label_size) === '4x2.5cm' ? 'w-[290px] min-h-[125px]' : (org?.branding?.barcode_label_size) === '6x4cm' || (org?.branding?.barcode_label_size) === 'A4 Sheet' ? 'w-[370px] min-h-[165px]' : 'w-[330px] min-h-[145px]')}>
-                        <div className="flex-1 p-3 flex items-center gap-2.5">
-                          <div className="shrink-0">
-                            {barcodeType === 'qr' ? (
-                              qrDataUrl ? <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', (org?.branding?.barcode_label_size) === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} /> : <div className="h-16 w-16 bg-zinc-100" />
-                            ) : (
-                              <svg ref={barcodeRef} className="max-w-[120px]" />
-                            )}
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <p className="text-[10px] font-black tracking-tight uppercase text-zinc-950 truncate">{watch('name') || 'Product Name'}</p>
-                            {((org?.branding as any)?.barcode_show_sku ?? true) && watch('sku') && (
-                              <p className="text-[8px] text-zinc-500 font-mono">Code: {watch('sku')}</p>
-                            )}
-                            {((org?.branding as any)?.barcode_show_code_value ?? true) && barcodeType !== 'qr' && (
-                              <p className="text-[8px] font-mono text-zinc-600">{barcodeValue}</p>
-                            )}
-                            {((org?.branding as any)?.barcode_show_mrp ?? true) && watch('mrp') && (
-                              <p className="text-[8px] text-zinc-500">
-                                MRP Rs.{((org?.branding as any)?.barcode_strikethrough_mrp ?? true) && Number(watch('mrp')) > Number(watch('price') || 0) && Number(watch('price') || 0) > 0 ? <span className="line-through">{watch('mrp')}</span> : watch('mrp')}
-                              </p>
-                            )}
-                            {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                              <p className="text-xs font-black text-zinc-950 tracking-tight mt-0.5">Retail Rs.{watch('price') || 0}</p>
-                            )}
-                          </div>
-                        </div>
-                        {((org?.branding as any)?.barcode_show_shop_name ?? true) && (
-                          <div className="w-8 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
-                            <span className="text-[9px] font-black uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
-                              {org?.name || 'BILLSCAPE'}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Template 3: Compact Tag / Jewelry */}
-                    {((org?.branding as any)?.barcode_template_style) === 'compact_jewelry' && (
-                      <div className={cn('flex items-center justify-between rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 select-none transition-all duration-300', (org?.branding?.barcode_label_size) === '3x2cm' ? 'w-[230px] min-h-[75px] p-2' : (org?.branding?.barcode_label_size) === '4x2.5cm' ? 'w-[260px] min-h-[85px] p-2.5' : (org?.branding?.barcode_label_size) === '6x4cm' || (org?.branding?.barcode_label_size) === 'A4 Sheet' ? 'w-[340px] min-h-[115px] p-4' : 'w-[290px] min-h-[95px] p-3')}>
-                        <div className="space-y-0.5 min-w-0 flex-1 pr-2">
-                          {((org?.branding as any)?.barcode_show_shop_name ?? true) && (
-                            <p className="text-[10px] font-black truncate uppercase text-zinc-900">{org?.name || 'SHOP NAME'}</p>
-                          )}
-                          <p className="text-[9px] font-semibold text-zinc-800 truncate">{watch('name') || 'Product Name'}</p>
-                          {((org?.branding as any)?.barcode_show_sku ?? true) && (
-                            <p className="text-[8px] text-zinc-500 font-mono truncate">{barcodeValue}</p>
-                          )}
-                          {((org?.branding as any)?.barcode_show_mrp ?? true) && watch('mrp') && (
-                            <p className="text-[8px] text-zinc-500">
-                              MRP RS {((org?.branding as any)?.barcode_strikethrough_mrp ?? true) && Number(watch('mrp')) > Number(watch('price') || 0) && Number(watch('price') || 0) > 0 ? <span className="line-through">{watch('mrp')}</span> : watch('mrp')}
-                            </p>
-                          )}
-                          {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                            <p className="text-[11px] font-black text-zinc-950 mt-0.5">Retail RS {watch('price') || 0}</p>
-                          )}
-                        </div>
-                        <div className="shrink-0">
-                          {barcodeType === 'qr' ? (
-                            qrDataUrl ? <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', (org?.branding?.barcode_label_size) === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} /> : <div className="h-16 w-16 bg-zinc-100" />
-                          ) : (
-                            <svg ref={barcodeRef} className="max-w-[110px]" />
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Template 4: Standard Retail Label (Default) */}
-                    {(!((org?.branding as any)?.barcode_template_style) || ((org?.branding as any)?.barcode_template_style) === 'standard') && (
-                      <div className={cn('flex flex-col items-center justify-center rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 text-center select-none transition-all duration-300', (org?.branding?.barcode_label_size) === '3x2cm' ? 'w-[210px] min-h-[110px] p-2' : (org?.branding?.barcode_label_size) === '4x2.5cm' ? 'w-[250px] min-h-[130px] p-3' : (org?.branding?.barcode_label_size) === '6x4cm' || (org?.branding?.barcode_label_size) === 'A4 Sheet' ? 'w-[330px] min-h-[180px] p-4' : 'w-[290px] min-h-[150px] p-3.5')}>
-                        {((org?.branding as any)?.barcode_show_shop_name ?? true) && (
-                          <p className="font-bold tracking-wider uppercase text-center truncate w-full text-[10px]">{org?.name || 'SHOP NAME'}</p>
-                        )}
-                        <p className="text-[9px] text-zinc-600 font-medium truncate max-w-[200px]">{watch('name') || 'Product Name'}</p>
-                        {((org?.branding as any)?.barcode_show_sku ?? true) && watch('sku') && (
-                          <p className="text-[8px] text-zinc-500 font-mono">Code: {watch('sku')}</p>
-                        )}
-                        <div className="my-1.5 flex items-center justify-center">
-                          {barcodeType === 'qr' ? (
-                            qrDataUrl ? <img src={qrDataUrl} alt="QR" className="h-16 w-16 object-contain" /> : <div className="h-16 w-16 bg-zinc-100" />
-                          ) : (
-                            <svg ref={barcodeRef} className="max-w-[180px]" />
-                          )}
-                        </div>
-                        {((org?.branding as any)?.barcode_show_code_value ?? true) && barcodeValue && (
-                          <p className="font-mono font-bold text-zinc-900 tracking-wider text-[8px]">{barcodeValue}</p>
-                        )}
-                        {((org?.branding as any)?.barcode_show_mrp ?? true) && watch('mrp') && (
-                          <p className="text-[8px] text-zinc-500 font-medium">
-                            MRP RS {((org?.branding as any)?.barcode_strikethrough_mrp ?? true) && Number(watch('mrp')) > Number(watch('price') || 0) && Number(watch('price') || 0) > 0 ? <span className="line-through">{watch('mrp')}</span> : watch('mrp')}
-                          </p>
-                        )}
-                        {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                          <p className="text-[10px] font-black text-zinc-950">Retail RS {watch('price') || 0}</p>
-                        )}
-                      </div>
-                    )}
+                    <LabelPreviewCard
+                      item={{
+                        key: 'preview',
+                        name: watch('name') || 'Product Name',
+                        barcode_value: barcodeValue,
+                        price: Number(watch('price')) || 0,
+                        mrp: watch('mrp') ? Number(watch('mrp')) : null,
+                        sku: watch('sku') || null,
+                      }}
+                      settings={{
+                        templateStyle: (org?.branding as any)?.barcode_template_style ?? 'standard',
+                        barcodeType,
+                        showShopName: (org?.branding as any)?.barcode_show_shop_name ?? true,
+                        showSku: (org?.branding as any)?.barcode_show_sku ?? true,
+                        showCodeValue: (org?.branding as any)?.barcode_show_code_value ?? true,
+                        showMrp: (org?.branding as any)?.barcode_show_mrp ?? true,
+                        showSp: (org?.branding as any)?.barcode_show_sp ?? true,
+                        strikethroughMrp: (org?.branding as any)?.barcode_strikethrough_mrp ?? true,
+                        labelSize: org?.branding?.barcode_label_size ?? '5x2.5cm',
+                        orgName: org?.name,
+                      }}
+                      qrDataUrl={qrDataUrl || undefined}
+                      svgRef={(el) => { barcodeRef.current = el }}
+                    />
                   </div>
 
                   <Button
