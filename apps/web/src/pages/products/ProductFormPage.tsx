@@ -1194,7 +1194,7 @@ export function ProductFormPage() {
                           </p>
                         )}
                         {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                          <p className="text-[10px] font-black text-zinc-950">SP RS {watch('price') || 0}</p>
+                          <p className="text-[10px] font-black text-zinc-950">Retail RS {watch('price') || 0}</p>
                         )}
                       </div>
                     )}
@@ -1202,46 +1202,39 @@ export function ProductFormPage() {
                     {/* Template 2: Department Store / Saravana Stores */}
                     {((org?.branding as any)?.barcode_template_style) === 'saravana_stores' && (
                       <div className={cn('flex rounded-lg bg-white text-zinc-950 shadow-md border border-zinc-300 overflow-hidden select-none transition-all duration-300', (org?.branding?.barcode_label_size) === '3x2cm' ? 'w-[250px] min-h-[110px]' : (org?.branding?.barcode_label_size) === '4x2.5cm' ? 'w-[290px] min-h-[125px]' : (org?.branding?.barcode_label_size) === '6x4cm' || (org?.branding?.barcode_label_size) === 'A4 Sheet' ? 'w-[370px] min-h-[165px]' : 'w-[330px] min-h-[145px]')}>
-                        <div className="flex-1 p-3 flex flex-col justify-between">
-                          <div className="flex justify-between items-start text-[8px] font-mono text-zinc-500">
-                            <span className="font-bold">15675</span>
-                            <span className="font-bold">F6</span>
+                        <div className="flex-1 p-3 flex items-center gap-2.5">
+                          <div className="shrink-0">
+                            {barcodeType === 'qr' ? (
+                              qrDataUrl ? <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', (org?.branding?.barcode_label_size) === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} /> : <div className="h-16 w-16 bg-zinc-100" />
+                            ) : (
+                              <svg ref={barcodeRef} className="max-w-[120px]" />
+                            )}
                           </div>
-                          <div className="flex items-center gap-2.5 my-1">
-                            <div className="shrink-0">
-                              {barcodeType === 'qr' ? (
-                                qrDataUrl ? <img src={qrDataUrl} alt="QR Code" className={cn('object-contain', (org?.branding?.barcode_label_size) === '3x2cm' ? 'h-12 w-12' : 'h-16 w-16')} /> : <div className="h-16 w-16 bg-zinc-100" />
-                              ) : (
-                                <svg ref={barcodeRef} className="max-w-[120px]" />
-                              )}
-                            </div>
-                            <div className="flex flex-col min-w-0">
-                              <p className="text-[10px] font-black tracking-tight uppercase text-zinc-950 truncate">{watch('name') || 'Product Name'}</p>
-                              {((org?.branding as any)?.barcode_show_code_value ?? true) && (
-                                <p className="text-[8px] font-mono text-zinc-600">{barcodeValue}</p>
-                              )}
-                              {((org?.branding as any)?.barcode_show_mrp ?? true) && watch('mrp') && (
-                                <p className="text-[8px] text-zinc-500">
-                                  MRP Rs.{((org?.branding as any)?.barcode_strikethrough_mrp ?? true) && Number(watch('mrp')) > Number(watch('price') || 0) && Number(watch('price') || 0) > 0 ? <span className="line-through">{watch('mrp')}</span> : watch('mrp')}
-                                </p>
-                              )}
-                              {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                                <p className="text-xs font-black text-zinc-950 tracking-tight mt-0.5">SP Rs.{watch('price') || 0}</p>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center text-[7.5px] font-mono text-zinc-500 border-t border-zinc-200 pt-1">
-                            <span>BJ:PAA7233/6</span>
-                            <span>MAMATMTI</span>
-                          </div>
-                        </div>
-                        <div className="w-12 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
-                          <div className="writing-vertical transform -rotate-90 whitespace-nowrap text-center">
-                            {((org?.branding as any)?.barcode_show_shop_name ?? true) && (
-                              <span className="text-[8px] font-black uppercase tracking-wider block">{org?.name || 'BILLSCAPE'}</span>
+                          <div className="flex flex-col min-w-0">
+                            <p className="text-[10px] font-black tracking-tight uppercase text-zinc-950 truncate">{watch('name') || 'Product Name'}</p>
+                            {((org?.branding as any)?.barcode_show_sku ?? true) && watch('sku') && (
+                              <p className="text-[8px] text-zinc-500 font-mono">Code: {watch('sku')}</p>
+                            )}
+                            {((org?.branding as any)?.barcode_show_code_value ?? true) && barcodeType !== 'qr' && (
+                              <p className="text-[8px] font-mono text-zinc-600">{barcodeValue}</p>
+                            )}
+                            {((org?.branding as any)?.barcode_show_mrp ?? true) && watch('mrp') && (
+                              <p className="text-[8px] text-zinc-500">
+                                MRP Rs.{((org?.branding as any)?.barcode_strikethrough_mrp ?? true) && Number(watch('mrp')) > Number(watch('price') || 0) && Number(watch('price') || 0) > 0 ? <span className="line-through">{watch('mrp')}</span> : watch('mrp')}
+                              </p>
+                            )}
+                            {((org?.branding as any)?.barcode_show_sp ?? true) && (
+                              <p className="text-xs font-black text-zinc-950 tracking-tight mt-0.5">Retail Rs.{watch('price') || 0}</p>
                             )}
                           </div>
                         </div>
+                        {((org?.branding as any)?.barcode_show_shop_name ?? true) && (
+                          <div className="w-8 bg-gradient-to-b from-amber-500 to-orange-500 text-white flex items-center justify-center p-1 border-l border-amber-600">
+                            <span className="text-[9px] font-black uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                              {org?.name || 'BILLSCAPE'}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1262,7 +1255,7 @@ export function ProductFormPage() {
                             </p>
                           )}
                           {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                            <p className="text-[11px] font-black text-zinc-950 mt-0.5">SP RS {watch('price') || 0}</p>
+                            <p className="text-[11px] font-black text-zinc-950 mt-0.5">Retail RS {watch('price') || 0}</p>
                           )}
                         </div>
                         <div className="shrink-0">
@@ -1283,7 +1276,7 @@ export function ProductFormPage() {
                         )}
                         <p className="text-[9px] text-zinc-600 font-medium truncate max-w-[200px]">{watch('name') || 'Product Name'}</p>
                         {((org?.branding as any)?.barcode_show_sku ?? true) && watch('sku') && (
-                          <p className="text-[8px] text-zinc-500 font-mono">SKU: {watch('sku')}</p>
+                          <p className="text-[8px] text-zinc-500 font-mono">Code: {watch('sku')}</p>
                         )}
                         <div className="my-1.5 flex items-center justify-center">
                           {barcodeType === 'qr' ? (
@@ -1301,7 +1294,7 @@ export function ProductFormPage() {
                           </p>
                         )}
                         {((org?.branding as any)?.barcode_show_sp ?? true) && (
-                          <p className="text-[10px] font-black text-zinc-950">SP RS {watch('price') || 0}</p>
+                          <p className="text-[10px] font-black text-zinc-950">Retail RS {watch('price') || 0}</p>
                         )}
                       </div>
                     )}
