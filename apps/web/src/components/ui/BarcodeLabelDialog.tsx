@@ -355,6 +355,18 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   const mrpStrike = strikethroughMrp && item.mrp != null && item.mrp > item.price && item.price > 0
                   const previewSize = getPreviewSizePx(labelSize)
                   const previewStyle = { width: previewSize.widthPx, minHeight: previewSize.minHeightPx }
+                  // Scales every text/spacing value in the preview card together with the card's
+                  // own size, mirroring the print HTML's own getLabelScale-driven scaling — without
+                  // this, a small label size (e.g. 5x2.5cm's 180px-wide preview) crammed the SAME
+                  // fixed text-[9px] name text + fixed-width side-ribbon into a narrower box than
+                  // they were sized for, wrapping the product name across 2-3 lines and squeezing
+                  // the ribbon down to where it looked broken/missing — confirmed live via a real
+                  // print dialog screenshot showing exactly this crowding on the saravana_stores
+                  // template. Only the TEXT/SPACING scale down here; the print HTML's own physical
+                  // sizing is unaffected (this only touches the on-screen preview panel).
+                  const { widthMm: previewWidthMm, heightMm: previewHeightMm } = getLabelDimensionsMm(labelSize)
+                  const previewScale = labelSize === 'A4 Sheet' ? 1 : getLabelScale(previewWidthMm, previewHeightMm)
+                  const previewPx = (base: number) => Math.round(base * previewScale)
                   const code = (
                     <ItemCode
                       item={item}
@@ -368,13 +380,13 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                     return (
                       <div key={item.key} className="rounded-lg border border-border bg-white p-3 text-black flex items-center justify-between gap-2 mx-auto" style={previewStyle}>
                         <div className="text-left">
-                          {showShopName && <p className="text-[9px] font-bold uppercase">{orgName || 'JEWELRY TAG'}</p>}
-                          <p className="text-[9px] font-bold mt-0.5">{displayName}</p>
-                          {showSku && item.sku && <p className="text-[8px] text-gray-500 font-mono">{item.sku}</p>}
+                          {showShopName && <p className="font-bold uppercase" style={{ fontSize: previewPx(9) }}>{orgName || 'JEWELRY TAG'}</p>}
+                          <p className="font-bold mt-0.5" style={{ fontSize: previewPx(9) }}>{displayName}</p>
+                          {showSku && item.sku && <p className="text-gray-500 font-mono" style={{ fontSize: previewPx(8) }}>{item.sku}</p>}
                           {showMrp && item.mrp != null && (
-                            <p className="text-[8px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                            <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                           )}
-                          {showSp && <p className="text-[10px] font-black mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                          {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>SP ₹{item.price.toFixed(2)}</p>}
                         </div>
                         <div className="shrink-0">{code}</div>
                       </div>
@@ -383,19 +395,19 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                   if (templateStyle === 'saravana_stores') {
                     return (
                       <div key={item.key} className="rounded-lg border border-border bg-white text-black flex overflow-hidden mx-auto" style={previewStyle}>
-                        <div className="flex-1 p-3 flex items-center gap-2 text-left">
+                        <div className="flex-1 flex items-center text-left" style={{ padding: previewPx(12), gap: previewPx(8) }}>
                           {code}
                           <div>
-                            <p className="text-[9px] font-bold uppercase">{displayName}</p>
-                            {showSku && item.sku && <p className="text-[8px] text-gray-500 font-mono">{item.sku}</p>}
+                            <p className="font-bold uppercase" style={{ fontSize: previewPx(9) }}>{displayName}</p>
+                            {showSku && item.sku && <p className="text-gray-500 font-mono" style={{ fontSize: previewPx(8) }}>{item.sku}</p>}
                             {showMrp && item.mrp != null && (
-                              <p className="text-[8px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                              <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(8) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                             )}
-                            {showSp && <p className="text-[10px] font-black mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                            {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(10) }}>SP ₹{item.price.toFixed(2)}</p>}
                           </div>
                         </div>
                         {showShopName && (
-                          <div className="w-6 bg-gradient-to-b from-amber-500 to-orange-600 text-white text-[7px] font-bold flex items-center justify-center uppercase [writing-mode:vertical-rl] rotate-180 px-1">
+                          <div className="bg-gradient-to-b from-amber-500 to-orange-600 text-white font-bold flex items-center justify-center uppercase [writing-mode:vertical-rl] rotate-180" style={{ width: previewPx(24), padding: previewPx(4), fontSize: previewPx(7) }}>
                             {orgName || 'DEPARTMENT STORE'}
                           </div>
                         )}
@@ -409,30 +421,30 @@ export function BarcodeLabelDialog({ open, onOpenChange, items, orgName }: Props
                         className="rounded-full border-2 border-gray-300 bg-white text-black mx-auto flex flex-col items-center justify-center text-center p-2"
                         style={{ width: previewSize.widthPx, height: previewSize.widthPx }}
                       >
-                        {showShopName && <p className="text-[8px] font-bold uppercase">{orgName || 'JAR LABEL'}</p>}
-                        <p className="text-[8px] mt-0.5">{displayName}</p>
+                        {showShopName && <p className="font-bold uppercase" style={{ fontSize: previewPx(8) }}>{orgName || 'JAR LABEL'}</p>}
+                        <p className="mt-0.5" style={{ fontSize: previewPx(8) }}>{displayName}</p>
                         {code}
                         {showMrp && item.mrp != null && (
-                          <p className="text-[7.5px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                          <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(7.5) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                         )}
-                        {showSp && <p className="text-[9px] font-black mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                        {showSp && <p className="font-black mt-0.5" style={{ fontSize: previewPx(9) }}>SP ₹{item.price.toFixed(2)}</p>}
                       </div>
                     )
                   }
                   // standard
                   return (
                     <div key={item.key} className="rounded-lg border border-border bg-white p-3 flex flex-col items-center text-black mx-auto" style={previewStyle}>
-                      {showShopName && <p className="text-xs font-bold text-center leading-tight uppercase">{orgName || displayName}</p>}
-                      <p className="text-[10px] text-gray-500 mt-0.5">{displayName}</p>
-                      {showSku && item.sku && <p className="text-[9px] text-gray-500 font-mono mt-0.5">SKU: {item.sku}</p>}
+                      {showShopName && <p className="font-bold text-center leading-tight uppercase" style={{ fontSize: previewPx(12) }}>{orgName || displayName}</p>}
+                      <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(10) }}>{displayName}</p>
+                      {showSku && item.sku && <p className="text-gray-500 font-mono mt-0.5" style={{ fontSize: previewPx(9) }}>Code: {item.sku}</p>}
                       <div className="my-1">{code}</div>
                       {showCodeValue && barcodeType !== 'qr' && item.barcode_value && (
-                        <p className="text-[9px] font-mono font-bold">{item.barcode_value}</p>
+                        <p className="font-mono font-bold" style={{ fontSize: previewPx(9) }}>{item.barcode_value}</p>
                       )}
                       {showMrp && item.mrp != null && (
-                        <p className="text-[9px] text-gray-500 mt-0.5">MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
+                        <p className="text-gray-500 mt-0.5" style={{ fontSize: previewPx(9) }}>MRP ₹{mrpStrike ? <span className="line-through">{item.mrp.toFixed(2)}</span> : item.mrp.toFixed(2)}</p>
                       )}
-                      {showSp && <p className="text-sm font-bold mt-0.5">SP ₹{item.price.toFixed(2)}</p>}
+                      {showSp && <p className="font-bold mt-0.5" style={{ fontSize: previewPx(14) }}>SP ₹{item.price.toFixed(2)}</p>}
                     </div>
                   )
                 })}

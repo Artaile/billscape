@@ -490,6 +490,15 @@ function LiveBarcodePreview({
         min-width: 0 !important;
       `
     })()
+    // #live-barcode-label (the parent of the transformed card) must be pinned to the exact
+    // target physical size too — see the comment on that rule below for why.
+    const wrapperClipCss = labelSize === 'A4 Sheet' ? '' : (() => {
+      const { widthMm, heightMm } = getLabelSizeMm(labelSize)
+      const side = templateStyle === 'circular_bottle' ? Math.max(widthMm, heightMm) : null
+      const targetWidthMm = side ?? widthMm
+      const targetHeightMm = side ?? heightMm
+      return `width: ${targetWidthMm}mm !important; height: ${targetHeightMm}mm !important;`
+    })()
 
     doc.open()
     doc.write(`
@@ -507,12 +516,22 @@ function LiveBarcodePreview({
             }
             /* The preview's own on-screen wrapper uses a dark background for contrast against
                the white label card — force it back to plain white/no-padding for print, same
-               idea as LivePrintBillPreview's own #print-container override above. */
+               idea as LivePrintBillPreview's own #print-container override above. A CSS
+               transform (used on the card itself below) only shrinks how an element PAINTS —
+               it does NOT shrink the layout box the browser reserves for it, so #live-barcode-label
+               (the parent) was still sizing itself to the card's larger PRE-transform box, and
+               the print pipeline paginated a second, visually-blank page to hold that
+               phantom reserved space. Pinning this wrapper to the exact target physical size
+               with overflow: hidden clips that phantom box back down to the true page size —
+               confirmed live via a real macOS print preview showing exactly this "2 pages,
+               second one blank" symptom before this fix. */
             #live-barcode-label {
               background: #ffffff !important;
               padding: 0 !important;
               border-radius: 0 !important;
               display: block !important;
+              overflow: hidden !important;
+              ${wrapperClipCss}
             }
             /* Scale the card itself (the template's own root div, always the sole direct child
                of #live-barcode-label) down/up to its real physical mm size — see comment above. */
@@ -628,7 +647,7 @@ function LiveBarcodePreview({
 
               <div className="flex flex-col min-w-0">
                 <p className="font-black tracking-tight uppercase text-zinc-950 truncate" style={{ fontSize: px(11) }}>TIA BUCKET 511</p>
-                {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>SKU: BUCKET-511</p>}
+                {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>Code: BUCKET-511</p>}
                 {showCodeValue && type !== 'qr' && <p className="font-mono text-zinc-600" style={{ fontSize: px(9) }}>1003432492</p>}
                 {showMrp && <p className="text-zinc-500" style={{ fontSize: px(8) }}>MRP Rs.{strikethroughMrp ? <span className="line-through">300.00</span> : '300.00'}</p>}
                 {showSp && <p className="font-black text-zinc-950 tracking-tight" style={{ fontSize: px(14) }}>SP Rs.232.00</p>}
@@ -682,7 +701,7 @@ function LiveBarcodePreview({
             style={{ width: px(300), minHeight: px(160), padding: px(14) }}
           >
             {showShopName && <p className="font-bold tracking-wider uppercase text-center truncate w-full" style={{ fontSize: px(11) }}>{shopName || 'BILLSCAPE SAMPLE ITEM'}</p>}
-            {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>SKU: SHIRT-COTTON-001</p>}
+            {showSku && <p className="text-zinc-500 font-mono" style={{ fontSize: px(9) }}>Code: SHIRT-COTTON-001</p>}
 
             {type === 'qr' ? (
               <div className="my-1.5 flex items-center justify-center">
@@ -4287,7 +4306,7 @@ export function SettingsPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   {[
                     { id: 'show_shop_name', label: 'Shop Name / Brand', desc: 'Include store header on label', value: barcodeShowShopName, setter: setBarcodeShowShopName },
-                    { id: 'show_sku', label: 'SKU / Product Code', desc: 'Include SKU identifier on label', value: barcodeShowSku, setter: setBarcodeShowSku },
+                    { id: 'show_sku', label: 'Product Code', desc: 'Include product code on label', value: barcodeShowSku, setter: setBarcodeShowSku },
                     { id: 'show_code_value', label: 'Barcode Text Value', desc: 'Display code digits below barcode', value: barcodeShowCodeValue, setter: setBarcodeShowCodeValue },
                     { id: 'show_mrp', label: 'Show MRP', desc: 'Display Maximum Retail Price', value: barcodeShowMrp, setter: setBarcodeShowMrp },
                     { id: 'show_sp', label: 'Show Selling Price (SP)', desc: 'Display Selling Price / Offer Price', value: barcodeShowSp, setter: setBarcodeShowSp },
